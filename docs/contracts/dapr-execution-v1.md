@@ -1,6 +1,7 @@
 # Dapr Execution Contract v1
 
-**Status:** P2 design baseline; implementation and P2-GATE review are pending.  
+**Status:** P2 design baseline; P2-GATE accepted on 2026-10-13; durable
+implementation remains pending.
 **Owner:** [Dapr execution boundary feature](../features/dapr-execution-boundary.md).  
 **Architecture:** [ADR-066](../adr/066-dapr-workflow-full-replacement-architecture.md).
 

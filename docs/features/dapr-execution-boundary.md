@@ -10,6 +10,13 @@
 
 **Dependencies:** Accepted P1-GATE and ADR-066.
 
+**Gate status:** P2-GATE was accepted by the operator on 2026-10-13 in
+[review issue #6](https://github.com/McFuzzySquirrel/my-forge/issues/6), after
+the operator ran the review commands and confirmed the contracts, tests,
+conformance fixtures, and migration notes. P3 is authorized to begin. This
+acceptance does not qualify durable Dapr effects; those remain to be
+demonstrated in P3.
+
 **Scope:** P2 run/task identities, immutable submission snapshots, service/control
 models, reusable execution boundaries, application-owned storage contracts,
 conformance fixtures, and package/deployment ownership. This feature does not

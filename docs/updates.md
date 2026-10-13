@@ -4,6 +4,15 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.105
+
+### P2 execution boundary review accepted
+
+- Record operator acceptance of P2-GATE after review of the versioned
+  application contracts, extracted utility tests, and C01–C22 conformance
+  fixtures. P3 implementation is authorized; durable Dapr effects remain
+  unqualified and must be demonstrated in P3.
+
 ## October 2026 - v3.104
 
 ### Dapr execution contract conformance fixtures

@@ -7,7 +7,7 @@
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 
-**Latest: v3.100** — see [docs/updates.md](docs/updates.md) for release notes.
+**Latest: v3.101** — see [docs/updates.md](docs/updates.md) for release notes.
 
 MyForge is a PRD-first workflow for turning product requirements into working software. It combines structured planning, agent-based implementation, and execution orchestration in one path so a project can move from concept to build without losing the review checkpoints that matter.
 
@@ -26,13 +26,13 @@ converted before building. See [Canonical Features](docs/canonical-features.md).
 
 ## Dapr replacement work in this fork
 
-The [implementation tracker](plan.md) records the P0 baseline, compatibility
-proposals, and acceptance gates for replacing orchestration with Dapr Workflow.
+The [implementation tracker](plan.md) records the accepted P0 and P1 gates and
+the remaining work for replacing orchestration with Dapr Workflow.
 The [foundation PRD](docs/PRD.md) and
 [feature contracts](docs/features/dapr-foundation.md) cover the first increment.
 The isolated `tools/dapr-spike` experiment is not the production engine and must
 not be used for repository execution. Existing quick-start commands still use
-the current engine; replacement and retirement remain gated.
+the current engine; replacement and retirement remain gated by later phases.
 
 
 

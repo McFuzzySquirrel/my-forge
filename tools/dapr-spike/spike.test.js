@@ -6,9 +6,9 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { waitForHttpHealth } from './readiness.js';
-import { approvalWorkflow, persistArtifact, validateInput } from './workflow.js';
-import { compactState, main } from './cli.js';
+import { waitForHttpHealth } from './dist/readiness.js';
+import { approvalWorkflow, persistArtifact, validateInput } from './dist/workflow.js';
+import { compactState, main, memoryBytes } from './cli.js';
 import { clean, images, directory, waitUntil } from './stack.js';
 
 test('validates input and rejects traversal or unbounded timers', () => {
@@ -17,6 +17,13 @@ test('validates input and rejects traversal or unbounded timers', () => {
     assert.throws(() => validateInput({ runId: 'ok', timerSeconds }));
   }
   assert.throws(() => validateInput({ runId: '../escape', timerSeconds: 1 }));
+});
+
+test('converts Podman memory units to bytes for budget accounting', () => {
+  assert.equal(memoryBytes('49.15kB'), 49_150);
+  assert.equal(memoryBytes('56.79MB'), 56_790_000);
+  assert.equal(memoryBytes('1.5GiB'), 1_610_612_736);
+  assert.throws(() => memoryBytes('unknown'), /Unrecognized Podman memory value/);
 });
 
 test('workflow deterministically schedules activity, timer, then approval', async () => {
@@ -29,11 +36,12 @@ test('workflow deterministically schedules activity, timer, then approval', asyn
   });
   const workflow = approvalWorkflow(context, { runId: 'unit', timerSeconds: 3 });
   assert.deepEqual((await workflow.next()).value, { name: 'stubActivity', input: { runId: 'unit' } });
-  assert.deepEqual((await workflow.next({ key: 'artifact' })).value, { timer: 3 });
+  const artifact = { key: 'unit.json', sha256: 'digest', bytes: 19 };
+  assert.deepEqual((await workflow.next(artifact)).value, { timer: 3 });
   assert.deepEqual((await workflow.next()).value, { event: 'approval' });
   const completed = await workflow.next(true);
   assert.equal(completed.done, true);
-  assert.equal(/** @type {any} */ (completed.value).approved, true);
+  assert.deepEqual(completed.value, { artifact, approved: true, definitionVersion: 1 });
   assert.deepEqual(calls, ['timer', 'approval', 'completed']);
 });
 
@@ -71,12 +79,12 @@ test('missing Podman prerequisite exits nonzero', () => {
 
 test('workflow rejects non-approval event payload', async () => {
   const context = /** @type {any} */ ({
-    callActivity: () => ({}), setCustomStatus: () => {},
+    callActivity: () => ({ key: 'unit.json', sha256: 'hash', bytes: 1 }), setCustomStatus: () => {},
     createTimer: () => ({}), waitForExternalEvent: () => ({}),
   });
   const workflow = approvalWorkflow(context, { runId: 'unit', timerSeconds: 1 });
   await workflow.next();
-  await workflow.next({});
+  await workflow.next({ key: 'unit.json', sha256: 'hash', bytes: 1 });
   await workflow.next();
   await assert.rejects(workflow.next(false), /Approval must be true/);
 });

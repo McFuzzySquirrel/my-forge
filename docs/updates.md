@@ -4,6 +4,17 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.101
+
+### Dapr spike recovery evidence and launcher baseline
+
+- Fix the `forge-launcher` package's clean-install failure by removing its
+  accidental self-dependency on a local tarball of itself.
+- Build the isolated Dapr worker and workflow from strict TypeScript sources;
+  record rootless Podman restart, readiness, and resource-budget evidence.
+- Record operator acceptance of P1-GATE. P1-06 and P2 are authorized, but Dapr
+  remains an experimental spike and production replacement stays gated.
+
 ## October 2026 - v3.100
 
 ### Dapr replacement foundation and isolated runtime spike

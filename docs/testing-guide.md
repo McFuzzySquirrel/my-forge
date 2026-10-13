@@ -34,10 +34,26 @@ npm test --prefix tools/dapr-spike
 
 Unit/type checks alone do not prove Workflow recovery. Live checks require the
 package's explicit rootless Linux Podman setup and persistent volumes; missing
-prerequisites must fail rather than silently skip. Use the live commands and
-limitations recorded in `plan.md` before collecting qualification evidence.
-Do not treat a stub restart test as proof of Git fencing, provider idempotency,
-backup/restore, cancellation, or hosted failover.
+prerequisites must fail rather than silently skip. After installing dependencies,
+run the live qualification command from the repository root:
+
+```bash
+npm run test:stack --prefix tools/dapr-spike
+```
+
+It builds/pulls the pinned images, starts the isolated stack, exercises worker
+and full-stack restarts, and refreshes the tracked
+`tools/dapr-spike/evidence.json`. A successful run preserves the database,
+Scheduler, and artifact volumes. Stop the stack without deleting those volumes:
+
+```bash
+npm run spike --prefix tools/dapr-spike -- stop
+```
+
+Do not run `clean --confirm-delete-volumes` unless deleting the persistent spike
+state is explicitly intended. See `plan.md` for the exact live observations and
+limitations. A stub restart test is not proof of Git fencing, provider
+idempotency, backup/restore, cancellation, or hosted failover.
 
 ## 2. What the automated suite covers
 

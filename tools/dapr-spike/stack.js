@@ -21,7 +21,7 @@ export const names = ['postgres', 'placement', 'scheduler', 'daprd', 'worker'].m
 export const localImage = 'localhost/myforge-dapr-spike:1';
 
 export function podman(args, { allowFailure = false } = {}) {
-  const result = spawnSync('podman', ['--cgroup-manager=cgroupfs', ...args],
+  const result = spawnSync('podman', args,
     { encoding: 'utf8', cwd: directory, timeout: args[0] === 'exec' ? 125000 : 300000 });
   if (result.error) throw new Error(/** @type {NodeJS.ErrnoException} */ (result.error).code === 'ETIMEDOUT' ? 'Podman command exceeded its deadline' : 'Podman is required and must be on PATH');
   if (result.status !== 0 && !allowFailure) {
@@ -149,13 +149,22 @@ export async function up() {
 
 export function stop() {
   prerequisites();
+  podman(['stop', '--time', '30', `${pod}-worker`]);
   podman(['pod', 'stop', '--time', '30', pod]);
 }
 
 export async function restartWorker() {
-  podman(['stop', '--time', '30', `${pod}-worker`, `${pod}-daprd`]);
-  podman(['start', `${pod}-daprd`, `${pod}-worker`]);
+  podman(['stop', '--time', '30', `${pod}-worker`]);
+  const workerExitCode = Number(podman(['inspect', `${pod}-worker`, '--format', '{{.State.ExitCode}}']).stdout.trim());
+  podman(['stop', '--time', '30', `${pod}-daprd`]);
+  const daprdExitCode = Number(podman(['inspect', `${pod}-daprd`, '--format', '{{.State.ExitCode}}']).stdout.trim());
+  if (workerExitCode !== 0 || daprdExitCode !== 0) {
+    throw new Error(`Worker/sidecar shutdown failed (worker=${workerExitCode}, daprd=${daprdExitCode})`);
+  }
+  podman(['start', `${pod}-daprd`]);
+  podman(['start', `${pod}-worker`]);
   await up();
+  return { worker: workerExitCode, daprd: daprdExitCode };
 }
 
 export function clean(confirmation) {

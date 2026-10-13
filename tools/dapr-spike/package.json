@@ -7,10 +7,12 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "node --test spike.test.js",
-    "typecheck": "tsc --project tsconfig.json",
-    "spike": "node cli.js",
-    "test:stack": "node cli.js verify"
+    "build": "tsc --project tsconfig.json",
+    "test": "npm run build && node --test spike.test.js",
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "setup": "npm run build && node cli.js setup",
+    "spike": "npm run build && node cli.js",
+    "test:stack": "npm run setup && node cli.js verify"
   },
   "keywords": [],
   "author": "",

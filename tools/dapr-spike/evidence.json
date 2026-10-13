@@ -1,17 +1,18 @@
 {
   "schemaVersion": 1,
-  "measuredAt": "2026-10-13T11:50:13.669Z",
+  "measuredAt": "2026-10-13T12:53:04.442Z",
   "result": "passed",
   "qualification": "experimental-preparation-only",
   "phaseGateAccepted": false,
-  "operatorBudgetsApproved": false,
+  "operatorBudgetsApproved": true,
+  "startupReadinessMs": 8130,
   "versions": {
-    "hostNode": "v24.21.0",
+    "hostNode": "v24.15.0",
     "workerNode": "24.11.1",
     "rootless": true,
     "podman": "4.9.3",
     "selinux": false,
-    "hostNpm": "11.19.0",
+    "hostNpm": "11.12.1",
     "localTypeScript": "7.0.2",
     "sdk": "3.18.0",
     "durabletask": "1.0.0",
@@ -59,11 +60,15 @@
     {
       "phase": "timer-after-worker-restart",
       "status": "timer",
-      "elapsedMs": 6346,
+      "elapsedMs": 6401,
+      "stopExitCodes": {
+        "worker": 0,
+        "daprd": 0
+      },
       "readiness": {
         "ready": true,
-        "startupAdmissionMs": 2112,
-        "latestAdmissionMs": 12
+        "startupAdmissionMs": 2057,
+        "latestAdmissionMs": 25
       }
     },
     {
@@ -73,7 +78,7 @@
     {
       "phase": "approval-after-stack-restart",
       "status": "approval",
-      "elapsedMs": 39376,
+      "elapsedMs": 40428,
       "stopExitCodes": {
         "worker": 0,
         "daprd": 0,
@@ -81,10 +86,11 @@
         "placement": 0,
         "scheduler": 0
       },
+      "infraExitCode": 137,
       "readiness": {
         "ready": true,
-        "startupAdmissionMs": 2042,
-        "latestAdmissionMs": 12
+        "startupAdmissionMs": 2061,
+        "latestAdmissionMs": 23
       }
     }
   ],
@@ -95,8 +101,8 @@
     "strategy": "A fresh SDK canary workflow must complete and be purged on each health request",
     "initial": {
       "ready": true,
-      "startupAdmissionMs": 2043,
-      "latestAdmissionMs": 13
+      "startupAdmissionMs": 2066,
+      "latestAdmissionMs": 20
     }
   },
   "outputBytes": 195,
@@ -109,30 +115,246 @@
     "replayContinuity": "executed through restart",
     "terminateSuspendResumePurge": "released client methods inspected, not qualified",
     "retries": "No retry-policy argument in released WorkflowContext.callActivity; not qualified",
-    "shutdown": "SIGTERM worker stop and stack stop exit codes measured"
+    "shutdown": "SIGTERM worker and service-container stack stop exit codes measured; Podman infra teardown code recorded separately"
   },
   "volumesPreserved": 3,
-  "elapsedMs": 116533,
+  "elapsedMs": 141319,
+  "volumeAccess": "PostgreSQL workflow state, Scheduler state, and artifact write/read verified",
   "infrastructurePortsPublished": false,
   "hostPortsPublished": 0,
   "controlAccess": "podman exec; SDK API on pod loopback only",
   "cachedOfflineStub": true,
   "networkMode": "none",
   "resources": {
-    "measured": false,
-    "reason": "Container cgroup accounting unavailable; budgets not qualified"
+    "measured": true,
+    "sampleCount": 5,
+    "maxMemoryBytes": 3221225472,
+    "peakMemoryBytes": 129833150,
+    "peakMemoryMiB": 123.82,
+    "budgetsQualified": true,
+    "samples": [
+      {
+        "measuredAt": "2026-10-13T12:52:44.245Z",
+        "totalMemoryBytes": 129362150,
+        "containers": [
+          {
+            "service": "infra",
+            "memory": "49.15kB / 33.49GB",
+            "memoryBytes": 49150,
+            "cpu": "0.03%"
+          },
+          {
+            "service": "worker",
+            "memory": "51.51MB / 33.49GB",
+            "memoryBytes": 51510000,
+            "cpu": "22.23%"
+          },
+          {
+            "service": "daprd",
+            "memory": "26.1MB / 33.49GB",
+            "memoryBytes": 26100000,
+            "cpu": "1.37%"
+          },
+          {
+            "service": "postgres",
+            "memory": "7.221MB / 33.49GB",
+            "memoryBytes": 7221000,
+            "cpu": "1.00%"
+          },
+          {
+            "service": "placement",
+            "memory": "8.352MB / 33.49GB",
+            "memoryBytes": 8352000,
+            "cpu": "1.27%"
+          },
+          {
+            "service": "scheduler",
+            "memory": "36.13MB / 33.49GB",
+            "memoryBytes": 36130000,
+            "cpu": "1.64%"
+          }
+        ]
+      },
+      {
+        "measuredAt": "2026-10-13T12:52:49.289Z",
+        "totalMemoryBytes": 129462150,
+        "containers": [
+          {
+            "service": "infra",
+            "memory": "49.15kB / 33.49GB",
+            "memoryBytes": 49150,
+            "cpu": "0.02%"
+          },
+          {
+            "service": "worker",
+            "memory": "51.51MB / 33.49GB",
+            "memoryBytes": 51510000,
+            "cpu": "15.44%"
+          },
+          {
+            "service": "daprd",
+            "memory": "26.1MB / 33.49GB",
+            "memoryBytes": 26100000,
+            "cpu": "0.98%"
+          },
+          {
+            "service": "postgres",
+            "memory": "7.234MB / 33.49GB",
+            "memoryBytes": 7234000,
+            "cpu": "0.72%"
+          },
+          {
+            "service": "placement",
+            "memory": "8.409MB / 33.49GB",
+            "memoryBytes": 8409000,
+            "cpu": "1.21%"
+          },
+          {
+            "service": "scheduler",
+            "memory": "36.16MB / 33.49GB",
+            "memoryBytes": 36160000,
+            "cpu": "1.29%"
+          }
+        ]
+      },
+      {
+        "measuredAt": "2026-10-13T12:52:54.337Z",
+        "totalMemoryBytes": 129564150,
+        "containers": [
+          {
+            "service": "infra",
+            "memory": "49.15kB / 33.49GB",
+            "memoryBytes": 49150,
+            "cpu": "0.01%"
+          },
+          {
+            "service": "worker",
+            "memory": "51.51MB / 33.49GB",
+            "memoryBytes": 51510000,
+            "cpu": "11.83%"
+          },
+          {
+            "service": "daprd",
+            "memory": "26.1MB / 33.49GB",
+            "memoryBytes": 26100000,
+            "cpu": "0.77%"
+          },
+          {
+            "service": "postgres",
+            "memory": "7.234MB / 33.49GB",
+            "memoryBytes": 7234000,
+            "cpu": "0.59%"
+          },
+          {
+            "service": "placement",
+            "memory": "8.491MB / 33.49GB",
+            "memoryBytes": 8491000,
+            "cpu": "1.16%"
+          },
+          {
+            "service": "scheduler",
+            "memory": "36.18MB / 33.49GB",
+            "memoryBytes": 36180000,
+            "cpu": "1.09%"
+          }
+        ]
+      },
+      {
+        "measuredAt": "2026-10-13T12:52:59.385Z",
+        "totalMemoryBytes": 129686150,
+        "containers": [
+          {
+            "service": "infra",
+            "memory": "49.15kB / 33.49GB",
+            "memoryBytes": 49150,
+            "cpu": "0.01%"
+          },
+          {
+            "service": "worker",
+            "memory": "51.51MB / 33.49GB",
+            "memoryBytes": 51510000,
+            "cpu": "9.59%"
+          },
+          {
+            "service": "daprd",
+            "memory": "26.1MB / 33.49GB",
+            "memoryBytes": 26100000,
+            "cpu": "0.64%"
+          },
+          {
+            "service": "postgres",
+            "memory": "7.234MB / 33.49GB",
+            "memoryBytes": 7234000,
+            "cpu": "0.48%"
+          },
+          {
+            "service": "placement",
+            "memory": "8.593MB / 33.49GB",
+            "memoryBytes": 8593000,
+            "cpu": "1.14%"
+          },
+          {
+            "service": "scheduler",
+            "memory": "36.2MB / 33.49GB",
+            "memoryBytes": 36200000,
+            "cpu": "0.97%"
+          }
+        ]
+      },
+      {
+        "measuredAt": "2026-10-13T12:53:04.441Z",
+        "totalMemoryBytes": 129833150,
+        "containers": [
+          {
+            "service": "infra",
+            "memory": "49.15kB / 33.49GB",
+            "memoryBytes": 49150,
+            "cpu": "0.01%"
+          },
+          {
+            "service": "worker",
+            "memory": "51.51MB / 33.49GB",
+            "memoryBytes": 51510000,
+            "cpu": "8.06%"
+          },
+          {
+            "service": "daprd",
+            "memory": "26.1MB / 33.49GB",
+            "memoryBytes": 26100000,
+            "cpu": "0.55%"
+          },
+          {
+            "service": "postgres",
+            "memory": "7.234MB / 33.49GB",
+            "memoryBytes": 7234000,
+            "cpu": "0.41%"
+          },
+          {
+            "service": "placement",
+            "memory": "8.7MB / 33.49GB",
+            "memoryBytes": 8700000,
+            "cpu": "1.12%"
+          },
+          {
+            "service": "scheduler",
+            "memory": "36.24MB / 33.49GB",
+            "memoryBytes": 36240000,
+            "cpu": "0.89%"
+          }
+        ]
+      }
+    ]
   },
   "limitations": [
     "Single-host clean restart, not crash/partition or cross-host recovery",
-    "P0 formal operator budgets gate remains closed; this spike is preparation evidence, not architecture acceptance",
     "Offline proof covers execution with cached images and dependencies, not fresh installation or online harnesses",
     "Stub activity only; no harness, Git worktree, provider, retry or cancellation qualification",
     "At-least-once activity execution; deterministic receipt prevents conflicting accepted artifact",
     "Workflow history not enumerated by the released high-level SDK; continuity checked by instance identity, creation time, phase and artifact",
     "No authenticated production control API, backup/restore or independent activity deployment",
-    "Podman stats returned missing-cgroup warnings and unusable measurements; resource budgets remain unqualified",
+    "Podman infrastructure container exits with code 137 during pod teardown; workload/service shutdown codes are recorded separately",
     "Host loopback port forwarding timed out in this environment; zero published ports and in-pod SDK control selected",
     "Container npm ci failed in build networking; image copies Linux host npm-installed dependencies",
-    "SDK3.18.0 requires async generator workflows despite its Generator declaration; sync generators silently completed without scheduling tasks in a failed initial experiment"
+    "Dapr SDK v3.18.0 exports a broad TWorkflow alias; runtime support is proven with async generators, but the registration callback is not statically constrained"
   ]
 }

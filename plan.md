@@ -2,8 +2,9 @@
 
 **Created:** 2026-10-13
 
-**Status:** P0 evidence prepared; acceptance blocked by launcher baseline and
-operator review. P1 is an isolated experimental spike, not production replacement.
+**Status:** P0-GATE and P1-GATE accepted by the operator; P1-06 and P2 are
+authorized. The runtime remains an experimental spike, not a production
+replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
 profiles; no permanent legacy backend
@@ -49,9 +50,9 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 
 | Phase | Depends on | Accountable role to assign | Status | Issue/PR and acceptance evidence |
 |---|---|---|---|---|
-| P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Review pending / baseline blocked | [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
-| P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | Experimental preparation; gate closed | [Foundation contracts](docs/features/dapr-foundation.md); no issue/PR assigned |
-| P2 — Reusable execution boundary | P1 gate | Engine + contracts | Not started | Unassigned |
+| P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Gate accepted; baseline unblocked | [P0 review #2](https://github.com/McFuzzySquirrel/my-forge/issues/2); [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
+| P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 ADR authorized | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [foundation contracts](docs/features/dapr-foundation.md) |
+| P2 — Reusable execution boundary | P1 gate | Engine + contracts | Authorized; not started | Unassigned |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | Not started | Unassigned |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
@@ -397,29 +398,31 @@ change does not alter runtime behavior or imply a new release.
 
 ## Immediate next work package
 
-Begin **P0-01 through P0-06**, then execute **P1-01 through P1-05** as a bounded
-capability/local-runtime spike. Do not implement Console migration or remove the
-legacy engine until the upstream phase gates are accepted. Assign owners and
-issue links in the tracking table as work begins.
+Commit and push the accepted P1 evidence first. Then create the **P1-06**
+architecture ADR and begin P2 in the next session. Console migration and
+legacy-engine retirement remain gated by their later phases.
 
 ## P0 evidence — 2026-10-13
 
-This section records preparation, not human acceptance or release qualification.
-No issue/PR number or operator approval is fabricated. Checkboxes above remain
-unchecked until the tracking rules are satisfied. Baseline work ran against the
-existing engine without changing it.
+This section records preparation and the operator's explicit P0-GATE decision,
+not release qualification. On 2026-10-13, the operator accepted P0-01/P0-02,
+the compatibility register, and proposed budgets, then approved P0-GATE and
+authorized the isolated P1 spike. The agent does not generate the human-review
+JSON file. Checkboxes above remain unchecked until their deliverables and
+acceptance evidence are merged. Baseline work ran against the existing engine
+without changing it.
 
 ### Deliverable status
 
 | Work package | Evidence produced | Remaining acceptance |
 |---|---|---|
-| P0-01 | Execution/test inventory below | Architecture/QA review |
-| P0-02 | Caller/authority inventory below | Confirm complete caller migration ownership |
-| P0-03 | Engine/adapter baselines passed; launcher installation blocked | Resolve or explicitly accept the pre-existing launcher limitation; run its checks |
-| P0-04 | Proposed compatibility dispositions below | Operator acceptance before production extraction |
-| P0-05 | [Foundation PRD](docs/PRD.md) and [feature](docs/features/dapr-foundation.md) | Four structured contracts validate with zero errors/warnings; planned specialist still needs generation before compilation |
-| P0-06 | Proposed budgets/threat boundaries below | Operator must accept or adjust measurable thresholds |
-| P0-GATE | Explicit human-review contract `P0-GATE` | **Closed**; no review attestation has been written |
+| P0-01 | Execution/test inventory below cross-checked against current CLI/engine call paths | Accepted by operator on 2026-10-13 |
+| P0-02 | Caller/authority inventory below cross-checked; Console write boundaries clarified | Accepted by operator on 2026-10-13 |
+| P0-03 | Engine/adapter baselines passed; launcher clean install and checks now pass | Baseline disposition complete; see rerun evidence below |
+| P0-04 | Compatibility dispositions below accepted by the operator on 2026-10-13 | Acceptance recorded; applies to the proposed replacement contract |
+| P0-05 | [Foundation PRD](docs/PRD.md) and [feature](docs/features/dapr-foundation.md); four structured contracts validate with zero errors/warnings | Specialist generation is intentionally deferred until after P0-GATE and before compiling a runnable manifest |
+| P0-06 | Budgets/trust boundaries below accepted by the operator on 2026-10-13 | Acceptance recorded; startup, memory, and restart thresholds measured in P1; remaining limits stay unqualified |
+| P0-GATE | Explicit human-review contract `P0-GATE` | Accepted by operator on 2026-10-13; isolated P1 authorized; no review JSON generated |
 
 Only P0/P1 execution contracts are authored in this increment. P2–P8 remain
 roadmap work: author their canonical features after the preceding gates pass,
@@ -438,13 +441,15 @@ committed repository artifacts.
 |---|---|---|---|---|
 | Workflow engine | `npm ci` passed | `npm test`: 283 passed, 7 skipped, 0 failed; 27.76 s | Passed | Skips are not durability/platform evidence |
 | Execution adapter | `npm ci` passed | `npm test`: 49 passed, 0 failed; 9.87 s | Passed | Canonical validation below |
-| Launcher | `npm ci` failed, exit 254 | Blocked | Blocked | Build and version check blocked |
+| Launcher | `npm ci --ignore-scripts` passed | `npm test`: 295 passed, 0 failed | Passed | Build and `check:version` passed |
 
-The launcher has a pre-existing dependency on
-`file:forge-launcher-1.0.0-beta.6.tgz`, but that tarball is absent. Evidence:
-`scripts/forge-launcher/package.json:26`. Do not synthesize a tarball, remove the
-dependency, or report launcher tests as passing to bypass this baseline.
-This unrelated packaging issue is left unchanged and blocks full P0 qualification.
+The initial launcher baseline was blocked by a package self-dependency on
+`file:forge-launcher-1.0.0-beta.6.tgz`. The self-dependency was not used by source
+code, and the existing beta.6 archive's package metadata did not declare it.
+Removed the accidental self-dependency from `scripts/forge-launcher/package.json`
+and refreshed its lockfile; no tarball was synthesized. A clean install, tests,
+typecheck, build, and version check then passed. This packaging correction is
+separate from the workflow-engine replacement.
 
 Canonical authoring check:
 `npm run validate-prd --prefix templates/skills/forge-execution-adapter -- /home/runner/work/my-forge/my-forge`
@@ -483,10 +488,10 @@ do not exist merely because comparable local-engine tests pass.
 |---|---|---|
 | Engine CLI and state manager | Manifest/state/progress/audit/artifacts; control polling and PID; human review files | Runtime, P4-01/P4-03/P4-04 |
 | Launcher `engine-run.ts:46-211` | Installs local skills, compiles missing manifest, forwards flags, tees log; stop/pause path | Launcher, P5-03 |
-| Launcher `resume.ts`, `launcher.ts` | Selects stages, dispatches/detaches local processes and resumes repository runs | Launcher, P5-03 |
+| Launcher `cli.ts`, `launcher.ts` (resume pipeline), `engine-run.ts` | Selects stages, dispatches/detaches local processes and resumes repository runs | Launcher, P5-03 |
 | `bootstrap.ts`, `stage-resources.mjs` | Copies skills/personas/resources, initializes ignore rules and configuration | Packaging, P5-03 |
-| Console `paths.ts:90-124`, `jobs.ts`, `control.ts` | Reads manifest/state/log/PID; spawns jobs; writes controls/config and signals processes | Console, P5-04 |
-| Console `repo.ts` | **Also writes state/manifest** for reconciliation/reset/model changes; not merely read-only | Console + contracts, P2-01/P5-04 |
+| Console `paths.ts:90-124`, `jobs.ts`, `control.ts` | Reads manifest/state/log/PID; spawns jobs; persists Console job records and control requests; signals processes | Console, P5-04 |
+| Console `repo.ts` | **Also writes workflow state, manifest, and engine config** for reconciliation, changed-task resets, timeouts, selections, and run settings; not merely read-only | Console + contracts, P2-01/P5-04 |
 | Console dashboard `state.ts`, `views/board.ts`, `views/tasks.ts` | Projects status/readiness, artifacts and review controls; uses installed engine readiness logic | Console, P5-04 |
 | Engine `viz/server.ts` | Reads manifest/state/audit; serves workflow visualization | Visualization, P5-04 or explicit retirement decision |
 | `forge-auto-build/SKILL.md` | Fast-path compile/detached run and file polling | Skills, P5-03 |
@@ -566,8 +571,9 @@ State field register (`engine/types.ts:24-75,220-260`):
 
 ### Proposed acceptance budgets and trust boundaries
 
-**Operator review required:** these are testable starting proposals, not approved
-SLOs or claims already demonstrated.
+**Operator-accepted thresholds (2026-10-13):** these are qualification limits,
+not production SLOs. Measurements and remaining gaps are recorded in the P1
+evidence below.
 
 | Area | Proposed threshold / boundary |
 |---|---|
@@ -584,14 +590,26 @@ SLOs or claims already demonstrated.
 | Services | Infrastructure private; any host application endpoint loopback only; production browser/API authentication belongs to P5 |
 | Recovery claim | Both PostgreSQL workflow data and Scheduler storage persisted; clean-host failover requires shared artifact/Git reconstruction in P8 |
 
-### Open gates and next actions
+## P1 spike evidence — 2026-10-13
 
-1. Obtain a disposition for the missing launcher tarball and rerun its baseline
-   checks; do not fix this unrelated issue as part of a workflow rewrite.
-2. Have an operator review compatibility and budgets via `P0-GATE`; no agent
-   approval file is produced here.
-3. Evaluate the isolated spike's released support and live evidence, then accept
-   or block `P1-GATE`. Until then P2–P8 and legacy retirement remain closed.
+The isolated live verification passed, and the operator accepted P1-GATE on
+2026-10-13, authorizing P1-06 and P2. This does not qualify a production
+replacement. Tracking is in [P1 issue #3](https://github.com/McFuzzySquirrel/my-forge/issues/3).
+No human review JSON or architecture ADR has been generated yet.
+
+| Work package | Recorded evidence | Remaining disposition |
+|---|---|---|
+| P1-01 | Dapr 1.18.7, JS SDK 3.18.0, PostgreSQL state component v2, rootless Podman 4.9.3, host Node 24.15.0, worker Node 24.11.1; official pinned-release sources and image digests are in `tools/dapr-spike/evidence.json`. Registration, activity, timer, event, status, restart replay, and graceful SIGTERM shutdown exercised. | Retry policy is not exposed by the released `callActivity` API; termination/suspend/resume/purge methods were inspected but not qualified. |
+| P1-02 | Strict TypeScript workflow/worker/readiness sources build and pass package checks; one application registers the workflow and activity. | Keep the language/topology decision provisional: the SDK's broad `TWorkflow` alias does not statically constrain registration callbacks. |
+| P1-03 | Rootless Podman stack uses private `network=none`, zero published ports, PostgreSQL workflow state, Scheduler storage, and separate artifact volume; three volumes persist across stop. | Isolated stub topology only; not a production service or manifest runner. |
+| P1-04 | Same workflow ID and creation timestamp recovered through worker/sidecar and full-stack restarts; timer and approval phases survived; output artifact digest matched. Worker and service-container stop exit codes were 0; Podman infra exited 137 during pod teardown. Full restart recovery took 40.4 s. | Clean restart only; no crash/partition, cross-host failover, or explicit history enumeration. |
+| P1-05 | Cached startup readiness 8.1 s; five idle memory samples included the pod infra container, peaking at 129,833,150 bytes (123.82 MiB) against the accepted 3 GiB ceiling. Rootless, SELinux, readiness, private-port, signal, and cached-offline observations are recorded. | Cancellation, fresh/offline installation, host loopback forwarding, backup/restore, and local-model paths remain unqualified. |
+
+The machine-readable observations, image digests, exact phase timings, and
+limitations are in [`tools/dapr-spike/evidence.json`](tools/dapr-spike/evidence.json).
+The reproducible live command and volume-preserving stop procedure are in the
+[testing guide](docs/testing-guide.md). P1-06 and P2 are authorized; P3–P8 remain
+closed until their own gates pass.
 
 ---
 

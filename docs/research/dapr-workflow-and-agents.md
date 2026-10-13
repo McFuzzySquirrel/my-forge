@@ -3,16 +3,16 @@
 **Date:** 2026-10-12
 **Revised:** 2026-10-13
 **Status:** Full-replacement roadmap for the MyForge fork; production replacement
-not implemented, foundation experiment in progress
+not implemented, isolated P1 runtime evidence prepared for operator review
 
 **Implementation tracking:** [Phased implementation plan](../../plan.md).
 The plan contains stable work-package IDs, dependencies, checklists, and
 acceptance gates; this document retains the architectural rationale.
 
 **Foundation increment:** [Canonical PRD](../PRD.md) and
-[foundation contracts](../features/dapr-foundation.md) now define P0 review and
-the isolated P1 spike. Their human gates remain closed until reviewed; this is
-not authorization to replace the production engine.
+[foundation contracts](../features/dapr-foundation.md) define P0 review and the
+isolated P1 spike. P0-GATE and P1-GATE were accepted on 2026-10-13; P1-06 and P2
+are authorized. This is not authorization to replace the production engine.
 
 ## Question
 
@@ -124,13 +124,38 @@ The current multi-application workflow documentation says JavaScript support is
 planned, not available. Start with a single workflow application; do not base
 the first release on independent TypeScript activity applications.
 
-The sources were the official repositories' default-branch documentation and
-may describe unreleased features. No deployment has been tested here. Record
-exact runtime/SDK/image versions and released feature support during the spike.
-If the selected JavaScript release cannot meet the required semantics, decide
+The original design review used official repositories' default-branch
+documentation, which may describe unreleased features. The isolated spike now
+records exact released versions, image digests, and official release sources in
+[`tools/dapr-spike/evidence.json`](../../tools/dapr-spike/evidence.json). Its
+live support/recovery observations and remaining limitations are summarized in
+[`plan.md`](../../plan.md#p1-spike-evidence--2026-10-13). Keep the language and
+topology decision provisional until the operator reviews the evidence. If the
+selected JavaScript release cannot meet the required semantics, decide
 explicitly between a supported orchestration language with a Node execution
 service and waiting for JavaScript support; do not silently build a custom
 workflow transport.
+
+### P1 runtime observations — 2026-10-13
+
+The rootless Linux Podman spike passed its live timer/approval recovery test
+using Dapr 1.18.7, JavaScript SDK 3.18.0, PostgreSQL `state.postgresql/v2`,
+and pinned container digests. A workflow retained its instance identity and
+creation timestamp through a worker/sidecar restart and a full stack restart;
+worker and service-container shutdown exit codes were zero, while the Podman
+infrastructure container exited 137 during pod teardown. The completed artifact
+digest matched the workflow output. The full restart returned to the approval
+wait in 40.4 seconds.
+
+Cached startup readiness was 8.1 seconds. Five idle resource samples, including
+the pod infrastructure container, peaked at 123.82 MiB against the operator-
+accepted 3 GiB threshold. The pod had no network and no published ports; three
+persistent volumes remained intact. Evidence establishes a clean single-host
+restart and cached stub execution only. It does not establish cancellation,
+crash/partition recovery, cross-host failover, backup/restore, fresh offline
+installation, or local-model support. The operator accepted P1-GATE; the P1-06
+architecture ADR remains to be written, and production replacement remains
+gated by later phases.
 
 Dapr documents Podman initialization explicitly. Its default development
 initialization is a useful spike path, not the production topology proposed below.

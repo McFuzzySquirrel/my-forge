@@ -4,7 +4,8 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { validateInput } from './workflow.js';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { validateInput } from './dist/workflow.js';
 import { setup, up, stop, clean, restartWorker, prerequisites, podman, waitUntil,
   directory, pod, images, volumes } from './stack.js';
 
@@ -57,11 +58,63 @@ function workerReadiness() {
   return probe;
 }
 
+export function memoryBytes(value) {
+  const match = /^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)$/i.exec(value.trim());
+  if (!match) throw new Error(`Unrecognized Podman memory value: ${value}`);
+  const unit = match[2].toUpperCase();
+  const exponent = { B: 0, KB: 1, MB: 2, GB: 3, TB: 4, KIB: 1, MIB: 2, GIB: 3, TIB: 4 }[unit];
+  const base = unit.endsWith('IB') ? 1024 : 1000;
+  return Math.ceil(Number(match[1]) * base ** exponent);
+}
+
+async function measureResources(infraName) {
+  const services = [infraName, ...['worker', 'daprd', 'postgres', 'placement', 'scheduler'].map(name => `${pod}-${name}`)];
+  const maxMemoryBytes = 3 * 1024 ** 3;
+  const samples = [];
+  for (let index = 0; index < 5; index += 1) {
+    const result = podman(['stats', '--no-stream', '--format', 'json', ...services], { allowFailure: true });
+    if (result.status !== 0 || result.stderr.includes('Failed to retrieve cgroup stats')) {
+      return { measured: false, reason: `Podman stats unavailable (exit ${result.status})` };
+    }
+    const containers = JSON.parse(result.stdout);
+    if (containers.length !== services.length) {
+      throw new Error(`Expected stats for ${services.length} containers, received ${containers.length}`);
+    }
+    const rows = containers.map(item => ({
+      service: item.name === infraName ? 'infra' : item.name.replace(`${pod}-`, ''),
+      memory: item.mem_usage,
+      memoryBytes: memoryBytes(item.mem_usage.split('/')[0]),
+      cpu: item.cpu_percent,
+    }));
+    samples.push({
+      measuredAt: new Date().toISOString(),
+      totalMemoryBytes: rows.reduce((total, row) => total + row.memoryBytes, 0),
+      containers: rows,
+    });
+    if (index < 4) await sleep(5_000);
+  }
+  const peakMemoryBytes = Math.max(...samples.map(sample => sample.totalMemoryBytes));
+  return {
+    measured: true,
+    sampleCount: samples.length,
+    maxMemoryBytes,
+    peakMemoryBytes,
+    peakMemoryMiB: Number((peakMemoryBytes / 1024 ** 2).toFixed(2)),
+    budgetsQualified: peakMemoryBytes <= maxMemoryBytes,
+    samples,
+  };
+}
+
 export async function verify() {
   const started = Date.now();
   const host = prerequisites();
+  if (podman(['pod', 'exists', pod], { allowFailure: true }).status === 0) stop();
+  const startupStarted = Date.now();
   await up();
+  const startupReadinessMs = Date.now() - startupStarted;
+  assert.ok(startupReadinessMs <= 180_000, `Cached stack readiness took ${startupReadinessMs}ms (budget 180000ms)`);
   const infraId = podman(['pod', 'inspect', pod, '--format', '{{.InfraContainerID}}']).stdout.trim();
+  const infraName = podman(['inspect', infraId, '--format', '{{.Name}}']).stdout.trim().replace(/^\//, '');
   const networkMode = podman(['inspect', infraId, '--format', '{{.HostConfig.NetworkMode}}']).stdout.trim();
   assert.equal(networkMode, 'none', 'Offline stub proof requires a network-isolated pod');
   const portBindings = JSON.parse(podman(['pod', 'inspect', pod, '--format', '{{json .InfraConfig.PortBindings}}']).stdout.trim()) ?? {};
@@ -75,23 +128,35 @@ export async function verify() {
     const timer = await stateAt(client, runId, 'timer');
     phases.push({ phase: 'timer-before-restart', status: timer.customStatus });
     const workerStart = Date.now();
-    await restartWorker();
+    const workerRestartExitCodes = await restartWorker();
+    const workerRestartMs = Date.now() - workerStart;
+    assert.ok(workerRestartMs <= 120_000, `Worker recovery took ${workerRestartMs}ms (budget 120000ms)`);
     const afterWorker = await client.getWorkflowState(runId, true);
     assert.equal(afterWorker.instanceId, runId);
     assert.equal(afterWorker.createdAt.toISOString(), timer.createdAt.toISOString());
     assert.equal(afterWorker.customStatus, 'timer', 'Restart must finish while timer is still waiting');
-    phases.push({ phase: 'timer-after-worker-restart', status: afterWorker.customStatus, elapsedMs: Date.now() - workerStart,
-      readiness: workerReadiness() });
+    phases.push({ phase: 'timer-after-worker-restart', status: afterWorker.customStatus, elapsedMs: workerRestartMs,
+      stopExitCodes: workerRestartExitCodes, readiness: workerReadiness() });
     const approval = await stateAt(client, runId, 'approval');
     phases.push({ phase: 'approval-before-stack-restart', status: approval.customStatus });
     const stackStart = Date.now();
     stop();
-    const stopExitCodes = Object.fromEntries(['worker', 'daprd', 'postgres', 'placement', 'scheduler'].map(name =>
-      [name, Number(podman(['inspect', `${pod}-${name}`, '--format', '{{.State.ExitCode}}']).stdout.trim())]));
+    const stopExitCodes = Object.fromEntries(
+      ['worker', 'daprd', 'postgres', 'placement', 'scheduler'].map(name => [
+        name,
+        Number(podman(['inspect', `${pod}-${name}`, '--format', '{{.State.ExitCode}}']).stdout.trim()),
+      ]),
+    );
+    for (const [name, code] of Object.entries(stopExitCodes)) {
+      assert.equal(code, 0, `${name} must stop gracefully while preserving the stack volumes`);
+    }
+    const infraExitCode = Number(podman(['inspect', infraId, '--format', '{{.State.ExitCode}}']).stdout.trim());
     await up();
+    const stackRestartMs = Date.now() - stackStart;
+    assert.ok(stackRestartMs <= 120_000, `Stack recovery took ${stackRestartMs}ms (budget 120000ms)`);
     const afterStack = await stateAt(client, runId, 'approval');
     assert.equal(afterStack.createdAt.toISOString(), timer.createdAt.toISOString());
-    phases.push({ phase: 'approval-after-stack-restart', status: afterStack.customStatus, elapsedMs: Date.now() - stackStart, stopExitCodes,
+    phases.push({ phase: 'approval-after-stack-restart', status: afterStack.customStatus, elapsedMs: stackRestartMs, stopExitCodes, infraExitCode,
       readiness: workerReadiness() });
     await client.raiseEvent(runId, 'approval', true);
     const completed = await client.waitForWorkflowCompletion(runId, true, 60);
@@ -104,14 +169,15 @@ export async function verify() {
     const resolvedImages = Object.fromEntries(Object.entries(images).map(([key, image]) =>
       [key, { tag: image, digest: JSON.parse(podman(['image', 'inspect', image]).stdout)[0].Digest }]));
     const lock = JSON.parse(await readFile(join(directory, 'package-lock.json'), 'utf8'));
-    const stats = podman(['stats', '--no-stream', '--format', 'json',
-      ...['worker', 'daprd', 'postgres', 'placement', 'scheduler'].map(name => `${pod}-${name}`)],
-    { allowFailure: true });
-    const resourceAccountingUnavailable = stats.status !== 0 || stats.stderr.includes('Failed to retrieve cgroup stats');
+    const resources = await measureResources(infraName);
+    assert.equal(resources.measured, true, resources.reason ?? 'Container memory accounting is required');
+    assert.equal(resources.budgetsQualified, true,
+      `Peak idle memory ${resources.peakMemoryBytes} bytes exceeds ${resources.maxMemoryBytes} bytes`);
     const evidence = {
       schemaVersion: 1, measuredAt: new Date().toISOString(), result: 'passed',
       qualification: 'experimental-preparation-only',
-      phaseGateAccepted: false, operatorBudgetsApproved: false,
+      phaseGateAccepted: false, operatorBudgetsApproved: true,
+      startupReadinessMs,
       versions: { hostNode: process.version, workerNode: '24.11.1', ...host,
         hostNpm: spawnSync('npm', ['--version'], { encoding: 'utf8' }).stdout.trim(),
         localTypeScript: lock.packages['node_modules/typescript'].version,
@@ -134,27 +200,24 @@ export async function verify() {
         replayContinuity: 'executed through restart',
         terminateSuspendResumePurge: 'released client methods inspected, not qualified',
         retries: 'No retry-policy argument in released WorkflowContext.callActivity; not qualified',
-        shutdown: 'SIGTERM worker stop and stack stop exit codes measured'
+        shutdown: 'SIGTERM worker and service-container stack stop exit codes measured; Podman infra teardown code recorded separately'
       },
       volumesPreserved: volumes.length, elapsedMs: Date.now() - started,
+      volumeAccess: 'PostgreSQL workflow state, Scheduler state, and artifact write/read verified',
       infrastructurePortsPublished: false, hostPortsPublished: 0, controlAccess: 'podman exec; SDK API on pod loopback only',
       cachedOfflineStub: true, networkMode,
-      resources: resourceAccountingUnavailable
-        ? { measured: false, reason: 'Container cgroup accounting unavailable; budgets not qualified' }
-        : { measured: true, snapshots: JSON.parse(stats.stdout).map(item => ({
-          service: item.name.replace(`${pod}-`, ''), memory: item.mem_usage, cpu: item.cpu_percent
-        })), budgetsQualified: false },
+      resources,
       limitations: ['Single-host clean restart, not crash/partition or cross-host recovery',
-        'P0 formal operator budgets gate remains closed; this spike is preparation evidence, not architecture acceptance',
+        ...(resources.budgetsQualified ? [] : ['The accepted idle-memory budget is not qualified by this run']),
         'Offline proof covers execution with cached images and dependencies, not fresh installation or online harnesses',
         'Stub activity only; no harness, Git worktree, provider, retry or cancellation qualification',
         'At-least-once activity execution; deterministic receipt prevents conflicting accepted artifact',
         'Workflow history not enumerated by the released high-level SDK; continuity checked by instance identity, creation time, phase and artifact',
         'No authenticated production control API, backup/restore or independent activity deployment',
-        'Podman stats returned missing-cgroup warnings and unusable measurements; resource budgets remain unqualified',
+        'Podman infrastructure container exits with code 137 during pod teardown; workload/service shutdown codes are recorded separately',
         'Host loopback port forwarding timed out in this environment; zero published ports and in-pod SDK control selected',
         'Container npm ci failed in build networking; image copies Linux host npm-installed dependencies',
-        'SDK3.18.0 requires async generator workflows despite its Generator declaration; sync generators silently completed without scheduling tasks in a failed initial experiment']
+        'Dapr SDK v3.18.0 exports a broad TWorkflow alias; runtime support is proven with async generators, but the registration callback is not statically constrained']
     };
     await writeFile(join(directory, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
   });

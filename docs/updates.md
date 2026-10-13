@@ -4,6 +4,27 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.109
+
+### P3 Git effect reconciliation
+
+- Record a durable integration intent before each fenced Git mutation and bind
+  every integrated commit to a verified task checkpoint (first parent is the
+  expected head; tree is the checkpoint tree). Integration records note whether
+  the authority or reconciliation wrote them.
+- Redelivery after a crash between the ref update and the integration record
+  now records the existing commit instead of reporting a head conflict or
+  creating a second commit. `reconcile()` and `reconcileIntegrationReceipt`
+  accept such effects once, fail and fence attempts that never reached the
+  branch, and keep checkpoint-less or conflicting effects ambiguous.
+- Add `resolveGitEffectPolicy` for the P0 auto-commit register: disabled
+  auto-commit, nothing to commit, and non-fatal commit failures accept only a
+  verified checkpoint. Add contract §3 reconciliation rules and fixtures C23–C25.
+- Schema: `forge_repository_integrations` gains `checkpoint_digest`,
+  `recorded_by`, and a unique commit per branch; new
+  `forge_repository_integration_intents`. These P3 tables are unreleased —
+  recreate test schemas rather than migrating them.
+
 ## October 2026 - v3.108
 
 ### P3 fenced repository integration

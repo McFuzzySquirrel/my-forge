@@ -57,7 +57,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Gate accepted; baseline unblocked | [P0 review #2](https://github.com/McFuzzySquirrel/my-forge/issues/2); [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
-| P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–04 implemented; P3-04 PostgreSQL fencing and Git ref CAS checks pass; P3-GATE not accepted | Unassigned |
+| P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–05 implemented; P3-04/05 PostgreSQL fencing, Git ref CAS, and Git-effect reconciliation checks pass; P3-GATE not accepted | Unassigned |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
@@ -204,7 +204,7 @@ repository integration authority.
   tokens per repository/target branch. Enforce the token at the actual mutation
   boundary so expired workers cannot write directly; a pre-write TTL check alone
   is insufficient. Check expected heads, serialize integration, and surface conflicts.
-- [ ] **P3-05 — Reconcile Git effects.** Detect an already integrated change after
+- [x] **P3-05 — Reconcile Git effects.** Detect an already integrated change after
   a crash before receipt persistence; avoid duplicate commits. Preserve audit
   references. Apply P0's explicit no-auto-commit/commit-failure policy without
   marking an uncheckpointed effect recoverable.
@@ -410,7 +410,7 @@ P1-06 is recorded in [ADR-066](docs/adr/066-dapr-workflow-full-replacement-archi
 The P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03
 landed in [issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4).
 P2-05 is tracked in [issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5):
-cases C01–C22 in [contract v1 §5](docs/contracts/dapr-execution-v1.md#5-conformance-matrix)
+cases C01–C25 in [contract v1 §5](docs/contracts/dapr-execution-v1.md#5-conformance-matrix)
 run through `npm test --prefix tools/dapr-engine` against an in-memory
 reference model. The operator ran the review commands and accepted P2-GATE in
 [issue #6](https://github.com/McFuzzySquirrel/my-forge/issues/6) on 2026-10-13;
@@ -424,11 +424,19 @@ or an indeterminate Git result surface as ambiguous for reconciliation. The
 engine typecheck/unit suite and live PostgreSQL tests passed, including
 lock-contention and ambiguous-outcome checks.
 
-**Next: P3-05 — Reconcile Git effects.** Detect an already-integrated change
-after a crash before receipt persistence, avoid duplicate commits, preserve
-audit references, and apply the no-auto-commit/commit-failure policy without
-accepting an uncheckpointed effect. P3-GATE remains unaccepted; the conformance
-fixtures remain semantic evidence only, not proof of full durable Dapr effects.
+P3-05 adds durable integration intents written before any Git mutation,
+checkpoint-bound commits (first parent is the expected head, tree is the verified
+checkpoint tree), already-integrated detection on redelivery, and
+`reconcile()`/`reconcileIntegrationReceipt` so a crash after the ref update is
+accepted once without a second commit, an attempt that never integrated fails
+and is fenced, and a missing checkpoint stays ambiguous. `resolveGitEffectPolicy`
+encodes the P0 auto-commit register. Fixtures C23–C25 and the live PostgreSQL
+tests pass.
+
+**Next: P3-06 — Enforce process lifecycle and isolation.** Propagate timeout
+and cancellation to owned harness subprocesses, handle worker loss, and reject
+late/stale outcomes. P3-GATE remains unaccepted; the conformance fixtures remain
+semantic evidence only, not proof of full durable Dapr effects.
 Console migration and legacy-engine retirement remain gated by their later phases.
 
 ## P0 evidence — 2026-10-13

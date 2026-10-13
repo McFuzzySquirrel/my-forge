@@ -234,7 +234,58 @@ moved or deleted head returns `expected-head-mismatch` without changing the
 branch. A bounded ref-update window keeps the lease live through the mutation.
 If Git may have changed the ref but its result or the durable integration record
 cannot be confirmed, the outcome is ambiguous and must be reconciled before
-continuation (P3-05).
+continuation.
+
+### Git effect reconciliation
+
+An integration request names a `checkpointDigest`. Before any mutation, the
+authority re-verifies that checkpoint, requires it to belong to the run, and
+requires the commit's first parent to be the expected head and its tree to be
+the checkpoint's `gitTreeId`. An integration therefore never publishes branch
+content that is not recoverable from a verified checkpoint.
+
+Integration then runs in two fenced transactions. The first records a durable
+`pending` intent (commit, expected head, checkpoint, token, operation) for the
+logical attempt; the second performs the Git expected-head update and writes the
+integration record, marking the intent `integrated`. A head mismatch marks the
+intent `abandoned`. Integration records are unique per attempt and per
+`(repository, targetRef, commit)`, and record whether the `authority` or
+`reconciliation` wrote them so the audit trail distinguishes observed effects
+from recovered ones.
+
+A redelivered integration whose commit is already reachable from the target
+branch, but whose record is missing because the process died after the ref
+update, records the existing effect and returns it as reused instead of
+reporting a head mismatch or creating a second commit.
+
+`reconcile(scope)` establishes the outcome for one attempt under the fence lock:
+
+| Durable state | Git state | Result |
+|---|---|---|
+| Integration record exists | — | `integrated` (checkpoint re-verified) |
+| Pending intent | Commit reachable from branch | Backfill record as `reconciliation`; `integrated` |
+| Pending intent | Commit not reachable | Abandon intent; `not-integrated` |
+| No intent | — | Write an abandoned tombstone; `not-integrated` |
+| Checkpoint missing/corrupt or commit not bound to it | — | `blocked`; never accepted |
+| Different operation or commit already claimed by another attempt | — | `blocked` |
+
+Git read failures throw and leave state unchanged. Because an abandoned intent
+is checked inside the same fenced transaction as the mutation, a worker that
+outlives reconciliation cannot integrate that logical attempt later; a retry
+allocates a new logical attempt. `reconcileIntegrationReceipt` applies the
+result to the operation receipt: `integrated` advances it to `accepted` under
+`gitIntegrationEffectDigest` of the effect; `not-integrated` marks it `failed`;
+`blocked`, or an effect digest conflict, leaves or moves it to `ambiguous`,
+which blocks continuation. Each resolution appends a `git-integration:*`
+diagnostic reference.
+
+`resolveGitEffectPolicy` encodes the P0 auto-commit register. Disabled
+auto-commit, "nothing to commit", and a failed local commit (warning
+`commit-failed`, preserving the legacy non-fatal behavior) accept only a
+verified checkpoint as the recoverable effect. Without a verified checkpoint the
+attempt fails as `uncheckpointed-effect`. A created commit must be integrated to
+be accepted; a rejected integration fails and an ambiguous one, or an integrated
+commit whose checkpoint is unavailable, stays `ambiguous`.
 
 ## 4. Package and deployment ownership
 
@@ -291,6 +342,9 @@ unlisted case. Fixture files live in `tools/dapr-engine/tests/conformance/`.
 | C20 | Receipt became `ambiguous` | Never re-enter `executing`; redelivery reuses it and only reconciliation advances it to `accepted` or `failed` | `effects.test.ts` |
 | C21 | Stale owner integrates after a newer fencing token, or one logical attempt integrates twice | Reject the stale token; accept one integration per logical attempt and reject a conflicting second result | `effects.test.ts` |
 | C22 | Equivalent manifest snapshots with different key order | Produce the same RFC 8785 `sha256:` digest; reject non-JSON values | `identity.test.ts` |
+| C23 | Process dies after the Git ref update but before the integration record or receipt | Reconciliation records the existing commit and accepts the receipt once; redelivery creates no second commit | `effects.test.ts` |
+| C24 | Process dies before the ref update, or the attempt never recorded an intent | Reconciliation fails the receipt and abandons the attempt; a late integration is rejected | `effects.test.ts` |
+| C25 | Auto-commit disabled, nothing to commit, local commit failure, or uncheckpointed effect | Accept only a verified checkpoint (commit failure as a warning); rejected integration fails; ambiguous or uncheckpointed integration stays ambiguous | `effects.test.ts` |
 
 C10, C17, C18, and C19 pin intentional compatibility changes: the legacy engine
 ignores unknown selected IDs, accepts a confirmation flag as review intent, and

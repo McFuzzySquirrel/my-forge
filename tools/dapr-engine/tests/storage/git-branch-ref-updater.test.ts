@@ -32,6 +32,18 @@ test("Git branch integration uses an atomic expected-head update", async () => {
 
     assert.equal(await updater.update(root, "refs/heads/main", expectedHead, expectedHead), false);
     assert.equal(git(root, ["rev-parse", "refs/heads/main"]), commitSha);
+
+    assert.deepEqual(await updater.readCommit(root, commitSha), {
+      tree: git(root, ["rev-parse", `${commitSha}^{tree}`]),
+      parents: [expectedHead],
+    });
+    assert.equal(await updater.readCommit(root, "f".repeat(40)), undefined);
+    assert.equal(await updater.contains(root, "refs/heads/main", expectedHead), true);
+    assert.equal(await updater.contains(root, "refs/heads/main", commitSha), true);
+    git(root, ["update-ref", "refs/heads/main", expectedHead]);
+    assert.equal(await updater.contains(root, "refs/heads/main", commitSha), false);
+    assert.equal(await updater.contains(root, "refs/heads/missing", expectedHead), false);
+    assert.equal(await updater.contains(root, "refs/heads/main", "f".repeat(40)), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

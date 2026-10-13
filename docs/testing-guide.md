@@ -78,8 +78,9 @@ restart, backup/restore, and retention qualification remain separate work.
 P3's PostgreSQL operation-receipt and repository-fencing adapters have opt-in
 live integration tests. They passed locally on PostgreSQL 18.6 on 2026-10-13.
 The tests exercise durable token allocation, expiry and stale-owner rejection,
-serialized integration, ambiguous Git outcomes, and atomic Git expected-head
-updates. The test image is pinned to the Docker Hub multi-platform index digest
+serialized integration, ambiguous Git outcomes, atomic Git expected-head
+updates, checkpoint-bound integration, and P3-05 Git-effect reconciliation
+(already-integrated redelivery, abandoned attempts, and blocked checkpoints). The test image is pinned to the Docker Hub multi-platform index digest
 `sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`;
 this does not change the PostgreSQL 17.6 image in the historical P1 spike.
 

@@ -2,7 +2,15 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { test } from "node:test";
-import { SCHEMA_VERSION, planRetention, sha256Digest, type CheckpointV1, type OperationKeyV1 } from "../../contract/v1/index.ts";
+import {
+  SCHEMA_VERSION,
+  planRetention,
+  resolveGitEffectPolicy,
+  sha256Digest,
+  type CheckpointV1,
+  type OperationKeyV1,
+} from "../../contract/v1/index.ts";
+import { reconcileIntegrationReceipt } from "../../storage/git-effect-reconciliation.ts";
 import {
   ManualClock,
   ReferenceArtifactStore,
@@ -10,6 +18,7 @@ import {
   ReferenceExecutionService,
   ReferenceIntegrationAuthority,
   ReferenceReceiptStore,
+  type IntegrationScope,
 } from "./support/reference-model.ts";
 import { submission } from "./support/fixtures.ts";
 
@@ -192,4 +201,103 @@ test("C16: an expired terminal diagnostic referenced by a live checkpoint or rev
     { artifactId: "diag-live-run", reason: "not-terminal" },
     { artifactId: "evidence", reason: "evidence-class" },
   ]);
+});
+
+function integrationPorts(receipts: ReferenceReceiptStore, authority: ReferenceIntegrationAuthority) {
+  return {
+    receiptPort: {
+      get: async (operation: OperationKeyV1) => receipts.get(operation),
+      transition: async (...args: Parameters<ReferenceReceiptStore["transition"]>) => receipts.transition(...args),
+    } as Parameters<typeof reconcileIntegrationReceipt>[0],
+    authorityPort: { reconcile: async (scope: IntegrationScope) => authority.reconcile(scope) },
+  };
+}
+
+function integrationFixture() {
+  const clock = new ManualClock();
+  const receipts = new ReferenceReceiptStore(clock);
+  const authority = new ReferenceIntegrationAuthority(clock);
+  const lease = authority.acquire("repo_fixture", "refs/heads/main", "run_a", 60_000);
+  assert.ok(lease.ok);
+  const scope: IntegrationScope = {
+    repositoryId: "repo_fixture", targetRef: "refs/heads/main", runId: "run_a", taskId: "T1",
+    logicalAttempt: 1, operationId: randomUUID(),
+  };
+  const request = { ...scope, fencingToken: lease.lease.fencingToken, commitSha: "a".repeat(40) };
+  receipts.claim(scope);
+  assert.ok(receipts.transition(scope, 1, "executing").ok);
+  return { receipts, authority, scope, request, ...integrationPorts(receipts, authority) };
+}
+
+test("C23: a crash after the Git ref update but before the integration record or receipt is accepted once without a second commit", async () => {
+  const fixture = integrationFixture();
+  assert.throws(() => fixture.authority.accept(fixture.request, "after-ref-update"), /after the Git ref update/);
+  assert.deepEqual(fixture.authority.branchCommits("repo_fixture", "refs/heads/main"), ["a".repeat(40)]);
+
+  const reconciled = await reconcileIntegrationReceipt(fixture.receiptPort, fixture.authorityPort, fixture.scope);
+  assert.equal(reconciled.resolution, "accepted");
+  assert.ok(reconciled.integration?.outcome === "integrated" && reconciled.integration.backfilled);
+  assert.equal(reconciled.integration.recordedBy, "reconciliation");
+  assert.equal(reconciled.receipt.effectDigest, reconciled.integration.effectDigest);
+  assert.deepEqual(reconciled.receipt.diagnosticRefs, [`git-integration:reconciliation:${"a".repeat(40)}`]);
+
+  assert.deepEqual(fixture.authority.accept(fixture.request), { ok: true, commitSha: "a".repeat(40), reused: true });
+  const again = await reconcileIntegrationReceipt(fixture.receiptPort, fixture.authorityPort, fixture.scope);
+  assert.equal(again.receipt.recordVersion, reconciled.receipt.recordVersion, "an accepted receipt is not advanced twice");
+  assert.deepEqual(fixture.authority.branchCommits("repo_fixture", "refs/heads/main"), ["a".repeat(40)]);
+});
+
+test("C24: an attempt whose commit never reached the branch fails, and its late integration is rejected", async () => {
+  const crashed = integrationFixture();
+  assert.throws(() => crashed.authority.accept(crashed.request, "before-ref-update"), /before the Git ref update/);
+  const failed = await reconcileIntegrationReceipt(crashed.receiptPort, crashed.authorityPort, crashed.scope);
+  assert.equal(failed.resolution, "failed");
+  assert.deepEqual(failed.integration, { outcome: "not-integrated", reason: "commit-not-on-target" });
+  assert.deepEqual(crashed.authority.accept(crashed.request), { ok: false, code: "integration-abandoned" });
+  assert.deepEqual(crashed.authority.branchCommits("repo_fixture", "refs/heads/main"), []);
+
+  const neverStarted = integrationFixture();
+  const noIntent = await reconcileIntegrationReceipt(neverStarted.receiptPort, neverStarted.authorityPort, neverStarted.scope);
+  assert.deepEqual(noIntent.integration, { outcome: "not-integrated", reason: "no-intent" });
+  assert.equal(noIntent.receipt.state, "failed");
+  assert.deepEqual(neverStarted.authority.accept(neverStarted.request), { ok: false, code: "integration-abandoned" });
+});
+
+test("C25: disabled auto-commit and commit failures accept only a verified checkpoint; rejected or ambiguous integration blocks success", () => {
+  assert.deepEqual(
+    resolveGitEffectPolicy({ autoCommit: false, checkpoint: "verified", commit: "not-requested", integration: "not-attempted" }),
+    { receipt: "accepted", outcome: "checkpoint-only" },
+  );
+  assert.deepEqual(
+    resolveGitEffectPolicy({ autoCommit: true, checkpoint: "verified", commit: "failed", integration: "not-attempted" }),
+    { receipt: "accepted", outcome: "checkpoint-only", warning: "commit-failed" },
+  );
+  assert.deepEqual(
+    resolveGitEffectPolicy({ autoCommit: false, checkpoint: "unavailable", commit: "not-requested", integration: "not-attempted" }),
+    { receipt: "failed", reason: "uncheckpointed-effect" },
+  );
+  assert.deepEqual(
+    resolveGitEffectPolicy({ autoCommit: true, checkpoint: "unavailable", commit: "failed", integration: "not-attempted" }),
+    { receipt: "failed", reason: "uncheckpointed-effect" },
+    "a commit failure is non-fatal only when the checkpoint is durable",
+  );
+  assert.deepEqual(
+    resolveGitEffectPolicy({ autoCommit: true, checkpoint: "verified", commit: "created", integration: "integrated" }),
+    { receipt: "accepted", outcome: "integrated" },
+  );
+  assert.deepEqual(
+    resolveGitEffectPolicy({ autoCommit: true, checkpoint: "verified", commit: "created", integration: "rejected" }),
+    { receipt: "failed", reason: "integration-rejected" },
+  );
+  assert.deepEqual(
+    resolveGitEffectPolicy({ autoCommit: true, checkpoint: "verified", commit: "created", integration: "ambiguous" }),
+    { receipt: "ambiguous", reason: "integration-ambiguous" },
+  );
+  assert.deepEqual(
+    resolveGitEffectPolicy({ autoCommit: true, checkpoint: "unavailable", commit: "created", integration: "integrated" }),
+    { receipt: "ambiguous", reason: "integrated-checkpoint-unavailable" },
+    "an integrated but uncheckpointed effect is never accepted as recoverable",
+  );
+  assert.throws(() => resolveGitEffectPolicy({ autoCommit: false, checkpoint: "verified", commit: "created", integration: "integrated" }));
+  assert.throws(() => resolveGitEffectPolicy({ autoCommit: true, checkpoint: "verified", commit: "created", integration: "not-attempted" }));
 });

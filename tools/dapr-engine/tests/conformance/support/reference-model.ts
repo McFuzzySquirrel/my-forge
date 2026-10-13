@@ -602,7 +602,16 @@ export type LeaseResult =
 
 export type IntegrationResult =
   | { readonly ok: true; readonly commitSha: string; readonly reused: boolean }
-  | { readonly ok: false; readonly code: "no-lease" | "stale-fencing-token" | "expired-fencing-token" | "wrong-owner" | "conflicting-integration" };
+  | {
+      readonly ok: false;
+      readonly code:
+        | "no-lease"
+        | "stale-fencing-token"
+        | "expired-fencing-token"
+        | "wrong-owner"
+        | "conflicting-integration"
+        | "integration-abandoned";
+    };
 
 export interface IntegrationRequest {
   readonly repositoryId: string;
@@ -615,10 +624,36 @@ export interface IntegrationRequest {
   readonly commitSha: string;
 }
 
+export type IntegrationScope = Omit<IntegrationRequest, "fencingToken" | "commitSha">;
+
+export type IntegrationReconciliation =
+  | {
+      readonly outcome: "integrated";
+      readonly commitSha: string;
+      readonly checkpointDigest: Sha256Digest;
+      readonly effectDigest: Sha256Digest;
+      readonly recordedBy: "authority" | "reconciliation";
+      readonly backfilled: boolean;
+    }
+  | { readonly outcome: "not-integrated"; readonly reason: "no-intent" | "commit-not-on-target" }
+  | { readonly outcome: "blocked"; readonly reason: "conflicting-operation" };
+
+/** Simulated crash points around the Git ref mutation. */
+export type IntegrationCrash = "before-ref-update" | "after-ref-update";
+
+interface IntentRecord {
+  readonly operationId: string;
+  readonly commitSha?: string;
+  state: "pending" | "integrated" | "abandoned";
+}
+
 export class ReferenceIntegrationAuthority {
   private readonly leases = new Map<string, FencingLeaseV1>();
   private readonly tokens = new Map<string, number>();
-  private readonly integrations = new Map<string, string>();
+  private readonly integrations = new Map<string, { commitSha: string; operationId: string; recordedBy: "authority" | "reconciliation" }>();
+  private readonly intents = new Map<string, IntentRecord>();
+  /** Commits reachable from each branch, standing in for the Git repository. */
+  private readonly branches = new Map<string, string[]>();
   readonly accepted: IntegrationRequest[] = [];
 
   constructor(private readonly clock = new ManualClock()) {}
@@ -643,19 +678,104 @@ export class ReferenceIntegrationAuthority {
     return { ok: true, lease };
   }
 
-  accept(request: IntegrationRequest): IntegrationResult {
+  branchCommits(repositoryId: string, targetRef: string): readonly string[] {
+    return [...(this.branches.get(`${repositoryId}\u0000${targetRef}`) ?? [])];
+  }
+
+  /**
+   * Fenced integration. The intent is durable before the branch changes; a
+   * simulated crash leaves the branch and records as they would be after the
+   * process died at that point.
+   */
+  accept(request: IntegrationRequest, crash?: IntegrationCrash): IntegrationResult {
     const lease = this.leases.get(`${request.repositoryId}\u0000${request.targetRef}`);
     if (!lease) return { ok: false, code: "no-lease" };
     if (request.fencingToken !== lease.fencingToken) return { ok: false, code: "stale-fencing-token" };
     if (Date.parse(lease.expiresAt) <= this.clock.now().getTime()) return { ok: false, code: "expired-fencing-token" };
     if (request.runId !== lease.ownerRunId) return { ok: false, code: "wrong-owner" };
-    const attemptKey = `${request.repositoryId}\u0000${request.targetRef}\u0000${request.runId}\u0000${request.taskId}\u0000${request.logicalAttempt}`;
+    const attemptKey = this.attemptKey(request);
     const existing = this.integrations.get(attemptKey);
     if (existing !== undefined) {
-      return existing === request.commitSha ? { ok: true, commitSha: existing, reused: true } : { ok: false, code: "conflicting-integration" };
+      return existing.commitSha === request.commitSha
+        ? { ok: true, commitSha: existing.commitSha, reused: true }
+        : { ok: false, code: "conflicting-integration" };
     }
-    this.integrations.set(attemptKey, request.commitSha);
+    const intent = this.intents.get(attemptKey);
+    if (intent?.state === "abandoned") return { ok: false, code: "integration-abandoned" };
+    if (intent && (intent.operationId !== request.operationId || intent.commitSha !== request.commitSha)) {
+      return { ok: false, code: "conflicting-integration" };
+    }
+    this.intents.set(attemptKey, { operationId: request.operationId, commitSha: request.commitSha, state: "pending" });
+    if (crash === "before-ref-update") throw new Error("simulated crash before the Git ref update");
+
+    const branch = this.branch(request);
+    if (branch.includes(request.commitSha)) {
+      this.record(request, request.commitSha, "reconciliation");
+      return { ok: true, commitSha: request.commitSha, reused: true };
+    }
+    branch.push(request.commitSha);
+    if (crash === "after-ref-update") throw new Error("simulated crash after the Git ref update");
+    this.record(request, request.commitSha, "authority");
     this.accepted.push(request);
     return { ok: true, commitSha: request.commitSha, reused: false };
+  }
+
+  reconcile(scope: IntegrationScope): IntegrationReconciliation {
+    const attemptKey = this.attemptKey(scope);
+    const record = this.integrations.get(attemptKey);
+    const intent = this.intents.get(attemptKey);
+    if (record) {
+      if (record.operationId !== scope.operationId) return { outcome: "blocked", reason: "conflicting-operation" };
+      return this.integrated(scope, record.commitSha, record.recordedBy, false);
+    }
+    if (!intent) {
+      this.intents.set(attemptKey, { operationId: scope.operationId, state: "abandoned" });
+      return { outcome: "not-integrated", reason: "no-intent" };
+    }
+    if (intent.operationId !== scope.operationId) return { outcome: "blocked", reason: "conflicting-operation" };
+    if (intent.state === "abandoned" || !intent.commitSha) {
+      return { outcome: "not-integrated", reason: intent.commitSha ? "commit-not-on-target" : "no-intent" };
+    }
+    if (!this.branch(scope).includes(intent.commitSha)) {
+      intent.state = "abandoned";
+      return { outcome: "not-integrated", reason: "commit-not-on-target" };
+    }
+    this.record(scope, intent.commitSha, "reconciliation");
+    return this.integrated(scope, intent.commitSha, "reconciliation", true);
+  }
+
+  private integrated(
+    scope: IntegrationScope,
+    commitSha: string,
+    recordedBy: "authority" | "reconciliation",
+    backfilled: boolean,
+  ): IntegrationReconciliation {
+    const checkpointDigest = canonicalDigest({ checkpointFor: commitSha });
+    return {
+      outcome: "integrated",
+      commitSha,
+      checkpointDigest,
+      effectDigest: canonicalDigest({ ...scope, commitSha, checkpointDigest }),
+      recordedBy,
+      backfilled,
+    };
+  }
+
+  private record(scope: IntegrationScope, commitSha: string, recordedBy: "authority" | "reconciliation"): void {
+    const attemptKey = this.attemptKey(scope);
+    this.integrations.set(attemptKey, { commitSha, operationId: scope.operationId, recordedBy });
+    const intent = this.intents.get(attemptKey);
+    if (intent) intent.state = "integrated";
+  }
+
+  private branch(scope: IntegrationScope): string[] {
+    const key = `${scope.repositoryId}\u0000${scope.targetRef}`;
+    const commits = this.branches.get(key) ?? [];
+    this.branches.set(key, commits);
+    return commits;
+  }
+
+  private attemptKey(scope: IntegrationScope): string {
+    return `${scope.repositoryId}\u0000${scope.targetRef}\u0000${scope.runId}\u0000${scope.taskId}\u0000${scope.logicalAttempt}`;
   }
 }

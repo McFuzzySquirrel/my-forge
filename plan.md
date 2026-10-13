@@ -57,7 +57,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Gate accepted; baseline unblocked | [P0 review #2](https://github.com/McFuzzySquirrel/my-forge/issues/2); [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
-| P3 — Durable execution and integration | P2 gate | Engine + storage | In progress; P3-01 PostgreSQL receipts qualified; P3-02 file-backed artifacts/checkpoints implemented | Unassigned |
+| P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–04 implemented; P3-04 PostgreSQL fencing and Git ref CAS checks pass; P3-GATE not accepted | Unassigned |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
@@ -200,7 +200,7 @@ repository integration authority.
   from explicit checkpoints, verify paths and digests, apply the dirty-tree policy,
   and provision dependencies/credentials narrowly. Resume never requires the old
   worker's uncommitted files.
-- [ ] **P3-04 — Fence repository integration.** Allocate increasing ownership
+- [x] **P3-04 — Fence repository integration.** Allocate increasing ownership
   tokens per repository/target branch. Enforce the token at the actual mutation
   boundary so expired workers cannot write directly; a pre-write TTL check alone
   is insufficient. Check expected heads, serialize integration, and surface conflicts.
@@ -401,8 +401,8 @@ when introduced, rather than implying they exist today.
 
 Consult the [documentation map](docs/documentation-map.md) on each behavior change.
 Update active instructions with implementation, scan new dependencies and changed
-files, and review security-sensitive boundaries before merging. This planning-only
-change does not alter runtime behavior or imply a new release.
+files, and review security-sensitive boundaries before merging. Roadmap status
+does not itself imply phase-gate acceptance or production cutover.
 
 ## Immediate next work package
 
@@ -414,9 +414,22 @@ cases C01–C22 in [contract v1 §5](docs/contracts/dapr-execution-v1.md#5-confo
 run through `npm test --prefix tools/dapr-engine` against an in-memory
 reference model. The operator ran the review commands and accepted P2-GATE in
 [issue #6](https://github.com/McFuzzySquirrel/my-forge/issues/6) on 2026-10-13;
-P3 is authorized to begin. The fixtures are semantic evidence only and do not
-prove durable Dapr effects. Console migration and legacy-engine retirement
-remain gated by their later phases.
+P3 is authorized. P3-04 is implemented in
+`tools/dapr-engine/storage/postgres/repository-integration.ts` with a PostgreSQL
+fence migration. Lease grants and integrations serialize on the same row lock;
+the authority holds it across Git's atomic expected-head ref update and the
+durable integration record. Stale/expired owners, head conflicts, and
+conflicting logical attempts reject; failures after a successful Git update
+or an indeterminate Git result surface as ambiguous for reconciliation. The
+engine typecheck/unit suite and live PostgreSQL tests passed, including
+lock-contention and ambiguous-outcome checks.
+
+**Next: P3-05 — Reconcile Git effects.** Detect an already-integrated change
+after a crash before receipt persistence, avoid duplicate commits, preserve
+audit references, and apply the no-auto-commit/commit-failure policy without
+accepting an uncheckpointed effect. P3-GATE remains unaccepted; the conformance
+fixtures remain semantic evidence only, not proof of full durable Dapr effects.
+Console migration and legacy-engine retirement remain gated by their later phases.
 
 ## P0 evidence — 2026-10-13
 

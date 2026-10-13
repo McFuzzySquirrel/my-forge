@@ -4,6 +4,18 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.108
+
+### P3 fenced repository integration
+
+- Add PostgreSQL-backed, monotonically increasing repository fencing leases and
+  an integration authority that holds the scope lock through an atomic Git
+  expected-head update. Expired/stale owners, moved heads, and conflicting
+  logical attempts are rejected; failures after a ref mutation are reported as
+  ambiguous for P3-05 reconciliation.
+- Extend the opt-in PostgreSQL integration checks to cover lease contention,
+  token expiry, stale-owner rejection, serialized mutation, and Git ref CAS.
+
 ## October 2026 - v3.107
 
 ### P3 isolated workspace reconstruction

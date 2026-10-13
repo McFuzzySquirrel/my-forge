@@ -223,6 +223,19 @@ current token; a stale owner cannot publish an accepted integration result
 after a newer token is issued. Workflow actor placement is not a substitute
 for this repository fence.
 
+Lease grants and integrations serialize on the durable fence row for that
+scope. The integration authority rechecks owner, token, and expiry while holding
+that row lock, then keeps it through the target-ref mutation and integration
+record commit; a competing lease grant cannot advance the token during that
+critical section. Workflow workers operate on isolated workspaces and do not
+receive writable access to the target repository. The authority updates only a
+fully qualified branch ref, using Git's atomic expected-old-object check; a
+moved or deleted head returns `expected-head-mismatch` without changing the
+branch. A bounded ref-update window keeps the lease live through the mutation.
+If Git may have changed the ref but its result or the durable integration record
+cannot be confirmed, the outcome is ambiguous and must be reconciled before
+continuation (P3-05).
+
 ## 4. Package and deployment ownership
 
 - `tools/dapr-engine/` owns the future workflow service and executable entry

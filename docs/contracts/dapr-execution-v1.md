@@ -53,8 +53,11 @@ identity and must be resolved by the approved worker environment.
 | `manifestDigest` | Content identity of the immutable manifest/contract snapshot |
 | `controlId` | Caller-generated UUID deduplicating retries of one control request |
 
-Task selection, resolved requirement references, harness choice/configuration,
-and workflow definition are part of the snapshot digest. Reconciliation or
+`manifestDigest` covers only `manifestSnapshot`. The service also derives a
+`snapshotDigest` from the canonical submission excluding `submissionKey` and
+the service-frozen `effectiveTaskIds`: repository, target ref, manifest digest,
+requested selection, harness, configuration, and workflow definition version.
+Submission-key deduplication compares this digest. Reconciliation or
 source edits create a new snapshot and an explicit new run; they never mutate
 an in-flight run.
 
@@ -180,27 +183,47 @@ is the only implementation staged by the legacy skill bootstrap.
 
 ## 5. Conformance matrix
 
-The following outcomes are normative. P2-05 must turn each case into a runnable
-fixture in the normal package test command before P2-GATE.
+The following outcomes are normative. Each case has a stable ID and a runnable
+fixture discovered by `npm test --prefix tools/dapr-engine`; `matrix.test.ts`
+fails if a listed case lacks a fixture in its named file or a fixture cites an
+unlisted case. Fixture files live in `tools/dapr-engine/tests/conformance/`.
 
-| Case | Expected outcome |
-|---|---|
-| Same repository, submission key, and canonical snapshot retried | Return the same `runId`; create no second workflow |
-| Submission key reused with changed branch, digest, selection, harness, or definition version | Reject as conflict; preserve the accepted snapshot |
-| Caller sends an incorrect manifest digest | Reject before run acceptance |
-| Secret value appears in a persisted submission snapshot | Reject or redact before persistence; never return it in status |
-| Duplicate `controlId` and identical payload | Return the original control result |
-| Same `controlId` with a different payload | Reject as conflict |
-| Pause/stop accepted while an activity is running | Report accepted separately from process exit; do not dispatch the next task before the boundary |
-| Cancel races with a late activity result | Preserve diagnostics, reject late acceptance, and complete cleanup only when observed |
-| Task replay requested | Allocate a larger logical attempt while retaining prior attempt and operation records |
-| Unknown selected task or unresolved dependency | Reject the run before any task dispatch |
-| Activity is redelivered with the same operation identity | Reuse the receipt; do not publish a conflicting accepted effect |
-| Existing receipt revision is stale or transition is invalid | Reject compare-and-set explicitly |
-| Artifact bytes do not match the declared digest/size | Reject publication or resolution; do not produce success-shaped empty output |
-| Checkpoint references an unpublished or corrupt artifact | Keep checkpoint unavailable and report integrity failure |
-| Repository integration presents an expired fencing token | Reject acceptance even if workflow status still reports the task running |
-| Terminal diagnostic expires but a live checkpoint/review references it | Retain the referenced data |
+| ID | Case | Expected outcome | Fixture |
+|---|---|---|---|
+| C01 | Same repository, submission key, and canonical snapshot retried | Return the same `runId`; create no second workflow | `identity.test.ts` |
+| C02 | Submission key reused with changed branch, digest, selection, harness, or definition version | Reject as conflict; preserve the accepted snapshot | `identity.test.ts` |
+| C03 | Caller sends an incorrect manifest digest | Reject before run acceptance | `identity.test.ts` |
+| C04 | Secret value appears in a persisted submission snapshot | Reject or redact before persistence; never return it in status | `identity.test.ts` |
+| C05 | Duplicate `controlId` and identical payload | Return the original control result | `controls.test.ts` |
+| C06 | Same `controlId` with a different payload | Reject as conflict | `controls.test.ts` |
+| C07 | Pause/stop accepted while an activity is running | Report accepted separately from process exit; do not dispatch the next task before the boundary | `controls.test.ts` |
+| C08 | Cancel races with a late activity result | Preserve diagnostics, reject late acceptance, and complete cleanup only when observed | `controls.test.ts` |
+| C09 | Task replay requested | Allocate a larger logical attempt while retaining prior attempt and operation records | `controls.test.ts` |
+| C10 | Unknown selected task or unresolved dependency | Reject the run before any task dispatch | `identity.test.ts` |
+| C11 | Activity is redelivered with the same operation identity | Reuse the receipt; do not publish a conflicting accepted effect | `effects.test.ts` |
+| C12 | Existing receipt revision is stale or transition is invalid | Reject compare-and-set explicitly | `effects.test.ts` |
+| C13 | Artifact bytes do not match the declared digest/size | Reject publication or resolution; do not produce success-shaped empty output | `effects.test.ts` |
+| C14 | Checkpoint references an unpublished or corrupt artifact | Keep checkpoint unavailable and report integrity failure | `effects.test.ts` |
+| C15 | Repository integration presents an expired fencing token | Reject acceptance even if workflow status still reports the task running | `effects.test.ts` |
+| C16 | Terminal diagnostic expires but a live checkpoint/review references it | Retain the referenced data | `effects.test.ts` |
+| C17 | `approve-task` without authenticated operator identity, including `--yes`/confirmation flags | Reject with `operator-identity-required`; the task stays waiting | `controls.test.ts` |
+| C18 | `approve-task` with evidence digests that differ from the current attempt | Reject with `stale-evidence`; an accepted approval binds run, manifest digest, task, evidence, and operator | `controls.test.ts` |
+| C19 | Selection change requested for an accepted run | Freeze dependency-expanded selection; reject `select-tasks` with `selection-immutable` | `identity.test.ts` |
+| C20 | Receipt became `ambiguous` | Never re-enter `executing`; redelivery reuses it and only reconciliation advances it to `accepted` or `failed` | `effects.test.ts` |
+| C21 | Stale owner integrates after a newer fencing token, or one logical attempt integrates twice | Reject the stale token; accept one integration per logical attempt and reject a conflicting second result | `effects.test.ts` |
+| C22 | Equivalent manifest snapshots with different key order | Produce the same RFC 8785 `sha256:` digest; reject non-JSON values | `identity.test.ts` |
+
+C10, C17, C18, and C19 pin intentional compatibility changes: the legacy engine
+ignores unknown selected IDs, accepts a confirmation flag as review intent, and
+lets reconciliation rewrite selection in place.
+
+The fixtures run against an in-memory reference model
+(`tests/conformance/support/reference-model.ts`) built on the Dapr-independent
+primitives in `tools/dapr-engine/contract/v1/`. Passing them demonstrates the
+specified semantics only. They are not durability, restart, Dapr, or
+process-cleanup evidence; P3 storage/integration adapters must pass the same
+cases before those claims are made. In the reference model, a graceful `stop`
+settles to the resumable `paused` status at the task boundary.
 
 ## 6. Compatibility and exclusions
 

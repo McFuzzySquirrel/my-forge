@@ -3,9 +3,11 @@
 **Created:** 2026-10-13
 
 **Status:** P0-GATE and P1-GATE accepted by the operator; P1-06 is recorded in
-ADR-066 and the P2 v1 contract is drafted. P2-03 extraction is underway in
-[issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); conformance
-fixtures and P2-GATE remain pending. The runtime remains an experimental spike,
+ADR-066 and the P2 v1 contract is drafted. P2-03 extraction landed in
+[issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); P2-05
+conformance fixtures are implemented in
+[issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5). P2-GATE review
+remains pending. The runtime remains an experimental spike,
 not a production replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
@@ -54,7 +56,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 |---|---|---|---|---|
 | P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Gate accepted; baseline unblocked | [P0 review #2](https://github.com/McFuzzySquirrel/my-forge/issues/2); [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
-| P2 — Reusable execution boundary | P1 gate | Engine + contracts | Contracts authored; P2-03 extraction in progress | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
+| P2 — Reusable execution boundary | P1 gate | Engine + contracts | Contracts authored; P2-03 merged; P2-05 fixtures implemented; P2-GATE pending | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | Not started | Unassigned |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
@@ -159,7 +161,7 @@ does not change the production engine; P3 remains gated by P2-GATE.
   selection, pause/resume/stop, cancellation, task replay, approvals, and request
   acknowledgement. Separate requested, accepted, applied, and rejected controls.
   Acknowledgement must not imply a harness process has already stopped.
-- [ ] **P2-03 — Separate execution utilities.** Reuse harness adapters, request
+- [x] **P2-03 — Separate execution utilities.** Reuse harness adapters, request
   construction, task context, output/no-op checks, structured results, validation,
   artifact projection, and workspace utilities through narrow interfaces.
   Preserve existing utility tests and baseline legacy behavior during extraction.
@@ -167,7 +169,7 @@ does not change the production engine; P3 remains gated by P2-GATE.
   references/digests, receipt state transitions, repository fencing, checkpoint
   publication, integrity checks, schema versions, and retention. Keep application
   records separate from Dapr internals.
-- [ ] **P2-05 — Build the conformance matrix.** Turn P0 dispositions into fixtures
+- [x] **P2-05 — Build the conformance matrix.** Turn P0 dispositions into fixtures
   and expected outcomes covering the cases listed in the release matrix below.
   Reuse the current test runner rather than introducing a parallel test framework.
 - [ ] **P2-06 — Choose package and deployment ownership.** Record where the
@@ -406,9 +408,13 @@ change does not alter runtime behavior or imply a new release.
 
 P1-06 is recorded in [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md).
 The P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03
-is tracked in [issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4):
-extract and stage the Dapr-independent utilities while preserving the legacy
-engine caller. Then build P2-05 conformance fixtures before requesting P2-GATE.
+landed in [issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4).
+P2-05 is tracked in [issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5):
+cases C01–C22 in [contract v1 §5](docs/contracts/dapr-execution-v1.md#5-conformance-matrix)
+run through `npm test --prefix tools/dapr-engine` against an in-memory
+reference model. Next, request the P2-GATE human review
+(`docs/reviews/dapr-p2.json`); the fixtures are semantic evidence only and do
+not prove durable Dapr effects.
 Console migration and legacy-engine retirement remain gated by their later
 phases.
 

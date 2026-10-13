@@ -72,6 +72,7 @@ requirements. Legacy layouts and migration rules are documented in
 | `templates/skills/forge-workflow-engine/SKILL.md` | Bootstrapped engine usage and operational contract. | Engine CLI, configuration, generated artifacts, or run procedures change. |
 | `templates/skills/forge-execution-adapter/SKILL.md` | Bootstrapped manifest compiler usage and contract. | Compilation inputs, options, output manifest, or validation behavior change. |
 | [`docs/contracts/dapr-execution-v1.md`](contracts/dapr-execution-v1.md) | Versioned application-owned run, control, receipt, artifact, checkpoint, and fencing contract for the Dapr replacement. | Contract fields, state transitions, package ownership, or conformance expectations change. |
+| `tools/dapr-engine/contract/v1/`, `tools/dapr-engine/tests/conformance/` | Dapr-independent contract v1 primitives and the runnable §5 conformance fixtures with their in-memory reference model. | Contract cases, rejection codes, state transitions, or digest rules change. |
 | `tools/dapr-engine/execution/` | Canonical Dapr-independent task/harness execution utilities staged into the legacy workflow-engine skill by the launcher. | Utility APIs, legacy-engine adapters, or bootstrap packaging changes. |
 
 ### Architecture decisions and research

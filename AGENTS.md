@@ -13,8 +13,10 @@ Guidance for AI coding agents working in this repository (MyForge).
   thin bash/PowerShell wrapper scripts that delegate to it.
 - `tools/dapr-engine/` — the Dapr replacement source package. Its
   `execution/` library is Dapr-independent and is staged inside the legacy
-  workflow-engine skill by launcher bootstrap; the service runtime is not
-  scaffolded yet.
+  workflow-engine skill by launcher bootstrap. `contract/v1/` holds the
+  Dapr-independent contract primitives and `tests/conformance/` the contract
+  §5 fixtures (not staged by bootstrap); the service runtime is not scaffolded
+  yet.
 - `docs/` — human documentation: `updates.md` (the versioned changelog),
   `adr/` (architecture decision records), deep-dive guides, `research/`, and
   `documentation-map.md`. Generated artifacts (`EXECUTION-MANIFEST.json`,
@@ -62,11 +64,13 @@ npm test             # node --test suite
 ```
 
 Package test globs: the workflow engine runs `scripts/**/*.test.ts`; the
-execution adapter and launcher run `scripts/*.test.ts`.
+execution adapter and launcher run `scripts/*.test.ts`; `tools/dapr-engine`
+runs `tests/**/*.test.ts`.
 Each package also exposes its own entry script (e.g.
 `npm run workflow-engine -- run`).
 Install `tools/dapr-engine/` dependencies separately; its typecheck covers the
-canonical execution library, while the workflow-engine suite verifies legacy
+canonical execution library and contract primitives, its `npm test` runs the
+contract v1 conformance fixtures, and the workflow-engine suite verifies legacy
 behavior through the library.
 
 The dev-only `tools/console-screenshots` package regenerates the Forge Console

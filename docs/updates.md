@@ -4,6 +4,20 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.104
+
+### Dapr execution contract conformance fixtures
+
+- Add Dapr-independent contract v1 primitives under
+  `tools/dapr-engine/contract/v1/`: RFC 8785 canonical digests, submission
+  validation and selection expansion, receipt transitions, artifact integrity,
+  and retention planning.
+- Turn every contract §5 case into a runnable fixture (C01–C22), including the
+  intentional changes to unknown-selection rejection, authenticated
+  evidence-bound approval, and immutable selection. Run them with
+  `npm test --prefix tools/dapr-engine`; a matrix check keeps the contract and
+  fixtures aligned. Production engine behavior is unchanged.
+
 ## October 2026 - v3.103
 
 ### Extract reusable execution utilities

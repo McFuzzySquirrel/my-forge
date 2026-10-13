@@ -151,8 +151,8 @@ matrix are in the [versioned contract](../contracts/dapr-execution-v1.md).
   "description":"Turn the P0 compatibility register into runnable fixtures with exact expected results for run identity/deduplication, immutable snapshots, controls, selection/replay, validation, at-least-once effects, artifacts, checkpoints, and repository fencing. Use the repository's existing Node test runner; do not add a parallel test framework.",
   "ownerAgent":"forge-runtime-engineer",
   "dependencies":["P2-02","P2-03","P2-04","P2-06"],
-  "expectedOutputs":["tools/dapr-engine/tests/conformance/identity.test.ts"],
-  "validationCommands":["npm test --prefix tools/dapr-engine"],
+  "expectedOutputs":["tools/dapr-engine/tests/conformance/identity.test.ts","tools/dapr-engine/tests/conformance/controls.test.ts","tools/dapr-engine/tests/conformance/effects.test.ts","tools/dapr-engine/tests/conformance/matrix.test.ts","tools/dapr-engine/contract/v1/index.ts"],
+  "validationCommands":["npm test --prefix tools/dapr-engine","npm run typecheck --prefix tools/dapr-engine"],
   "contract":{
     "version":2,"kind":"implementation",
     "requirements":[],

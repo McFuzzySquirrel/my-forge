@@ -55,6 +55,21 @@ state is explicitly intended. See `plan.md` for the exact live observations and
 limitations. A stub restart test is not proof of Git fencing, provider
 idempotency, backup/restore, cancellation, or hosted failover.
 
+### Dapr execution contract conformance
+
+`tools/dapr-engine` runs the [contract v1](contracts/dapr-execution-v1.md)
+§5 conformance fixtures against an in-memory reference model:
+
+```bash
+npm ci --prefix tools/dapr-engine
+npm run typecheck --prefix tools/dapr-engine
+npm test --prefix tools/dapr-engine
+```
+
+`matrix.test.ts` fails when a §5 case lacks a fixture in its named file. These
+fixtures check specified semantics only; they are not durability, Dapr, or
+process-cleanup evidence until P3 adapters pass the same cases.
+
 ## 2. What the automated suite covers
 
 The current package-level test suite exercises the main launcher behaviors:

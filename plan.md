@@ -1,4 +1,409 @@
-# Plan: Consolidate Forge CLI Scripts into a Single `forge-launcher` npm Package
+# Active Plan: Dapr Engine Replacement
+
+**Created:** 2026-10-13
+
+**Status:** Ready to begin Phase 0; implementation has not started
+
+**Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
+profiles; no permanent legacy backend
+
+**Design basis:** [Dapr evaluation](docs/research/dapr-workflow-and-agents.md)
+
+## Scope and invariants
+
+Replace scheduling, durable run state, and execution controls. Retain requirements
+authoring, manifest compilation, harness portability, verification, typed artifact
+projection, and isolated Git workspaces. Do not rewrite these merely to adopt Dapr.
+
+- Requirements remain owned by `docs/PRD.md` and `docs/features/*.md`; manifests
+  are immutable execution snapshots, not a second requirements source.
+- Dapr owns workflow history. Application receipts, repository ownership, and
+  artifact metadata have separately owned schemas.
+- All filesystem, Git, CLI, provider, and other nondeterministic operations run
+  outside workflow code.
+- At-least-once activities must not duplicate accepted artifacts or integration.
+  Repeated paid provider calls remain possible without provider idempotency.
+- Local operation requires neither Kubernetes nor a cloud account. Offline
+  operation additionally requires cached dependencies and a local harness/model.
+- Local persistent volumes provide restart recovery, not multi-host failover.
+- The old engine is a migration reference until cutover, never a simultaneous
+  writer of the same run or target branch.
+- Defer Dapr Agents, semantic memory, independent activity applications, automatic
+  import of live legacy histories, and containerized target-build infrastructure.
+
+## Tracking rules
+
+Task IDs below are stable implementation work-package IDs, not generated engine
+task IDs. All boxes start unchecked. Assign an owner and link an issue/PR before
+starting a task; keep detailed execution evidence with that issue/PR.
+
+Mark a task complete only when its deliverable, tests, and applicable documentation
+are merged. Mark a phase gate complete only after its acceptance evidence is
+reviewed. A blocked gate blocks dependent phases; never check it based solely on
+a successful happy-path demonstration.
+
+When converting work into canonical feature contracts, reference these IDs and
+link the owning feature documents here. Do not duplicate requirement bodies or
+hand-edit generated manifests. Keep this file as the roadmap/status index.
+
+| Phase | Depends on | Accountable role to assign | Status | Issue/PR and acceptance evidence |
+|---|---|---|---|---|
+| P0 — Baseline and contracts | None | Architecture + QA | Not started | Unassigned |
+| P1 — Released SDK and runtime spike | P0 gate | Runtime + platform | Not started | Unassigned |
+| P2 — Reusable execution boundary | P1 gate | Engine + contracts | Not started | Unassigned |
+| P3 — Durable execution and integration | P2 gate | Engine + storage | Not started | Unassigned |
+| P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
+| P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
+| P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
+| P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
+| P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
+
+P1's spike may contain minimal throwaway/test activities; it is not the production
+engine. P3 can develop storage and execution adapters in parallel after P2, but
+integration remains serial at the repository mutation boundary. P8 design work
+may overlap P7 after local qualification; hosted availability is a separate gate.
+
+## P0 — Establish the baseline and implementation contract
+
+**Deliverables:** behavior inventory, canonical work breakdown, compatibility
+matrix, agreed acceptance budgets, and a baseline test record.
+
+- [ ] **P0-01 — Inventory execution semantics.** Map DAG/phase dependencies,
+  skipped tasks, manual selection and its transitive dependencies, per-owner
+  concurrency, retries, timeouts, replay, reconciliation, and task outcome rules
+  to current implementation and tests.
+- [ ] **P0-02 — Inventory callers and state ownership.** Identify launcher,
+  Console, bootstrap, auto-build, dashboard, and visualization dependencies on
+  state files, audit files, control files, PID signalling, and dynamic imports.
+  Record which caller migrates in which task.
+- [ ] **P0-03 — Establish test baselines.** Run existing engine, execution adapter,
+  and launcher tests/typechecks plus launcher build/version checks; record
+  environment and results. Separate pre-existing failures from replacement
+  regressions without removing unrelated tests.
+- [ ] **P0-04 — Define compatibility decisions.** Classify each public command,
+  flag, environment variable, state field, and lifecycle behavior as preserved,
+  deliberately changed, or retired. Explicitly decide auto-commit disabled mode,
+  current non-fatal commit failures, dirty repositories, and stop versus pause.
+- [ ] **P0-05 — Author canonical implementation features.** Register the work in
+  the repository's canonical requirements layout, with acceptance criteria and
+  dependencies linked to these work-package IDs. Keep unresolved SDK choices as
+  decisions rather than assuming an implementation language.
+- [ ] **P0-06 — Agree measurable budgets and threat boundaries.** Record supported
+  host platforms, startup/RAM/disk budgets, recovery targets, retention, artifact
+  limits, cancellation deadlines, trusted repository assumptions, and allowed
+  harness/validation privileges. Measurements must have explicit pass thresholds
+  before qualification.
+- [ ] **P0-GATE:** Every existing execution/control behavior has an owner and
+  compatibility disposition; baseline results and acceptance thresholds are
+  recorded; canonical work is validated.
+
+**Starting points:** `templates/skills/forge-workflow-engine/scripts/engine.ts`,
+`types.ts`, `state.ts`, `control.ts`, `task-graph.ts`, and corresponding tests;
+`scripts/forge-launcher/scripts/engine-run.ts`, `resume.ts`, and `console/`;
+`templates/skills/forge-auto-build/SKILL.md`.
+
+## P1 — Prove released SDK support and rootless Podman operation
+
+**Deliverables:** reproducible spike, pinned compatibility matrix, local topology,
+and an accepted architecture decision.
+
+- [ ] **P1-01 — Verify released capabilities.** Select exact runtime, JavaScript
+  Workflow SDK, Node, Podman, state component, and image versions. Check released
+  support for workflow registration, activities, durable timers, external events,
+  retries, cancellation controls, history replay, and graceful worker shutdown.
+  Record official evidence and known limits; default-branch docs are not proof.
+- [ ] **P1-02 — Resolve SDK/language gate.** Prefer TypeScript and one workflow
+  application registering all workflows/activities. If released support is
+  insufficient, explicitly approve a supported orchestration language with a
+  Node execution boundary or stop and revisit; do not invent a workflow protocol.
+- [ ] **P1-03 — Stand up the local spike.** Use documented Podman support and
+  explicit networking for application/sidecar, Placement, Scheduler, PostgreSQL
+  actor state, and separate artifact storage. Persist database, Scheduler/etcd,
+  and artifact data; keep infrastructure ports private.
+- [ ] **P1-04 — Exercise durability.** Run a stub activity, durable timer, and
+  approval wait; restart the app/sidecar, then the infrastructure stack. Verify
+  the same workflow resumes with preserved history, no volume deletion, and no
+  manual edits.
+- [ ] **P1-05 — Measure and inspect local constraints.** Check rootless volume
+  ownership, SELinux, port mapping, resource use, readiness ordering, and signal
+  handling. Demonstrate a cached offline stub/local-model path.
+- [ ] **P1-06 — Record the architecture decision.** Add the next unused ADR after
+  checking current numbering. Specify approved versions, persistence, application
+  boundaries, rollout scope, and the reasons for full replacement.
+- [ ] **P1-GATE:** Reproducible Linux rootless restart evidence passes the P0
+  budgets; released SDK support is sufficient; language/topology choices are
+  accepted. No claim of independent TypeScript activity scaling is required.
+
+**Failure disposition:** stop production replacement work, retain the legacy
+engine, and revise the decision. Do not turn the spike into an indefinite second
+backend.
+
+## P2 — Define contracts and extract reusable execution components
+
+**Deliverables:** versioned contracts, conformance fixtures, and reusable task
+execution without dependence on the old scheduler.
+
+- [ ] **P2-01 — Define run submission and identity.** Specify repository/branch,
+  run, task, logical attempt, operation, and manifest digest identities. Snapshot
+  resolved contracts, harness selection, configuration, and definition versions.
+  Deduplicate retried submissions and reject incompatible snapshots.
+- [ ] **P2-02 — Define service/control models.** Specify status queries, task
+  selection, pause/resume/stop, cancellation, task replay, approvals, and request
+  acknowledgement. Separate requested, accepted, applied, and rejected controls.
+  Acknowledgement must not imply a harness process has already stopped.
+- [ ] **P2-03 — Separate execution utilities.** Reuse harness adapters, request
+  construction, task context, output/no-op checks, structured results, validation,
+  artifact projection, and workspace utilities through narrow interfaces.
+  Preserve existing utility tests and baseline legacy behavior during extraction.
+- [ ] **P2-04 — Define storage/checkpoint contracts.** Specify immutable artifact
+  references/digests, receipt state transitions, repository fencing, checkpoint
+  publication, integrity checks, schema versions, and retention. Keep application
+  records separate from Dapr internals.
+- [ ] **P2-05 — Build the conformance matrix.** Turn P0 dispositions into fixtures
+  and expected outcomes covering the cases listed in the release matrix below.
+  Reuse the current test runner rather than introducing a parallel test framework.
+- [ ] **P2-06 — Choose package and deployment ownership.** Record where the
+  service, reusable execution library, container resources, and launcher client
+  live; define bundling/bootstrap responsibilities before scaffolding packages.
+  Target repositories should not install a second scheduler accidentally.
+- [ ] **P2-GATE:** Contracts are reviewed and versioned; extracted utilities
+  retain passing tests; all intentional behavior changes have migration notes.
+
+**Starting points:** workflow engine `request.ts`, `task-context.ts`,
+`task-execution.ts`, `task-result.ts`, `verify.ts`, `artifacts.ts`, `sandbox.ts`,
+`commit.ts`, and `harness/`; execution adapter `scripts/adapter.ts`.
+
+## P3 — Implement durable task effects and fenced integration
+
+**Deliverables:** recoverable execution activities, storage adapters, and one
+repository integration authority.
+
+- [ ] **P3-01 — Persist operation receipts.** Support claimed, executing,
+  effect-published, accepted, and failed/ambiguous outcomes with compare-and-set
+  transitions. Redelivery reuses the logical attempt key; deliberate retries and
+  task replay allocate new identities. Reconcile incomplete receipts after crashes.
+- [ ] **P3-02 — Publish artifacts and checkpoints.** Persist content and integrity
+  metadata before reporting activity success. Capture base revision, resulting
+  changes including new/deleted/binary files, required Git objects, validation
+  evidence, and toolchain/dependency metadata. Missing/corrupt objects fail closed.
+- [ ] **P3-03 — Reconstruct isolated workspaces.** Prepare clean clones/worktrees
+  from explicit checkpoints, verify paths and digests, apply the dirty-tree policy,
+  and provision dependencies/credentials narrowly. Resume never requires the old
+  worker's uncommitted files.
+- [ ] **P3-04 — Fence repository integration.** Allocate increasing ownership
+  tokens per repository/target branch. Enforce the token at the actual mutation
+  boundary so expired workers cannot write directly; a pre-write TTL check alone
+  is insufficient. Check expected heads, serialize integration, and surface conflicts.
+- [ ] **P3-05 — Reconcile Git effects.** Detect an already integrated change after
+  a crash before receipt persistence; avoid duplicate commits. Preserve audit
+  references. Apply P0's explicit no-auto-commit/commit-failure policy without
+  marking an uncheckpointed effect recoverable.
+- [ ] **P3-06 — Enforce process lifecycle and isolation.** Propagate timeout and
+  cancellation to owned harness subprocesses, handle worker loss, and reject
+  late/stale outcomes. Avoid host-home mounts and engine sockets; document the
+  separately approved approach for target builds requiring containers.
+- [ ] **P3-GATE:** Redelivered activities produce one accepted effect set;
+  stale owners cannot mutate the target branch; checkpoints reconstruct a task
+  workspace; ambiguous integration is visible and blocks unsafe continuation.
+
+## P4 — Complete the local Dapr workflow vertical slice
+
+**Deliverables:** the replacement DAG workflow, durable controls, and a real
+local task chain running through the same contracts as the old engine.
+
+- [ ] **P4-01 — Implement deterministic orchestration.** Evaluate snapshot task
+  readiness, phase dependencies, selected scope, skipped tasks, owner exclusivity,
+  and bounded execution. Use durable timers/events for retry delays and waits;
+  keep I/O, random identities, and wall-clock decisions in activities or approved
+  deterministic runtime facilities.
+- [ ] **P4-02 — Integrate verification and handoffs.** A successful harness exit
+  is insufficient: require expected outputs, no-op policy, structured outcomes,
+  mandatory validation, and compact predecessor artifacts before accepting work.
+- [ ] **P4-03 — Implement durable controls and approvals.** Deduplicate requests,
+  authorize operators, bind approvals to run/task and manifest/evidence digests,
+  and reject stale attestations. Honor the agreed pause/stop/cancel distinctions.
+- [ ] **P4-04 — Expose status and audit.** Provide authoritative run/task/attempt
+  queries, sequenced lifecycle records, and reconnectable notifications.
+  Compatibility file exports are read-only, rebuildable views, never control input.
+- [ ] **P4-05 — Prove representative execution.** Complete a stub dependency chain,
+  verification failure/retry, manual selection, parallel isolated tasks, and an
+  approval wait. Then execute one real harness using scoped credentials and
+  inspect integrated changes and validation evidence.
+- [ ] **P4-06 — Bound histories and concurrency.** Measure large manifests,
+  long waits, retry storms, and artifact/reference limits. Decide history rollover
+  or child-workflow strategies only where supported, preserving task identity and
+  evidence; apply backpressure and configurable worker limits.
+- [ ] **P4-GATE:** Representative manifests meet the conformance matrix locally
+  and resume after interruption without manual state edits.
+
+## P5 — Migrate the launcher, Console, and local lifecycle
+
+**Deliverables:** one service-backed user path and a managed local deployment.
+
+- [ ] **P5-01 — Package the local stack.** Supply pinned images/configuration,
+  persistent-volume ownership, readiness checks, restart policy, and resource
+  limits. A container recreation must not reset durable data.
+- [ ] **P5-02 — Add lifecycle management.** Implement launcher start/status/stop,
+  diagnostics, backup/restore, and compatible upgrade operations. Make reset a
+  separate confirmed destructive action. These are proposed capabilities, not
+  existing command names; finalize their CLI surface in the compatibility matrix.
+- [ ] **P5-03 — Migrate execution entry points.** Update engine-run, resume,
+  launcher flow, wrappers, bootstrap/package resources, and auto-build polling
+  to submit/query/control the service. Select local versus hosted deployment,
+  not legacy versus Dapr scheduling.
+- [ ] **P5-04 — Migrate Console/Board controls.** Replace file/PID control with
+  authenticated service requests and acknowledged outcomes; reconnect from
+  sequenced status/events. Remove scheduling dependence on dynamically importing
+  the legacy engine while retaining shared readiness semantics.
+- [ ] **P5-05 — Harden local access.** Expose Forge API/Console only on loopback
+  by default; authenticate controls, validate browser origins/CSRF protections,
+  constrain repository paths, scope secrets, and redact logs. Sidecar/store APIs
+  remain private and inaccessible to untrusted task processes where feasible.
+- [ ] **P5-06 — Preserve diagnostics and onboarding.** Show useful errors for
+  unavailable Podman, missing VM/resources, credentials, corrupt volumes, and
+  version mismatches. Export compatible status/audit views and document offline
+  preparation, migration warnings, and disabled/retired flags.
+- [ ] **P5-GATE:** A fresh local user can start the stack, submit and monitor a
+  run, approve/control it, stop/restart, and recover through launcher and Console
+  without editing generated files or using infrastructure APIs.
+
+**Starting points:** `scripts/forge-launcher/scripts/engine-run.ts`, `resume.ts`,
+`bootstrap.ts`, `launcher.ts`, `stage-resources.mjs`, and
+`console/{control,jobs,paths,repo,server}.ts`; workflow-engine and auto-build skills.
+
+## P6 — Qualify recovery, security, upgrades, and platforms
+
+**Deliverables:** automated failure-injection coverage, operational runbooks,
+support matrix, and release evidence.
+
+- [ ] **P6-01 — Exercise failure boundaries.** Kill application/sidecar/worker
+  during execution, retry delay, approval wait, checkpoint publication,
+  integration, and receipt persistence. Duplicate deliveries/controls; expire
+  ownership, introduce store outages, and deliver late task results.
+- [ ] **P6-02 — Test backup and restore.** Quiesce or otherwise coordinate snapshots
+  of workflow database, application receipts, Scheduler, artifacts, and Git refs.
+  Restore into a fresh installation and check integrity and pending timers.
+  Missing/out-of-sync stores must not silently accept incomplete tasks.
+- [ ] **P6-03 — Test workflow/application upgrades.** Version definitions and
+  activity contracts; drain incompatible runs or retain compatible workers.
+  Verify historical replay, schema upgrades, and documented rollback constraints.
+- [ ] **P6-04 — Review security boundaries.** Test unauthorized/stale approvals,
+  cross-repository access, escaping paths/symlinks, log/secret exposure, malicious
+  artifact metadata, and exhausted resource limits. Scan dependencies and changed
+  code; require resolution of relevant findings before cutover.
+- [ ] **P6-05 — Qualify supported platforms/harnesses.** Validate Linux rootless
+  behavior and each claimed harness. Test Podman-machine networking, credentials,
+  mounts, path translation, watchers, and performance separately on macOS/Windows.
+  If desktop platforms are deferred, explicitly release as Linux-only.
+- [ ] **P6-06 — Re-run parity and budgets.** Compare accepted outcomes, commit
+  behavior, validation, audit, and controls with P0 fixtures; measure startup,
+  memory/disk, long histories, cancellation, and recovery against agreed thresholds.
+- [ ] **P6-GATE:** Release matrix below passes for every advertised profile;
+  backup/restore and upgrades are rehearsed; support limits and unavoidable
+  duplicate provider calls are documented. Unqualified platforms are not advertised.
+
+## P7 — Cut over and retire the legacy scheduler
+
+**Deliverables:** sole-engine release, migrated guidance, and reversible cutover.
+
+- [ ] **P7-01 — Rehearse migration.** Back up legacy state, artifacts, and Git;
+  stop new legacy runs and drain active ones. Validate completed checkpoints
+  before creating Dapr runs. Block unsupported partial-history imports.
+- [ ] **P7-02 — Rehearse rollback.** Use a previous release plus pre-cutover backup;
+  explicitly stop Dapr writers before restoring legacy ownership. Do not feed
+  Dapr history into the file engine or silently discard post-cutover Git changes.
+  Document how to preserve/reconcile those changes.
+- [ ] **P7-03 — Switch the default execution path.** Make Dapr mandatory for new
+  runs in this fork after qualification; retain archived evidence, not a permanent
+  backend switch. Fail clearly if infrastructure is unavailable.
+- [ ] **P7-04 — Remove legacy writers and stale callers.** Retire the old DAG
+  loop, writable file control/state path, PID-based execution controls, and legacy
+  polling after P0's caller inventory is fully migrated. Preserve reusable modules
+  and move relevant semantic tests to their replacement owners.
+- [ ] **P7-05 — Publish migration/release documentation.** Update architecture,
+  workflow/engine deep dives, artifact guidance, launcher/package README, Console
+  guides, relevant skills, testing guidance, and deployment runbooks. Add release
+  notes and synchronize README Latest. Preserve historical ADRs/changelog entries.
+- [ ] **P7-GATE:** Fresh and migrated repositories use only Dapr orchestration;
+  no supported caller writes legacy authority; cutover/rollback is rehearsed and
+  all advertised behavior matches active documentation.
+
+## P8 — Productize hosted recovery as a separate deployment profile
+
+**Deliverables:** shared-storage deployment, clean-host recovery evidence, and
+authenticated operations without changing task semantics.
+
+- [ ] **P8-01 — Provision shared persistence.** Replace local-only artifact volumes
+  with a shared object-store adapter and recoverable Git checkpoints; provide
+  appropriate database, Scheduler, and Placement availability and coordinated
+  backups. Shared workflow state alone is insufficient.
+- [ ] **P8-02 — Isolate workers and users.** Scope repository credentials,
+  authorize run/approval operations, separate trust domains, protect internal
+  Dapr services, and enforce compute/storage quotas. Same-app replicas register
+  compatible workflow/activity definitions.
+- [ ] **P8-03 — Prove clean-host failover.** Lose a worker and recreate its execution
+  solely from shared stores and Git on another host, including credentials and
+  dependencies. Simulate partitions and prove stale workers cannot integrate.
+- [ ] **P8-04 — Operate the service.** Add health/readiness, traces, queue/attempt
+  metrics, alerts, retention/garbage collection, disaster recovery, and rolling
+  upgrade procedures. Do not collect sensitive prompt content by default.
+- [ ] **P8-05 — Gate independent activity scaling.** Recheck released SDK
+  multi-application support. Adopt separate activity applications only with a new
+  decision and conformance evidence; same-app scaling is a valid initial outcome.
+- [ ] **P8-GATE:** Hosted recovery and isolation meet their agreed budgets and
+  security criteria; hosted/local run outcomes remain equivalent. Do not label
+  a single-node persistent deployment highly available.
+
+## Release acceptance matrix
+
+Each row requires linked test results before P6/P7; hosted rows additionally gate
+P8. A passing row does not replace its phase's other acceptance requirements.
+
+| Area | Required evidence |
+|---|---|
+| Scheduling | Phase/task dependencies, skipped tasks, manual transitive scope, owner exclusivity, bounded parallelism |
+| Outcomes | Missing outputs, no-op detection, structured-result failures, mandatory validation, artifact projection |
+| Retries | Exhaustion, durable delay, restart during wait, redelivery versus explicit retry identity |
+| Controls | Authenticated acknowledgements, graceful pause/stop, resume, cancellation process cleanup, late-result rejection |
+| Human review | Prerequisite gating, immutable evidence binding, unauthorized/stale/duplicate event rejection |
+| Git | Expected-head conflicts, one integration per logical attempt, stale-owner fencing, disabled/failed auto-commit policy |
+| Recovery | Restart app and stack, clean checkpoint reconstruction, crashes before/after each effect receipt |
+| Operations | Consistent backup/restore, compatible history replay, rollback, bounded resource/retention behavior |
+| Clients | Launcher/Console reconnection, read-only exports, migrated bootstrap and auto-build callers |
+| Platforms | Real Linux rootless run; separate macOS/Windows evidence only if supported |
+| Hosted | Shared objects, clean-host failover, partitions/fencing, scoped identities and quotas |
+
+## Verification and documentation discipline
+
+Use existing package commands for affected code. Current entry points are
+`npm test` and `npm run typecheck` in each of:
+
+- `/home/runner/work/my-forge/my-forge/templates/skills/forge-workflow-engine`
+- `/home/runner/work/my-forge/my-forge/templates/skills/forge-execution-adapter`
+- `/home/runner/work/my-forge/my-forge/scripts/forge-launcher`
+
+The launcher also exposes `npm run build` and `npm run check:version`.
+See [testing guidance](docs/testing-guide.md) for other affected package checks.
+Add future integration/failure tests to the owning package's normal test workflow,
+with explicit infrastructure prerequisites; do not report skipped integration
+tests as recovery evidence. Future packages must document their actual commands
+when introduced, rather than implying they exist today.
+
+Consult the [documentation map](docs/documentation-map.md) on each behavior change.
+Update active instructions with implementation, scan new dependencies and changed
+files, and review security-sensitive boundaries before merging. This planning-only
+change does not alter runtime behavior or imply a new release.
+
+## Immediate next work package
+
+Begin **P0-01 through P0-06**, then execute **P1-01 through P1-05** as a bounded
+capability/local-runtime spike. Do not implement Console migration or remove the
+legacy engine until the upstream phase gates are accepted. Assign owners and
+issue links in the tracking table as work begins.
+
+---
+
+# Historical Completed Plan: Consolidate Forge CLI Scripts into a Single `forge-launcher` npm Package
 
 **Branch:** `optimization/task-breakdown`
 **Status:** Complete

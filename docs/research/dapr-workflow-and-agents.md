@@ -4,6 +4,10 @@
 **Revised:** 2026-10-13
 **Status:** Proposed full-replacement roadmap for the MyForge fork; not implemented
 
+**Implementation tracking:** [Phased implementation plan](../../plan.md).
+The plan contains stable work-package IDs, dependencies, checklists, and
+acceptance gates; this document retains the architectural rationale.
+
 ## Question
 
 How should this fork replace its file-based orchestration engine with Dapr

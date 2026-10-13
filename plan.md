@@ -57,7 +57,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Gate accepted; baseline unblocked | [P0 review #2](https://github.com/McFuzzySquirrel/my-forge/issues/2); [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
-| P3 — Durable execution and integration | P2 gate | Engine + storage | Authorized by accepted P2-GATE; not started | Unassigned |
+| P3 — Durable execution and integration | P2 gate | Engine + storage | In progress; P3-01 PostgreSQL receipts qualified; P3-02 file-backed artifacts/checkpoints implemented | Unassigned |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
@@ -74,32 +74,32 @@ may overlap P7 after local qualification; hosted availability is a separate gate
 **Deliverables:** behavior inventory, canonical work breakdown, compatibility
 matrix, agreed acceptance budgets, and a baseline test record.
 
-- [ ] **P0-01 — Inventory execution semantics.** Map DAG/phase dependencies,
+- [x] **P0-01 — Inventory execution semantics.** Map DAG/phase dependencies,
   skipped tasks, manual selection and its transitive dependencies, per-owner
   concurrency, retries, timeouts, replay, reconciliation, and task outcome rules
   to current implementation and tests.
-- [ ] **P0-02 — Inventory callers and state ownership.** Identify launcher,
+- [x] **P0-02 — Inventory callers and state ownership.** Identify launcher,
   Console, bootstrap, auto-build, dashboard, and visualization dependencies on
   state files, audit files, control files, PID signalling, and dynamic imports.
   Record which caller migrates in which task.
-- [ ] **P0-03 — Establish test baselines.** Run existing engine, execution adapter,
+- [x] **P0-03 — Establish test baselines.** Run existing engine, execution adapter,
   and launcher tests/typechecks plus launcher build/version checks; record
   environment and results. Separate pre-existing failures from replacement
   regressions without removing unrelated tests.
-- [ ] **P0-04 — Define compatibility decisions.** Classify each public command,
+- [x] **P0-04 — Define compatibility decisions.** Classify each public command,
   flag, environment variable, state field, and lifecycle behavior as preserved,
   deliberately changed, or retired. Explicitly decide auto-commit disabled mode,
   current non-fatal commit failures, dirty repositories, and stop versus pause.
-- [ ] **P0-05 — Author canonical implementation features.** Register the work in
+- [x] **P0-05 — Author canonical implementation features.** Register the work in
   the repository's canonical requirements layout, with acceptance criteria and
   dependencies linked to these work-package IDs. Keep unresolved SDK choices as
   decisions rather than assuming an implementation language.
-- [ ] **P0-06 — Agree measurable budgets and threat boundaries.** Record supported
+- [x] **P0-06 — Agree measurable budgets and threat boundaries.** Record supported
   host platforms, startup/RAM/disk budgets, recovery targets, retention, artifact
   limits, cancellation deadlines, trusted repository assumptions, and allowed
   harness/validation privileges. Measurements must have explicit pass thresholds
   before qualification.
-- [ ] **P0-GATE:** Every existing execution/control behavior has an owner and
+- [x] **P0-GATE:** Every existing execution/control behavior has an owner and
   compatibility disposition; baseline results and acceptance thresholds are
   recorded; canonical work is validated.
 
@@ -113,30 +113,30 @@ matrix, agreed acceptance budgets, and a baseline test record.
 **Deliverables:** reproducible spike, pinned compatibility matrix, local topology,
 and an accepted architecture decision.
 
-- [ ] **P1-01 — Verify released capabilities.** Select exact runtime, JavaScript
+- [x] **P1-01 — Verify released capabilities.** Select exact runtime, JavaScript
   Workflow SDK, Node, Podman, state component, and image versions. Check released
   support for workflow registration, activities, durable timers, external events,
   retries, cancellation controls, history replay, and graceful worker shutdown.
   Record official evidence and known limits; default-branch docs are not proof.
-- [ ] **P1-02 — Resolve SDK/language gate.** Prefer TypeScript and one workflow
+- [x] **P1-02 — Resolve SDK/language gate.** Prefer TypeScript and one workflow
   application registering all workflows/activities. If released support is
   insufficient, explicitly approve a supported orchestration language with a
   Node execution boundary or stop and revisit; do not invent a workflow protocol.
-- [ ] **P1-03 — Stand up the local spike.** Use documented Podman support and
+- [x] **P1-03 — Stand up the local spike.** Use documented Podman support and
   explicit networking for application/sidecar, Placement, Scheduler, PostgreSQL
   actor state, and separate artifact storage. Persist database, Scheduler/etcd,
   and artifact data; keep infrastructure ports private.
-- [ ] **P1-04 — Exercise durability.** Run a stub activity, durable timer, and
+- [x] **P1-04 — Exercise durability.** Run a stub activity, durable timer, and
   approval wait; restart the app/sidecar, then the infrastructure stack. Verify
   the same workflow resumes with preserved history, no volume deletion, and no
   manual edits.
-- [ ] **P1-05 — Measure and inspect local constraints.** Check rootless volume
+- [x] **P1-05 — Measure and inspect local constraints.** Check rootless volume
   ownership, SELinux, port mapping, resource use, readiness ordering, and signal
   handling. Demonstrate a cached offline stub/local-model path.
-- [ ] **P1-06 — Record the architecture decision.** Add the next unused ADR after
+- [x] **P1-06 — Record the architecture decision.** Add the next unused ADR after
   checking current numbering. Specify approved versions, persistence, application
   boundaries, rollout scope, and the reasons for full replacement.
-- [ ] **P1-GATE:** Reproducible Linux rootless restart evidence passes the P0
+- [x] **P1-GATE:** Reproducible Linux rootless restart evidence passes the P0
   budgets; released SDK support is sufficient; language/topology choices are
   accepted. No claim of independent TypeScript activity scaling is required.
 
@@ -188,11 +188,11 @@ does not change the production engine; P2-GATE is accepted and P3 is authorized.
 **Deliverables:** recoverable execution activities, storage adapters, and one
 repository integration authority.
 
-- [ ] **P3-01 — Persist operation receipts.** Support claimed, executing,
+- [x] **P3-01 — Persist operation receipts.** Support claimed, executing,
   effect-published, accepted, and failed/ambiguous outcomes with compare-and-set
   transitions. Redelivery reuses the logical attempt key; deliberate retries and
   task replay allocate new identities. Reconcile incomplete receipts after crashes.
-- [ ] **P3-02 — Publish artifacts and checkpoints.** Persist content and integrity
+- [x] **P3-02 — Publish artifacts and checkpoints.** Persist content and integrity
   metadata before reporting activity success. Capture base revision, resulting
   changes including new/deleted/binary files, required Git objects, validation
   evidence, and toolchain/dependency metadata. Missing/corrupt objects fail closed.
@@ -424,8 +424,8 @@ This section records preparation and the operator's explicit P0-GATE decision,
 not release qualification. On 2026-10-13, the operator accepted P0-01/P0-02,
 the compatibility register, and proposed budgets, then approved P0-GATE and
 authorized the isolated P1 spike. The agent does not generate the human-review
-JSON file. Checkboxes above remain unchecked until their deliverables and
-acceptance evidence are merged. Baseline work ran against the existing engine
+JSON file. The P0 checkboxes above are ticked because this evidence and the
+gate acceptance are merged. Baseline work ran against the existing engine
 without changing it.
 
 ### Deliverable status
@@ -519,10 +519,10 @@ also migrate behind the service. Do not treat all file consumers as read-only.
 P5 must audit dynamic engine imports and remove writable authority, not only PID
 polling. Artifacts/review evidence can contain sensitive content.
 
-### Compatibility register — proposed, not yet accepted
+### Compatibility register — accepted 2026-10-13
 
 All current production commands and settings remain unchanged in P0/P1.
-These dispositions describe the future replacement, subject to P0 review.
+These dispositions describe the future replacement and were accepted at P0-GATE.
 
 | Surface | Disposition | Future contract |
 |---|---|---|

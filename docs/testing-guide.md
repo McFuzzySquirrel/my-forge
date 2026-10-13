@@ -70,6 +70,47 @@ npm test --prefix tools/dapr-engine
 fixtures check specified semantics only; they are not durability, Dapr, or
 process-cleanup evidence until P3 adapters pass the same cases.
 
+The standard Dapr-engine suite also exercises file-backed artifact and task
+checkpoint publication in a temporary directory, including concurrent
+content-addressed writes and missing/corrupt-object rejection. Deployment-volume
+restart, backup/restore, and retention qualification remain separate work.
+
+P3's PostgreSQL operation-receipt adapter has an opt-in live integration test.
+It passed locally on PostgreSQL 18.6 on 2026-10-13. The test image is pinned to
+the Docker Hub multi-platform index digest
+`sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`;
+this does not change the PostgreSQL 17.6 image in the historical P1 spike.
+
+To repeat, start a disposable container with a random password, bind only to
+loopback, and use no persistent volume:
+
+```bash
+set -euo pipefail
+PG_CONTAINER="myforge-p3-postgres-$$"
+PG_PASSWORD="$(openssl rand -hex 24)"
+trap 'podman stop "$PG_CONTAINER" >/dev/null' EXIT
+podman run --detach --rm --name "$PG_CONTAINER" \
+  --env "POSTGRES_PASSWORD=$PG_PASSWORD" \
+  --env POSTGRES_DB=receipts \
+  --publish 127.0.0.1::5432 \
+  docker.io/library/postgres@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+PG_PORT="$(podman port "$PG_CONTAINER" 5432/tcp | awk -F: '{print $NF}')"
+for _ in $(seq 1 60); do
+  podman exec "$PG_CONTAINER" pg_isready -U postgres -d receipts >/dev/null && break
+  sleep 1
+done
+podman exec "$PG_CONTAINER" pg_isready -U postgres -d receipts
+POSTGRES_TEST_URL="postgres://postgres:${PG_PASSWORD}@127.0.0.1:${PG_PORT}/receipts" \
+  npm run test:postgres --prefix tools/dapr-engine
+```
+
+The test creates and drops a unique temporary schema. The temporary container
+has no mounted volume, and the shell trap stops and removes it even if the test
+fails. The regular unit suite skips the integration test when
+`POSTGRES_TEST_URL` is unset. This qualifies receipt persistence against
+PostgreSQL; it does not qualify the Dapr PostgreSQL state component or the
+remaining P3 gate.
+
 ## 2. What the automated suite covers
 
 The current package-level test suite exercises the main launcher behaviors:

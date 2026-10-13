@@ -121,6 +121,17 @@ advancing it. Invalid transitions and stale revisions are explicit conflicts.
 These records are application-owned and never stored by mutating Dapr workflow
 history.
 
+The PostgreSQL adapter in `tools/dapr-engine/storage/postgres/` stores receipts
+under the four-part operation key. Apply
+[`operation-receipts.sql`](../../tools/dapr-engine/storage/postgres/operation-receipts.sql)
+before using the adapter. Claims are idempotent, transitions compare both the
+expected record version and current state in the update, and
+`listReconciliationCandidates` exposes bounded batches of nonterminal receipts
+for effect-specific recovery. It does not guess whether an interrupted external
+effect occurred; a reconciler must establish that outcome before resolving an
+`ambiguous` receipt. At most 32 diagnostic references of up to 2,048 characters
+are retained per receipt.
+
 ### Immutable artifact references
 
 `ArtifactRefV1` contains `schemaVersion`, opaque `artifactId`, immutable `uri`,
@@ -134,6 +145,17 @@ metadata still require later qualification; this contract does not claim those
 limits have been tested. Provider output, logs, secrets, and repository payloads
 must not be copied into workflow history merely for convenience.
 
+`FileArtifactCheckpointStore` in `tools/dapr-engine/storage/files/` persists
+artifact bytes below an absolute, operator-configured storage root, separate
+from PostgreSQL workflow/receipt state. Objects use
+`artifact://sha256/<hex>` URIs and digest-derived paths. Publication verifies
+declared size and digest, writes a mode-0600 temporary file, syncs it, links it
+to the immutable content path without replacement, syncs the containing
+directory, and verifies the stored bytes before returning success. Existing
+content is never overwritten; missing, corrupt, or conflicting content fails
+closed. The root must be backed by durable storage in deployment. Retention does
+not delete stored objects automatically.
+
 ### Checkpoints
 
 A checkpoint is immutable and includes its schema version, run ID, manifest
@@ -142,6 +164,17 @@ workspace/Git tree identity, and integrity metadata. A checkpoint is visible to
 recovery only after all referenced data is durably written and verified. A
 workflow may publish a reference only after the application receipt confirms
 publication.
+
+`TaskCheckpointV1` extends this record with the base commit revision; changed
+paths and added/modified/deleted classification; binary status, blob IDs, and
+Git modes; the complete required-object IDs and a Git object bundle reference;
+validation-evidence references; toolchain name/version entries; and dependency
+lockfile paths with immutable artifact references. Every referenced object,
+including validation and lockfile artifacts, must also appear in the checkpoint
+artifact list. The store rejects unsafe paths, incomplete change metadata, and
+references that are missing or fail integrity checks. Checkpoint metadata is
+stored as canonical JSON at a digest-derived path and reverified with every
+recovery read.
 
 Retention may remove terminal diagnostics only after the retention policy
 expires and no live workflow, checkpoint, approval, or review references them.

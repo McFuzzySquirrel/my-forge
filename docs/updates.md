@@ -4,6 +4,24 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.106
+
+### P3 durable receipts and checkpoint storage
+
+- Add a PostgreSQL operation-receipt store under
+  `tools/dapr-engine/storage/postgres/` with idempotent claims,
+  compare-and-swap transitions, and reconciliation candidate listing (P3-01).
+  It is qualified against a disposable PostgreSQL 18.6 instance with
+  `npm run test:postgres --prefix tools/dapr-engine`. See
+  [testing-guide.md](testing-guide.md).
+- Add a file-backed, content-addressed artifact and task-checkpoint store
+  (P3-02). It uses no-replace publication, fsync, and digest re-verification
+  on every resolve. Its contract types `TaskCheckpointV1`,
+  `CheckpointChangeV1`, `ToolchainEntryV1`, and `DependencyLockfileV1` are
+  documented in contract §3.
+- Tick the accepted P0 and P1 roadmap items in `plan.md`. Production engine
+  behavior is unchanged.
+
 ## October 2026 - v3.105
 
 ### P2 execution boundary review accepted

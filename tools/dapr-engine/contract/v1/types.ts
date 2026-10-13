@@ -178,6 +178,36 @@ export interface CheckpointV1 {
   readonly gitTreeId: string;
 }
 
+export interface CheckpointChangeV1 {
+  readonly path: string;
+  readonly change: "added" | "modified" | "deleted";
+  readonly binary: boolean;
+  readonly baseBlobOid?: string;
+  readonly resultBlobOid?: string;
+  readonly baseMode?: string;
+  readonly resultMode?: string;
+}
+
+export interface ToolchainEntryV1 {
+  readonly name: string;
+  readonly version: string;
+}
+
+export interface DependencyLockfileV1 {
+  readonly path: string;
+  readonly artifact: ArtifactRefV1;
+}
+
+export interface TaskCheckpointV1 extends CheckpointV1 {
+  readonly baseRevision: string;
+  readonly changes: readonly CheckpointChangeV1[];
+  readonly gitObjectIds: readonly string[];
+  readonly gitObjectBundle: ArtifactRefV1;
+  readonly validationEvidence: readonly ArtifactRefV1[];
+  readonly toolchain: readonly ToolchainEntryV1[];
+  readonly dependencyLockfiles: readonly DependencyLockfileV1[];
+}
+
 export interface FencingLeaseV1 {
   readonly schemaVersion: typeof SCHEMA_VERSION;
   readonly repositoryId: string;

@@ -10,6 +10,6 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["execution/**/*.ts", "contract/**/*.ts", "tests/**/*.ts"],
+  "include": ["execution/**/*.ts", "contract/**/*.ts", "storage/**/*.ts", "tests/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

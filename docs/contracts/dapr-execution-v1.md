@@ -182,6 +182,38 @@ There is no automatic deletion of live references. Missing or digest-mismatched
 data blocks recovery explicitly; it is not treated as an empty successful
 checkpoint.
 
+### Workspace reconstruction
+
+`CheckpointWorkspaceReconstructor` in
+`tools/dapr-engine/execution/workspace-reconstruction.ts` requires an explicit
+checkpoint digest and an operator-configured absolute scratch root. It imports
+the checkpoint's Git bundle into a new repository with no remote; the bundle
+must advertise a ref whose object closure contains all declared required Git
+objects. It checks every declared object and all objects needed by the
+base/result trees, then verifies the checkpoint's safe paths, change metadata,
+modes, blob IDs, binary flags, dependency-lockfile bytes, and
+workspace-contained symlink targets. The scratch root is restricted to owner
+access. The base revision remains `HEAD`; the checkpoint tree is restored into
+the working tree without staging it. Missing or corrupt checkpoint data,
+unlisted Git objects, escaping symlinks, or mismatched metadata fails closed.
+
+The dirty-tree policy is **checkpoint-only**: reconstruction never reads or
+copies a worker's old checkout, a mounted repository, or its uncommitted files.
+Each workspace starts from the named checkpoint and is disposable after the
+next durable checkpoint is published. Dependencies are not inherited through
+symlinks or a shared `node_modules`; optional dependency setup must be requested
+and supplied by a trusted provisioner scoped to the new workspace and its
+verified lockfiles.
+
+Credential resolution is separate from workspace creation. A caller must bind
+specific run secret references to explicit environment variable names; the
+resolver receives only the repository, target ref, selected harness, and one
+bound reference at a time. Reserved process and Git configuration variables
+are rejected. Resolved values are returned for the selected harness process
+only and must not be written into the workspace, checkpoint, or logs. The
+implementation provides no credential backend or automatic dependency
+installer.
+
 ### Repository fencing
 
 Integration ownership is scoped to `(repositoryId, targetRef)`. A lease grant

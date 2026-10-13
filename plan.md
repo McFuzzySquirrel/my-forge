@@ -196,7 +196,7 @@ repository integration authority.
   metadata before reporting activity success. Capture base revision, resulting
   changes including new/deleted/binary files, required Git objects, validation
   evidence, and toolchain/dependency metadata. Missing/corrupt objects fail closed.
-- [ ] **P3-03 — Reconstruct isolated workspaces.** Prepare clean clones/worktrees
+- [x] **P3-03 — Reconstruct isolated workspaces.** Prepare clean clones/worktrees
   from explicit checkpoints, verify paths and digests, apply the dirty-tree policy,
   and provision dependencies/credentials narrowly. Resume never requires the old
   worker's uncommitted files.

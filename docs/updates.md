@@ -4,6 +4,17 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.107
+
+### P3 isolated workspace reconstruction
+
+- Reconstruct a disposable Git workspace from an explicit immutable checkpoint,
+  verify its Git objects, paths, change metadata, and dependency-lockfile
+  artifacts, and never import the previous worker's dirty files (P3-03).
+- Add opt-in workspace-scoped dependency provisioning and explicit,
+  harness-bound credential environment bindings. No installer or credential
+  backend is configured by default.
+
 ## October 2026 - v3.106
 
 ### P3 durable receipts and checkpoint storage

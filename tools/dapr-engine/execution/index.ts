@@ -6,6 +6,7 @@ export * from "./task-execution.ts";
 export * from "./task-result.ts";
 export * from "./types.ts";
 export * from "./verify.ts";
+export * from "./workspace-reconstruction.ts";
 export * from "./harness/claude-adapter.ts";
 export * from "./harness/copilot-adapter.ts";
 export * from "./harness/invocation-log.ts";

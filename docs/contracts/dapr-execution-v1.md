@@ -287,6 +287,97 @@ attempt fails as `uncheckpointed-effect`. A created commit must be integrated to
 be accepted; a rejected integration fails and an ambiguous one, or an integrated
 commit whose checkpoint is unavailable, stays `ambiguous`.
 
+### Process lifecycle and isolation
+
+An `executing` receipt has at most one live **execution owner**, recorded per
+operation key with a monotonically increasing `executionEpoch`, the owning
+`workerId`, a heartbeat expiry, and a fixed `deadlineAt`. The first start sets
+the deadline from the attempt budget; a redelivered activity can take over only
+after the previous owner's heartbeat expires, receives `epoch + 1`, and keeps
+the original deadline, so worker loss never extends an attempt. Takeover after
+the deadline, of a cancel-requested execution, or of a receipt that is no
+longer `executing` is rejected, and a published outcome is never relaunched.
+Epochs that expired while running are recorded as lost. Heartbeats, exit
+reports, and outcome publication carry the `(executionEpoch, workerId)` claim;
+a superseded or expired claim is rejected as `stale-execution` or
+`execution-expired` and never changes the receipt. All times use the
+authority's (database) clock.
+
+The worker supervisor (`superviseExecution` in
+`tools/dapr-engine/execution/process-lifecycle.ts`) owns one abort signal per
+execution. It is aborted by the deadline, by the caller's cancellation, by a
+heartbeat directive after a durable `cancel` request, and by heartbeat
+rejection or a store outage longer than the heartbeat TTL (`ownership-lost`).
+The harness runner kills the whole POSIX process group on abort and, for an
+isolated request, also reaps descendants left in the group after a normal
+exit. Exit is recorded only after the process has settled, with
+`processCleanup` `observed` or `unconfirmed`; Windows tree cleanup is reported
+as `unconfirmed`. An owner that lost ownership does not report an exit.
+Accepting `cancel` is therefore distinct from the process being stopped.
+
+Outcome admission (`decideOutcomeAdmission`) and the receipt transition happen
+in one transaction (`PostgresExecutionOwnershipStore.publishOutcome`):
+
+| Execution state | Effect (`effect-published`) | Failure (`failed`) |
+|---|---|---|
+| Still running | `process-running` | `process-running` |
+| Cancel requested | `late-result`; receipt fails with preserved diagnostics | `late-result`; receipt fails |
+| Exited, cleanup `unconfirmed` | `cleanup-unconfirmed` | Admitted |
+| Exited after cancel or past the deadline | `late-result` / `deadline-exceeded` | Admitted |
+| Exited cleanly before the deadline | Admitted | Admitted |
+
+`fenceLostExecutions` marks running owners with expired heartbeats `lost`; a
+lost cancel-requested execution fails its `executing` receipt with
+`execution:cancelled-worker-lost:epoch-N:cleanup-unconfirmed`. Other lost
+executions stay available for takeover. The table
+(`storage/postgres/operation-executions.sql`) references operation receipts and
+is applied after `operation-receipts.sql`.
+
+**Worker death.** On POSIX, an isolated harness runs under a process-group
+watchdog (`runCommand` with `reapProcessGroupOnExit`). The watchdog is a
+small Node process that leads the harness's process group, launches the
+harness inside it, and holds an IPC channel to the worker. It stays alive after
+the harness exits until the worker reaps the group. When the worker dies at any
+point (crash, `SIGKILL`, OOM, including between harness exit and reaping), the
+kernel closes the channel and the watchdog kills its whole group. It also kills
+the group at a hard deadline (invocation timeout plus a 1 s cleanup grace), so
+an unresponsive worker cannot extend the tree. This holds on a bare host and in
+a container; a container PID namespace additionally ends everything with the
+worker container.
+
+Two cases are outside the process-group primitive and are left to the
+deployment's containment (the worker container's PID namespace, or a service
+manager that kills the worker's whole cgroup, such as systemd
+`KillMode=control-group`). These are a descendant that leaves the group itself
+(`setsid`/`setpgid` daemonizing) and the watchdog being killed at the same
+moment as the worker. In every case, fencing rejects the orphan's late results.
+Windows has no process-group watchdog. Tree cleanup is reported as
+`unconfirmed`, which blocks effect publication (fail-closed). A takeover reruns
+the harness from the reconstructed workspace, so a provider call may be repeated
+but its effect is accepted at most once.
+
+**Isolation.** An isolated attempt receives a private, `0700` scratch home with
+its own XDG and temporary directories, never inside the host home, and a
+complete allowlisted environment instead of the worker's: only locale, path,
+terminal, certificate, proxy, and required Windows system variables pass
+through, plus explicitly granted harness credentials. Engine endpoints
+(`DOCKER_*`, `CONTAINER_HOST`, `PODMAN_*`, `BUILDKIT_*`, `CONTAINERD_*`,
+`KUBECONFIG`), Dapr and service API tokens, SSH agent, D-Bus, display, database
+credentials, loader/Node injection, and Git overrides are never inherited and
+cannot be granted as credentials. `checkContainerIsolation` rejects worker or
+harness container specs with relative bind sources, host-home binds, engine
+socket binds, privileged mode, host PID namespace, or engine endpoint
+variables.
+
+**Target builds that require containers.** A harness never receives the host
+or worker container engine socket, so a target repository whose verification
+builds or runs containers cannot do so through the worker. Supporting such
+targets is a separately approved capability: an operator must explicitly enable
+a dedicated rootless builder or remote build service with its own storage and
+credentials, scoped to the run, that is not the engine running the worker or
+service. Until that approval and its design exist, such verification fails as a
+configuration error rather than falling back to a host engine.
+
 ## 4. Package and deployment ownership
 
 - `tools/dapr-engine/` owns the future workflow service and executable entry
@@ -345,7 +436,10 @@ unlisted case. Fixture files live in `tools/dapr-engine/tests/conformance/`.
 | C23 | Process dies after the Git ref update but before the integration record or receipt | Reconciliation records the existing commit and accepts the receipt once; redelivery creates no second commit | `effects.test.ts` |
 | C24 | Process dies before the ref update, or the attempt never recorded an intent | Reconciliation fails the receipt and abandons the attempt; a late integration is rejected | `effects.test.ts` |
 | C25 | Auto-commit disabled, nothing to commit, local commit failure, or uncheckpointed effect | Accept only a verified checkpoint (commit failure as a warning); rejected integration fails; ambiguous or uncheckpointed integration stays ambiguous | `effects.test.ts` |
-
+| C26 | Attempt deadline, durable cancel, a harness leaving background descendants, or a worker that is killed (mid-attempt or before reaping) or unresponsive | Kill the owned process tree (POSIX group) and record exit only after it settles, with cleanup `observed`; the watchdog kills the group on worker death or at the hard deadline | `lifecycle.test.ts` |
+| C27 | Worker loss, then redelivery | Take over with the next epoch and original deadline only after the heartbeat expires; reject stale heartbeats, exits, and publications; never relaunch after publication or the deadline; stop a harness whose owner cannot renew | `lifecycle.test.ts` |
+| C28 | Outcome reported while the process runs, after cancel, or with unconfirmed cleanup | Reject `process-running`; fail the receipt as `late-result` with preserved diagnostics; reject an effect with unconfirmed cleanup but admit a failure; fail a cancelled lost execution | `lifecycle.test.ts` |
+| C29 | Harness environment, home, or container spec exposes host home, engine sockets, or service credentials | Strip forbidden variables and credentials, use a private non-host home, and reject host-home/socket binds, privileged mode, host PID, and engine endpoints | `lifecycle.test.ts` |
 C10, C17, C18, and C19 pin intentional compatibility changes: the legacy engine
 ignores unknown selected IDs, accepts a confirmation flag as review intent, and
 lets reconciliation rewrite selection in place.
@@ -357,6 +451,11 @@ specified semantics only. They are not durability, restart, Dapr, or
 process-cleanup evidence; P3 storage/integration adapters must pass the same
 cases before those claims are made. In the reference model, a graceful `stop`
 settles to the resumable `paused` status at the task boundary.
+
+C26 and C29 run real POSIX subprocesses through the harness runner; C27 and C28
+use an in-memory execution store (`tests/conformance/support/execution-store.ts`)
+built on the same ownership decisions as the PostgreSQL store, which is covered
+by `tests/storage/postgres-operation-executions.integration.test.ts`.
 
 ## 6. Compatibility and exclusions
 

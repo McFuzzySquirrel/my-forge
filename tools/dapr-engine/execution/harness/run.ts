@@ -1,9 +1,10 @@
 import spawn from "cross-spawn";
-import { execFile, type ChildProcess } from "node:child_process";
+import { execFile, spawn as spawnProcess, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve as resolvePath } from "node:path";
 import readCmdShim from "read-cmd-shim";
 import which from "which";
+import type { ProcessCleanup } from "../../contract/v1/execution-ownership.ts";
 import type { TaskAttemptRequest, TaskFailureKind } from "../types.ts";
 import {
   ActivityLineBuffer,
@@ -14,6 +15,49 @@ import {
 } from "./invocation-log.ts";
 
 const CLEANUP_TIMEOUT_MS = 1000;
+
+/**
+ * Process-group watchdog for owned harness invocations (POSIX only).
+ *
+ * The watchdog leads the harness's process group and launches the harness
+ * inside it. It holds an IPC channel to the worker and stays alive after the
+ * harness exits until the worker reaps the whole group. When the worker dies at
+ * any point (crash, SIGKILL, OOM), the kernel closes the channel; on
+ * `disconnect` the watchdog kills its own group, so no owned descendant outlives
+ * the worker. It also kills the group at an absolute hard deadline, which
+ * bounds the tree even when the worker is alive but unresponsive.
+ *
+ * argv: deadlineAtMs, shell flag ("1"/"0"), bin, ...args.
+ */
+const WATCHDOG_SOURCE = `"use strict";
+const { spawn } = require("node:child_process");
+const [deadlineText, shellFlag, bin, ...args] = process.argv.slice(1);
+const killGroup = () => {
+  try { process.kill(-process.pid, "SIGKILL"); } catch {}
+  process.exit(137);
+};
+if (!process.connected) killGroup();
+process.on("disconnect", killGroup);
+setTimeout(killGroup, Math.max(0, Number(deadlineText) - Date.now()));
+const env = { ...process.env };
+delete env.NODE_CHANNEL_FD;
+delete env.NODE_CHANNEL_SERIALIZATION_MODE;
+const spawnFailed = (error) => {
+  process.send({ spawnError: String((error && error.message) || error) }, () => process.exit(127));
+};
+try {
+  const child = spawn(bin, args, { stdio: ["ignore", "inherit", "inherit"], env, shell: shellFlag === "1" });
+  child.on("error", spawnFailed);
+  child.on("exit", (code, signal) => process.send({ exit: { code, signal } }));
+} catch (error) {
+  spawnFailed(error);
+}
+`;
+
+interface WatchdogMessage {
+  spawnError?: string;
+  exit?: { code: number | null; signal: NodeJS.Signals | null };
+}
 
 export interface RunCommandOptions {
   cwd: string;
@@ -27,6 +71,21 @@ export interface RunCommandOptions {
    * `childEnv`. Passing `PWD` here is therefore pointless: `cwd` wins.
    */
   env?: NodeJS.ProcessEnv;
+  /**
+   * When false, the child receives only `env` (plus the corrected `PWD`), not
+   * the worker's own environment. Defaults to true for legacy callers.
+   */
+  inheritEnvironment?: boolean;
+  /**
+   * When true on POSIX, the command runs under the process-group watchdog
+   * (`WATCHDOG_SOURCE`): descendants left in the group after a normal exit are
+   * killed, and the group also dies with the worker or at the hard deadline, so
+   * no owned subprocess outlives the invocation. Without a process-group
+   * primitive (Windows), cleanup is reported unconfirmed.
+   */
+  reapProcessGroupOnExit?: boolean;
+  /** Receives `processCleanup` when a started process settles. */
+  onProcessSettled?: (cleanup: ProcessCleanup) => void;
   signal?: AbortSignal;
   /** When present, the invocation (and effective invocation) is logged before launch. */
   invocation?: HarnessInvocationContext;
@@ -44,6 +103,12 @@ export interface RunCommandResult {
   /** Human-readable failure reason (spawn error, timeout, or buffer overflow). */
   error?: string;
   failureKind?: TaskFailureKind;
+  /**
+   * Whether termination of the owned process tree was observed. `unconfirmed`
+   * means a kill timed out or failed, or descendants could not be reaped.
+   * Absent when no process was started.
+   */
+  processCleanup?: ProcessCleanup;
 }
 
 /**
@@ -60,8 +125,8 @@ export interface RunCommandResult {
  * So a child is only ever launched with `PWD` equal to its `cwd`: `cwd` fixes
  * the filesystem, `PWD` is corrected to match it, and the two cannot disagree.
  */
-function childEnv(cwd: string, extra?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  return { ...process.env, ...extra, PWD: resolvePath(cwd) };
+function childEnv(cwd: string, extra?: NodeJS.ProcessEnv, inherit = true): NodeJS.ProcessEnv {
+  return { ...(inherit ? process.env : {}), ...extra, PWD: resolvePath(cwd) };
 }
 
 /**
@@ -111,11 +176,21 @@ export function runCommand(
       : undefined;
     // A dedicated POSIX process group lets cancellation include descendants
     // inheriting the output pipes. This remains attached: no unref during work.
-    const child = spawn(bin, args, {
-      cwd: opts.cwd, env: childEnv(opts.cwd, opts.env), stdio: ["ignore", "pipe", "pipe"],
-      shell: opts.shell,
-      detached: process.platform !== "win32", windowsHide: true,
-    });
+    // Owned (reaped) invocations run under the process-group watchdog so the
+    // group also dies with the worker or at the hard deadline.
+    const watchdogDeadlineAt = opts.reapProcessGroupOnExit && process.platform !== "win32"
+      ? Date.now() + opts.timeoutMs + CLEANUP_TIMEOUT_MS
+      : undefined;
+    const child = watchdogDeadlineAt === undefined
+      ? spawn(bin, args, {
+          cwd: opts.cwd, env: childEnv(opts.cwd, opts.env, opts.inheritEnvironment ?? true), stdio: ["ignore", "pipe", "pipe"],
+          shell: opts.shell,
+          detached: process.platform !== "win32", windowsHide: true,
+        })
+      : spawnProcess(process.execPath, ["-e", WATCHDOG_SOURCE, "--", String(watchdogDeadlineAt), opts.shell ? "1" : "0", bin, ...args], {
+          cwd: opts.cwd, env: childEnv(opts.cwd, opts.env, opts.inheritEnvironment ?? true), stdio: ["ignore", "pipe", "pipe", "ipc"],
+          detached: true, windowsHide: true,
+        });
 
     const startedAt = Date.now();
     let stdout = "";
@@ -127,7 +202,7 @@ export function runCommand(
     let terminating = false;
     let terminationFinished = false;
     let closed = false;
-    let exitStatus: number | null = null;
+    let cleanup: ProcessCleanup | undefined;
 
     const settle = (status: number | null, error?: string) => {
       if (settled) return;
@@ -146,7 +221,15 @@ export function runCommand(
           durationMs: Date.now() - startedAt,
         }));
       }
-      resolve({ stdout, stderr, status: resolvedStatus, error: failure?.error ?? error, failureKind: failure?.failureKind });
+      // A normal exit only proves descendants are gone when the group was reaped.
+      const processCleanup = child.pid
+        ? cleanup ?? (terminating || opts.reapProcessGroupOnExit ? "observed" : "unconfirmed")
+        : undefined;
+      if (processCleanup) opts.onProcessSettled?.(processCleanup);
+      resolve({
+        stdout, stderr, status: resolvedStatus, error: failure?.error ?? error, failureKind: failure?.failureKind,
+        ...(processCleanup ? { processCleanup } : {}),
+      });
     };
 
     const terminate = (error: string, failureKind: TaskFailureKind) => {
@@ -155,6 +238,7 @@ export function runCommand(
       terminating = true;
       const cleanupFailed = (reason: string) => {
         if (settled) return;
+        cleanup = "unconfirmed";
         failure = { error: `${error}; process-tree cleanup failed: ${reason}`, failureKind: "exception" };
       };
       cleanupTimer = setTimeout(() => {
@@ -228,12 +312,67 @@ export function runCommand(
     child.on("error", (err) => {
       failure ??= { error: err.message, failureKind: "configuration" };
     });
-    child.on("close", (code) => {
+    // Watchdog mode: the harness's own exit arrives over IPC while the watchdog
+    // still anchors the group, so reaping happens before the group can be orphaned.
+    let harnessExit: WatchdogMessage["exit"];
+    child.on("message", (message: WatchdogMessage) => {
+      if (message.spawnError !== undefined) {
+        failure ??= { error: message.spawnError, failureKind: "configuration" };
+      } else if (message.exit && !harnessExit) {
+        harnessExit = message.exit;
+        if (!terminating && child.pid) cleanup = reapProcessGroup(child.pid);
+      }
+    });
+    child.on("close", (code, signal) => {
       closed = true;
-      exitStatus = code;
+      if (watchdogDeadlineAt !== undefined) {
+        if (harnessExit) {
+          code = harnessExit.code;
+        } else if (!terminating && !failure) {
+          // The watchdog killed the group without the worker asking: the worker
+          // missed its own timeout, so the hard deadline fired.
+          failure = Date.now() >= watchdogDeadlineAt
+            ? { error: `timed out after ${opts.timeoutMs}ms (watchdog hard deadline)`, failureKind: "timeout" }
+            : { error: `harness watchdog exited unexpectedly (${signal ?? `code ${code}`})`, failureKind: "exception" };
+          code = null;
+          if (child.pid) cleanup = reapProcessGroup(child.pid);
+        }
+      } else if (!terminating && opts.reapProcessGroupOnExit && child.pid) {
+        cleanup = reapProcessGroup(child.pid);
+      }
       if (!terminating || terminationFinished) settle(code);
     });
   });
+}
+
+/** Kills any descendant still in an exited leader's process group. */
+function reapProcessGroup(pid: number): ProcessCleanup {
+  if (process.platform === "win32") return "unconfirmed";
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ESRCH") return "observed";
+    return "unconfirmed";
+  }
+  return "observed";
+}
+
+/**
+ * Process options an adapter passes to `runCommand` for an isolated request:
+ * a complete, non-inherited environment and reaping of leftover descendants.
+ * Requests without isolation keep the legacy inherited environment.
+ */
+export function harnessProcessOptions(
+  request: Pick<TaskAttemptRequest, "isolation">,
+): Pick<RunCommandOptions, "env" | "inheritEnvironment" | "reapProcessGroupOnExit" | "onProcessSettled"> {
+  const isolation = request.isolation;
+  if (!isolation) return {};
+  return {
+    env: { ...isolation.environment },
+    inheritEnvironment: false,
+    reapProcessGroupOnExit: true,
+    ...(isolation.onProcessSettled ? { onProcessSettled: isolation.onProcessSettled } : {}),
+  };
 }
 
 /** Extra model flags are transport defaults, never later argv overrides. */

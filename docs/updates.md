@@ -4,6 +4,39 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.110
+
+### P3 process lifecycle and isolation
+
+- Add durable execution ownership for executing receipts
+  (`storage/postgres/operation-executions.sql`, applied after
+  `operation-receipts.sql`): an owner epoch, heartbeat, and deadline fixed by
+  the first start. Redelivery takes over only after the heartbeat expires, keeps
+  the original deadline, and never relaunches a published outcome; stale epochs
+  are rejected. `fenceLostExecutions` marks lost owners and fails cancelled ones
+  whose cleanup can no longer be observed.
+- Add `superviseExecution`: deadline, durable cancel, and loss of ownership
+  abort the harness, which kills its process group; exit is recorded only after
+  the process settles, with cleanup `observed` or `unconfirmed`.
+  `publishOutcome` admits the outcome and transitions the receipt in one
+  transaction, rejecting results before exit, after cancel (failing the receipt
+  with preserved diagnostics), or effects with unconfirmed cleanup.
+- Harness requests can opt into isolation: a private scratch home, an
+  allowlisted environment without engine endpoints, service tokens, or database
+  credentials, and reaping of descendants left after a normal exit.
+- Isolated POSIX harnesses run under a process-group watchdog that holds an
+  IPC channel to the worker. When the worker dies (including after the harness
+  exits but before reaping), or the hard deadline passes while the worker is
+  unresponsive, the watchdog kills the harness's whole group. Processes left
+  behind by a dead worker are therefore cleaned up on a bare host too.
+  Descendants that leave the group (`setsid`) rely on deployment containment
+  (container or cgroup).
+  `checkContainerIsolation` rejects host-home and engine-socket binds,
+  privileged mode, and host PID. Legacy callers keep the inherited environment.
+- Document the lifecycle rules and the separately approved approach for target
+  builds requiring containers in contract §3; add fixtures C26–C29 and a live
+  PostgreSQL execution-ownership test to `npm run test:postgres`.
+
 ## October 2026 - v3.109
 
 ### P3 Git effect reconciliation

@@ -80,7 +80,10 @@ live integration tests. They passed locally on PostgreSQL 18.6 on 2026-10-13.
 The tests exercise durable token allocation, expiry and stale-owner rejection,
 serialized integration, ambiguous Git outcomes, atomic Git expected-head
 updates, checkpoint-bound integration, and P3-05 Git-effect reconciliation
-(already-integrated redelivery, abandoned attempts, and blocked checkpoints). The test image is pinned to the Docker Hub multi-platform index digest
+(already-integrated redelivery, abandoned attempts, and blocked checkpoints), and
+P3-06 execution ownership (concurrent starts, heartbeat-expiry takeover with the
+original deadline, stale-epoch rejection, cancel-before-publish, and fencing of
+lost cancelled executions). The test image is pinned to the Docker Hub multi-platform index digest
 `sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`;
 this does not change the PostgreSQL 17.6 image in the historical P1 spike.
 
@@ -109,8 +112,8 @@ POSTGRES_TEST_URL="postgres://postgres:${PG_PASSWORD}@127.0.0.1:${PG_PORT}/recei
 
 The tests create and drop unique temporary schemas. The temporary container
 has no mounted volume, and the shell trap stops and removes it even if the test
-fails. The regular unit suite skips both opt-in PostgreSQL tests when
-`POSTGRES_TEST_URL` is unset. This qualifies receipt/fencing persistence and the
+fails. The regular unit suite skips the opt-in PostgreSQL tests when
+`POSTGRES_TEST_URL` is unset. This qualifies receipt/fencing/execution-ownership persistence and the
 local Git integration boundary against PostgreSQL; it does not qualify the Dapr
 PostgreSQL state component or the
 remaining P3 gate.

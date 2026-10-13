@@ -47,6 +47,16 @@ export interface TaskAttemptRequest {
   readonly instructions: string;
   readonly signal?: AbortSignal;
   readonly logHarnessActivity?: boolean;
+  /** Present for supervised service executions; absent for legacy runs. */
+  readonly isolation?: HarnessProcessIsolation;
+}
+
+/** See `buildHarnessEnvironment` in `isolation.ts`. */
+export interface HarnessProcessIsolation {
+  /** Complete child environment; the worker's own environment is not inherited. */
+  readonly environment: Readonly<Record<string, string>>;
+  /** Called once per harness process with whether its process-tree termination was observed. */
+  readonly onProcessSettled?: (cleanup: "observed" | "unconfirmed") => void;
 }
 
 export interface HarnessRunContext {

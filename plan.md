@@ -57,7 +57,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Gate accepted; baseline unblocked | [P0 review #2](https://github.com/McFuzzySquirrel/my-forge/issues/2); [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
-| P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–05 implemented; P3-04/05 PostgreSQL fencing, Git ref CAS, and Git-effect reconciliation checks pass; P3-GATE not accepted | Unassigned |
+| P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-04/05/06 PostgreSQL fencing, Git ref CAS, Git-effect reconciliation, and execution-ownership checks pass; P3-GATE not accepted | Unassigned |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
@@ -208,7 +208,7 @@ repository integration authority.
   a crash before receipt persistence; avoid duplicate commits. Preserve audit
   references. Apply P0's explicit no-auto-commit/commit-failure policy without
   marking an uncheckpointed effect recoverable.
-- [ ] **P3-06 — Enforce process lifecycle and isolation.** Propagate timeout and
+- [x] **P3-06 — Enforce process lifecycle and isolation.** Propagate timeout and
   cancellation to owned harness subprocesses, handle worker loss, and reject
   late/stale outcomes. Avoid host-home mounts and engine sockets; document the
   separately approved approach for target builds requiring containers.
@@ -433,9 +433,26 @@ and is fenced, and a missing checkpoint stays ambiguous. `resolveGitEffectPolicy
 encodes the P0 auto-commit register. Fixtures C23–C25 and the live PostgreSQL
 tests pass.
 
-**Next: P3-06 — Enforce process lifecycle and isolation.** Propagate timeout
-and cancellation to owned harness subprocesses, handle worker loss, and reject
-late/stale outcomes. P3-GATE remains unaccepted; the conformance fixtures remain
+P3-06 adds durable execution ownership (`forge_operation_executions`): each
+executing receipt has one owner epoch with a heartbeat and a deadline fixed by
+the first start. Redelivery takes over only after the heartbeat expires and keeps
+the original deadline; stale epochs cannot heartbeat, report exit, or publish.
+`superviseExecution` turns deadline, durable cancel, and lost ownership into
+process-group termination and records exit only after the harness settles;
+outcome admission and the receipt transition commit together, rejecting
+results before exit, after cancel, or with unconfirmed cleanup. A
+process-group watchdog kills a harness tree when its worker dies or stops
+responding past the hard deadline, including on a bare host. Isolated
+harnesses get a private home and an allowlisted environment without engine
+sockets or service credentials, and container specs with host-home or engine
+socket binds are rejected. Target builds that need containers require a
+separately approved dedicated builder (contract §3). Fixtures C26–C29 and the
+live PostgreSQL tests pass.
+
+**Next: P3-GATE.** Review the P3 evidence: redelivered activities produce one
+accepted effect set, stale owners cannot mutate the target branch, checkpoints
+reconstruct a task workspace, and ambiguous integration blocks unsafe
+continuation. P3-GATE remains unaccepted; the conformance fixtures remain
 semantic evidence only, not proof of full durable Dapr effects.
 Console migration and legacy-engine retirement remain gated by their later phases.
 

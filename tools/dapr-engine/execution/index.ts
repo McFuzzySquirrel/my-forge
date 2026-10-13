@@ -1,4 +1,6 @@
 export * from "./artifacts.ts";
+export * from "./isolation.ts";
+export * from "./process-lifecycle.ts";
 export * from "./request.ts";
 export * from "./sandbox.ts";
 export * from "./task-context.ts";

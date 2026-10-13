@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { runCommand, extractModelFlags, stripProviderPrefix, canSelectAgentNatively } from "./run.ts";
+import { runCommand, extractModelFlags, stripProviderPrefix, canSelectAgentNatively, harnessProcessOptions } from "./run.ts";
 import { harnessInvocationContext } from "./invocation-log.ts";
 import type { HarnessAdapter, TaskAttemptRequest, TaskFailureKind, TaskResult } from "../types.ts";
 import { inlinePersona } from "../request.ts";
@@ -77,6 +77,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       maxBufferBytes: 10 * 1024 * 1024,
       invocation: harnessInvocationContext(this.name, request),
       activity: request.logHarnessActivity === true,
+      ...harnessProcessOptions(request),
     });
 
     const stdout = result.stdout;

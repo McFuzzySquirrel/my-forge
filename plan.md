@@ -2,7 +2,8 @@
 
 **Created:** 2026-10-13
 
-**Status:** Ready to begin Phase 0; implementation has not started
+**Status:** P0 evidence prepared; acceptance blocked by launcher baseline and
+operator review. P1 is an isolated experimental spike, not production replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
 profiles; no permanent legacy backend
@@ -48,8 +49,8 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 
 | Phase | Depends on | Accountable role to assign | Status | Issue/PR and acceptance evidence |
 |---|---|---|---|---|
-| P0 — Baseline and contracts | None | Architecture + QA | Not started | Unassigned |
-| P1 — Released SDK and runtime spike | P0 gate | Runtime + platform | Not started | Unassigned |
+| P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Review pending / baseline blocked | [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
+| P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | Experimental preparation; gate closed | [Foundation contracts](docs/features/dapr-foundation.md); no issue/PR assigned |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | Not started | Unassigned |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | Not started | Unassigned |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
@@ -400,6 +401,197 @@ Begin **P0-01 through P0-06**, then execute **P1-01 through P1-05** as a bounded
 capability/local-runtime spike. Do not implement Console migration or remove the
 legacy engine until the upstream phase gates are accepted. Assign owners and
 issue links in the tracking table as work begins.
+
+## P0 evidence — 2026-10-13
+
+This section records preparation, not human acceptance or release qualification.
+No issue/PR number or operator approval is fabricated. Checkboxes above remain
+unchecked until the tracking rules are satisfied. Baseline work ran against the
+existing engine without changing it.
+
+### Deliverable status
+
+| Work package | Evidence produced | Remaining acceptance |
+|---|---|---|
+| P0-01 | Execution/test inventory below | Architecture/QA review |
+| P0-02 | Caller/authority inventory below | Confirm complete caller migration ownership |
+| P0-03 | Engine/adapter baselines passed; launcher installation blocked | Resolve or explicitly accept the pre-existing launcher limitation; run its checks |
+| P0-04 | Proposed compatibility dispositions below | Operator acceptance before production extraction |
+| P0-05 | [Foundation PRD](docs/PRD.md) and [feature](docs/features/dapr-foundation.md) | Four structured contracts validate with zero errors/warnings; planned specialist still needs generation before compilation |
+| P0-06 | Proposed budgets/threat boundaries below | Operator must accept or adjust measurable thresholds |
+| P0-GATE | Explicit human-review contract `P0-GATE` | **Closed**; no review attestation has been written |
+
+Only P0/P1 execution contracts are authored in this increment. P2–P8 remain
+roadmap work: author their canonical features after the preceding gates pass,
+rather than freezing unsupported runtime assumptions into runnable contracts.
+Preparing an isolated SDK experiment does not grant permission to execute the
+gated canonical feature chain or replace the production engine.
+
+### Baseline environment and results
+
+Host: Linux `6.17.0-1022-azure`, x86_64; Node `v24.21.0`, npm `11.19.0`,
+rootless Podman `4.9.3`. These are observed test versions, not a promised support
+matrix. Baseline logs are session-local under `/tmp/myforge-p0-baseline`, not
+committed repository artifacts.
+
+| Package | Setup | Tests | Typecheck | Other checks |
+|---|---|---|---|---|
+| Workflow engine | `npm ci` passed | `npm test`: 283 passed, 7 skipped, 0 failed; 27.76 s | Passed | Skips are not durability/platform evidence |
+| Execution adapter | `npm ci` passed | `npm test`: 49 passed, 0 failed; 9.87 s | Passed | Canonical validation below |
+| Launcher | `npm ci` failed, exit 254 | Blocked | Blocked | Build and version check blocked |
+
+The launcher has a pre-existing dependency on
+`file:forge-launcher-1.0.0-beta.6.tgz`, but that tarball is absent. Evidence:
+`scripts/forge-launcher/package.json:26`. Do not synthesize a tarball, remove the
+dependency, or report launcher tests as passing to bypass this baseline.
+This unrelated packaging issue is left unchanged and blocks full P0 qualification.
+
+Canonical authoring check:
+`npm run validate-prd --prefix templates/skills/forge-execution-adapter -- /home/runner/work/my-forge/my-forge`
+reported four tasks, zero errors, zero warnings. This validates source contracts
+and dependencies, not team generation, human approval, or live infrastructure.
+
+### Execution semantics and decisive checks
+
+Source paths in these tables are repository-relative locators; they resolve under
+`/home/runner/work/my-forge/my-forge`. `engine/` below abbreviates
+`templates/skills/forge-workflow-engine/scripts/`.
+
+| Behavior | Current source boundary | Existing checks | Replacement disposition |
+|---|---|---|---|
+| Task/phase readiness; complete or skipped prerequisites | `engine/task-graph.ts:17-57`, `engine/engine.ts` | `engine/engine.test.ts`, launcher Console tests | Preserve one shared definition |
+| Manual single/range/list selection and transitive dependencies | `engine/engine.ts:218-238`, `engine/types.ts:15-22` | `engine/engine.test.ts`, `engine/cli.test.ts` | Preserve; snapshot selection |
+| Owner exclusivity, bounded waves and fallback capability notice | `engine/engine.ts:297-309,846-876`, `engine/sandbox.ts` | `engine/engine.test.ts`, `engine/sandbox.test.ts` | Preserve effective limits; no unisolated parallel writes |
+| Retryable versus configuration/exception/cancelled failures | `engine/engine.ts:499-720`, `engine/types.ts:89` | `engine/engine.test.ts`, harness tests | Durable retry timers; preserve classification |
+| Timeouts and abort/process cleanup | `engine/harness/run.ts`, harness adapters | `engine/harness/run.test.ts`, adapter tests | Separate process cancellation from workflow termination |
+| Expected outputs and no-op checks | `engine/verify.ts`, `engine/engine.ts:602-642` | `engine/verify.test.ts`, `engine/engine.test.ts` | Preserve; allow-noop never bypasses missing outputs |
+| Structured report and mandatory validation | `engine/task-result.ts`, `engine/engine.ts:628-636` | `engine/task-result.test.ts`, `engine/task-execution.test.ts` | Preserve all five gate outcomes |
+| Typed artifact creation and compact predecessor context | `engine/artifacts.ts`, `engine/engine.ts:414-450,666-691` | `engine/artifacts.test.ts`, `engine/request.test.ts` | Preserve projection; change persistence interface |
+| Human review and changed evidence invalidation | `engine/task-context.ts`, `engine/engine.ts:785-800,1007-1037` | `engine/task-context.test.ts`, `engine/engine.test.ts` | Preserve operator gate; bind immutable evidence and authenticated identity |
+| Running-task reset, manifest reconciliation, stale controls/blockers | `engine/state.ts:62-87`, `engine/engine.ts:770-835` | `engine/engine.test.ts` | Replace file mutation with versioned snapshots and explicit reconciliation |
+| Task replay | `engine/engine.ts:1107-1200` | `engine/engine.test.ts` | Preserve explicit rerun; distinguish history replay |
+| Serialized sandbox integration/overlap checks | `engine/engine.ts:874-902`, `engine/sandbox.ts` | `engine/sandbox.test.ts`, `engine/engine.test.ts` | Fenced coordinator and expected-head checks |
+| Auto-commit and non-fatal commit failures | `engine/commit.ts:60-68`, `engine/engine.ts:926-943` | `engine/commit.test.ts`, `engine/engine.test.ts` | Preserve option; require durable checkpoints independently |
+
+Test presence is not acceptance proof; use the results above and rerun affected
+checks when behavior changes. The future durability, fencing, and hosted tests
+do not exist merely because comparable local-engine tests pass.
+
+### Caller and authority inventory
+
+| Caller / authority today | Persistent inputs/outputs and controls | Migration owner / task |
+|---|---|---|
+| Engine CLI and state manager | Manifest/state/progress/audit/artifacts; control polling and PID; human review files | Runtime, P4-01/P4-03/P4-04 |
+| Launcher `engine-run.ts:46-211` | Installs local skills, compiles missing manifest, forwards flags, tees log; stop/pause path | Launcher, P5-03 |
+| Launcher `resume.ts`, `launcher.ts` | Selects stages, dispatches/detaches local processes and resumes repository runs | Launcher, P5-03 |
+| `bootstrap.ts`, `stage-resources.mjs` | Copies skills/personas/resources, initializes ignore rules and configuration | Packaging, P5-03 |
+| Console `paths.ts:90-124`, `jobs.ts`, `control.ts` | Reads manifest/state/log/PID; spawns jobs; writes controls/config and signals processes | Console, P5-04 |
+| Console `repo.ts` | **Also writes state/manifest** for reconciliation/reset/model changes; not merely read-only | Console + contracts, P2-01/P5-04 |
+| Console dashboard `state.ts`, `views/board.ts`, `views/tasks.ts` | Projects status/readiness, artifacts and review controls; uses installed engine readiness logic | Console, P5-04 |
+| Engine `viz/server.ts` | Reads manifest/state/audit; serves workflow visualization | Visualization, P5-04 or explicit retirement decision |
+| `forge-auto-build/SKILL.md` | Fast-path compile/detached run and file polling | Skills, P5-03 |
+| Shell/PowerShell wrappers | Delegate to launcher executable | Launcher, P5-03 |
+
+The engine serializes its own state and integration writes, but **the repository
+does not have a universal single-writer guarantee**: Console mutation paths must
+also migrate behind the service. Do not treat all file consumers as read-only.
+P5 must audit dynamic engine imports and remove writable authority, not only PID
+polling. Artifacts/review evidence can contain sensitive content.
+
+### Compatibility register — proposed, not yet accepted
+
+All current production commands and settings remain unchanged in P0/P1.
+These dispositions describe the future replacement, subject to P0 review.
+
+| Surface | Disposition | Future contract |
+|---|---|---|
+| Launcher engine-run/resume/bootstrap/console; wrapper entry points | Preserve entry intent | Route execution through Forge service; bootstrap prepares client/resources, not another scheduler |
+| Engine run/status/replay/pause/stop | Preserve intent; migrate implementation | Versioned service operations; explicit replay allocates new logical attempt identity |
+| approve-task with reviewer/evidence/confirm-human-review | Change security boundary | Operator-only authenticated approval bound to manifest/evidence; confirmation flag is not identity |
+| Standalone viz / `--viz`, `--port`, `--viz-port`, `--no-open` | Explicitly migrate or retire in P5 | Console/service view; maintain browser-open intent, not old process authority |
+| `--repo`, `--harness`, `--yes`, launcher `--dry-run` | Preserve meaning where applicable | Repository-scoped submission, selected harness, non-review confirmation and no-effect preview |
+| `--max-retries`, `--retry-delay-ms`, `--heartbeat-ms`, `--concurrency`, `--task-timeout-ms` | Preserve limits | Durable scheduling timers; runtime heartbeats are telemetry, not completion evidence |
+| `--execution-mode`, `--selection-scope`, `--selected-tasks` | Preserve | Immutable run selection and prerequisite expansion |
+| `--allow-noop`, `--run-validation` | Preserve | Structured validation always required, no missing-output bypass |
+| `--log-harness-activity` / `--no-log-harness-activity` | Preserve opt-in | Redaction and bounded retention; logging must not leak secrets |
+| `--auto-commit` / `--no-auto-commit`, `--commit-message-template` | Preserve | Disabled auto-commit still publishes durable patch/bundle/tree; not merely an ephemeral dirty worktree |
+| Sequential dirty repository | Deliberate safety change | Managed clean workspace by default; reject dirty shared mounts until explicit consent/checkpoint policy exists |
+| Commit failure | Preserve warning-only behavior conditionally | May remain non-fatal only if accepted changes/checkpoint are durable and reconcilable; failed integration/publication blocks success |
+| Graceful pause/stop | Preserve resumable meaning | Stop/pause do not become terminal cancellation; acknowledge scheduling state separately from subprocess state |
+| Immediate cancellation | Explicit distinct operation | Kill owned work, retain diagnostics, suppress late results; workflow termination alone is insufficient |
+| Recompile/reconcile/replay | Explicit change | Never silently replace an in-flight immutable manifest; carry verified completed work into an explicit new snapshot/run |
+| Writable files, PID and direct state reset | Retire authority | Read-only exports only; all writes/control routed through service |
+
+Environment register from engine CLI/adapters and launcher forwarding:
+
+- Preserve submission settings `FORGE_ENGINE_HARNESS`, `FORGE_ENGINE_YES`,
+  `FORGE_ENGINE_HEARTBEAT_MS`, `FORGE_ENGINE_CONCURRENCY`,
+  `FORGE_ENGINE_TASK_TIMEOUT_MS`, `FORGE_ENGINE_ALLOW_NOOP`,
+  `FORGE_ENGINE_RUN_VALIDATION`, `FORGE_ENGINE_LOG_HARNESS_ACTIVITY`,
+  `FORGE_ENGINE_AUTO_COMMIT`, and `FORGE_ENGINE_COMMIT_MESSAGE_TEMPLATE`.
+- Preserve launcher compilation/retry intent for `FORGE_ENGINE_GRANULARITY`,
+  `FORGE_ENGINE_MAX_RETRIES`, `FORGE_ENGINE_RETRY_DELAY_MS`; note these are not all
+  read directly by the engine CLI. Preserve selected precedence explicitly.
+- Migrate `FORGE_ENGINE_VIZ`, `FORGE_ENGINE_VIZ_PORT` with the visualization decision.
+- Preserve harness configuration boundary: `OPENCODE_BIN`, `OPENCODE_EXTRA_FLAGS`,
+  `COPILOT_BIN`, `COPILOT_EXTRA_FLAGS`, `CLAUDE_BIN`, `CLAUDE_EXTRA_FLAGS`,
+  `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`, `FORGE_ENGINE_NATIVE_AGENT`,
+  `STUB_FAIL_TASK_IDS`, `STUB_DELAY_MS`. Resolve binaries inside the approved
+  worker environment, not by blindly reusing host absolute paths or secret values.
+- Host discovery variables such as `PATH`/`PWD` are execution environment, not
+  portable run identity; rebuild them deliberately per workspace.
+
+State field register (`engine/types.ts:24-75,220-260`):
+
+- Preserve logical `runId`, `startedAt`, `lastUpdatedAt`, `harness`, `status`,
+  `currentPhase`, `tasks`, `blockers`, and `selection` as versioned status fields.
+- Replace `manifestPath`/`manifestVersion` with durable snapshot identity/digest;
+  expose original location only as optional provenance.
+- Preserve task `taskId`, `status`, `ownerAgent`, `startedAt`, `completedAt`,
+  `attempt`, `outputFiles`, `errorMessage`, `failureKind`, `attemptHistory`,
+  `artifactId`, `inputArtifactIds`, `validationLimitations`. Bound `agentOutput`
+  and move large/sensitive payloads to artifact references.
+- Preserve attempt `attempt`, `outcome`, `reason`; replace local `resultPath` with
+  an immutable retrievable reference. Preserve gate
+  `gate/status/reason/evidence`; do not reinterpret skipped as passed.
+- Preserve audit action and logical metadata: `timestamp`, `runId`, `taskId`,
+  `phaseId`, `attempt`, `outputFiles`, `durationMs`, `note`, `artifactId`,
+  `artifactType`, `inputArtifacts`, `commitSha`, `sourceTokenEstimate`,
+  `projectedTokenEstimate`, `reductionPercent`; migrate `resultPath` similarly.
+  Replace embedded `auditLog` as an authoritative mutable array with sequenced
+  durable audit queries and bounded compatibility exports.
+- Local run states are running/paused/complete/failed; task states are
+  pending/running/complete/failed/skipped. Model terminal cancellation explicitly,
+  version exports, and document any new status values before client migration.
+
+### Proposed acceptance budgets and trust boundaries
+
+**Operator review required:** these are testable starting proposals, not approved
+SLOs or claims already demonstrated.
+
+| Area | Proposed threshold / boundary |
+|---|---|
+| Initial advertised profile | Linux rootless Podman on a 2-vCPU, 8-GiB RAM host with 10 GiB free disk; qualify desktop profiles separately |
+| Cached startup readiness | Application + sidecar + stores ready within 180 s, excluding first image pulls/build |
+| Idle local stack | At most 3 GiB total resident/container memory; record limitations if rootless accounting is unavailable |
+| Restart recovery | Same stub workflow visible and resumed within 120 s after service readiness, excluding a deliberately unexpired durable timer |
+| Cancellation | Owned stub process cleanup within 30 s; late completion cannot be accepted |
+| Foundation payloads | Stub metadata only, no repository/provider payloads; proposed production artifact cap 32 MiB and bounded metadata cap 256 KiB require later qualification |
+| Retention proposal | 7 days for disposable diagnostics after terminal runs; preserve checkpoint/evidence until no live workflow/review references it; no automatic deletion in spike |
+| Offline claim | Pre-cached stub run with no provider/network downloads; local-model execution separately qualifies the selected model provider |
+| Trust boundary | Operator-authored repositories/commands only in foundation; validation is arbitrary code, not a safe sandbox by default |
+| Privileges | No rootful container requirement, home-directory mount, Podman/Docker socket mount, or task access to unrelated credentials |
+| Services | Infrastructure private; any host application endpoint loopback only; production browser/API authentication belongs to P5 |
+| Recovery claim | Both PostgreSQL workflow data and Scheduler storage persisted; clean-host failover requires shared artifact/Git reconstruction in P8 |
+
+### Open gates and next actions
+
+1. Obtain a disposition for the missing launcher tarball and rerun its baseline
+   checks; do not fix this unrelated issue as part of a workflow rewrite.
+2. Have an operator review compatibility and budgets via `P0-GATE`; no agent
+   approval file is produced here.
+3. Evaluate the isolated spike's released support and live evidence, then accept
+   or block `P1-GATE`. Until then P2–P8 and legacy retirement remain closed.
 
 ---
 

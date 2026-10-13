@@ -1,0 +1,6 @@
+FROM docker.io/library/node:24.11.1-bookworm-slim
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY node_modules/ ./node_modules/
+COPY workflow.js worker.js control.js ./
+CMD ["node", "worker.js"]

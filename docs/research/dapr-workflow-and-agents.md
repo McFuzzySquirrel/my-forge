@@ -2,11 +2,17 @@
 
 **Date:** 2026-10-12
 **Revised:** 2026-10-13
-**Status:** Proposed full-replacement roadmap for the MyForge fork; not implemented
+**Status:** Full-replacement roadmap for the MyForge fork; production replacement
+not implemented, foundation experiment in progress
 
 **Implementation tracking:** [Phased implementation plan](../../plan.md).
 The plan contains stable work-package IDs, dependencies, checklists, and
 acceptance gates; this document retains the architectural rationale.
+
+**Foundation increment:** [Canonical PRD](../PRD.md) and
+[foundation contracts](../features/dapr-foundation.md) now define P0 review and
+the isolated P1 spike. Their human gates remain closed until reviewed; this is
+not authorization to replace the production engine.
 
 ## Question
 

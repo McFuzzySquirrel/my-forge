@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "measuredAt": "2026-10-13T11:43:33.389Z",
+  "result": "passed",
+  "qualification": "experimental-preparation-only",
+  "phaseGateAccepted": false,
+  "operatorBudgetsApproved": false,
+  "versions": {
+    "hostNode": "v24.21.0",
+    "workerNode": "24.11.1",
+    "rootless": true,
+    "podman": "4.9.3",
+    "selinux": false,
+    "hostNpm": "11.19.0",
+    "localTypeScript": "7.0.2",
+    "sdk": "3.18.0",
+    "durabletask": "1.0.0",
+    "stateComponent": "state.postgresql/v2",
+    "images": {
+      "daprd": {
+        "tag": "docker.io/daprio/daprd:1.18.7",
+        "digest": "sha256:99e2e449dac2ecaf4e72ce11fd96e6825dec27098caa863c63981b1fe595bc3c"
+      },
+      "placement": {
+        "tag": "docker.io/daprio/placement:1.18.7",
+        "digest": "sha256:36365febfa192beb105bf1652acd5bd2cecd2f18bb8a18b1c2fdd58468afe59d"
+      },
+      "scheduler": {
+        "tag": "docker.io/daprio/scheduler:1.18.7",
+        "digest": "sha256:c2cc056da983aa1e46c30ec40043c2d67d789e114c89410da7638c9540e023b1"
+      },
+      "postgres": {
+        "tag": "docker.io/library/postgres:17.6-bookworm",
+        "digest": "sha256:f3bd19c606e442c3d7bdfa8002e03fe260a1023351e0ea4598032022b68dd6e3"
+      },
+      "node": {
+        "tag": "docker.io/library/node:24.11.1-bookworm-slim",
+        "digest": "sha256:48abc13a19400ca3985071e287bd405a1d99306770eb81d61202fb6b65cf0b57"
+      },
+      "infra": {
+        "tag": "docker.io/library/alpine:3.21.3",
+        "digest": "sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c"
+      }
+    }
+  },
+  "sources": [
+    "https://github.com/dapr/dapr/releases/tag/v1.18.7",
+    "https://github.com/dapr/js-sdk/releases/tag/v3.18.0",
+    "https://github.com/dapr/js-sdk/blob/v3.18.0/test/e2e/workflow/workflow.test.ts",
+    "https://github.com/dapr/components-contrib/blob/v1.18.0/state/postgresql/v2/metadata.yaml",
+    "https://www.npmjs.com/package/@dapr/dapr/v/3.18.0",
+    "https://docs.dapr.io/reference/components-reference/supported-state-stores/setup-postgresql-v2/"
+  ],
+  "phases": [
+    {
+      "phase": "timer-before-restart",
+      "status": "timer"
+    },
+    {
+      "phase": "timer-after-worker-restart",
+      "status": "timer",
+      "elapsedMs": 3433
+    },
+    {
+      "phase": "approval-before-stack-restart",
+      "status": "approval"
+    },
+    {
+      "phase": "approval-after-stack-restart",
+      "status": "approval",
+      "elapsedMs": 35861,
+      "stopExitCodes": {
+        "worker": 0,
+        "daprd": 0,
+        "postgres": 0,
+        "placement": 0,
+        "scheduler": 0
+      }
+    }
+  ],
+  "sameInstance": true,
+  "sameCreationTime": true,
+  "artifactDigestVerified": true,
+  "outputBytes": 195,
+  "artifactBytes": 92,
+  "sdkCapabilities": {
+    "registration": "executed",
+    "activity": "executed",
+    "durableTimer": "executed",
+    "externalEvent": "executed",
+    "replayContinuity": "executed through restart",
+    "terminateSuspendResumePurge": "released client methods inspected, not qualified",
+    "retries": "No retry-policy argument in released WorkflowContext.callActivity; not qualified",
+    "shutdown": "SIGTERM worker stop and stack stop exit codes measured"
+  },
+  "volumesPreserved": 3,
+  "elapsedMs": 105971,
+  "infrastructurePortsPublished": false,
+  "hostPortsPublished": 0,
+  "controlAccess": "podman exec; SDK API on pod loopback only",
+  "cachedOfflineStub": true,
+  "networkMode": "none",
+  "resources": {
+    "measured": false,
+    "reason": "Container cgroup accounting unavailable; budgets not qualified"
+  },
+  "limitations": [
+    "Single-host clean restart, not crash/partition or cross-host recovery",
+    "P0 formal operator budgets gate remains closed; this spike is preparation evidence, not architecture acceptance",
+    "Offline proof covers execution with cached images and dependencies, not fresh installation or online harnesses",
+    "Stub activity only; no harness, Git worktree, provider, retry or cancellation qualification",
+    "At-least-once activity execution; deterministic receipt prevents conflicting accepted artifact",
+    "Workflow history not enumerated by the released high-level SDK; continuity checked by instance identity, creation time, phase and artifact",
+    "No authenticated production control API, backup/restore or independent activity deployment",
+    "Podman stats returned missing-cgroup warnings and unusable measurements; resource budgets remain unqualified",
+    "Host loopback port forwarding timed out in this environment; zero published ports and in-pod SDK control selected",
+    "Container npm ci failed in build networking; image copies Linux host npm-installed dependencies",
+    "SDK3.18.0 requires async generator workflows despite its Generator declaration; sync generators silently completed without scheduling tasks in a failed initial experiment"
+  ]
+}

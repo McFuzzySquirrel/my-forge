@@ -83,7 +83,15 @@ updates, checkpoint-bound integration, and P3-05 Git-effect reconciliation
 (already-integrated redelivery, abandoned attempts, and blocked checkpoints), and
 P3-06 execution ownership (concurrent starts, heartbeat-expiry takeover with the
 original deadline, stale-epoch rejection, cancel-before-publish, and fencing of
-lost cancelled executions). The test image is pinned to the Docker Hub multi-platform index digest
+lost cancelled executions), and the composed P3-GATE scenarios in
+`tests/storage/p3-gate.integration.test.ts`:
+
+- Checkpoint capture and reconstruction after worker loss.
+- One accepted effect after an ambiguous integration is redelivered.
+- Stale-owner fencing.
+- An unresolved integration blocking a dependent task until reconciliation.
+
+The test image is pinned to the Docker Hub multi-platform index digest
 `sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`;
 this does not change the PostgreSQL 17.6 image in the historical P1 spike.
 

@@ -611,7 +611,8 @@ export type IntegrationResult =
         | "wrong-owner"
         | "conflicting-integration"
         | "integration-abandoned";
-    };
+    }
+  | { readonly ok: false; readonly code: "unresolved-integration"; readonly blockingAttempt: IntegrationScope };
 
 export interface IntegrationRequest {
   readonly repositoryId: string;
@@ -642,9 +643,15 @@ export type IntegrationReconciliation =
 export type IntegrationCrash = "before-ref-update" | "after-ref-update";
 
 interface IntentRecord {
+  readonly scope: IntegrationScope;
   readonly operationId: string;
   readonly commitSha?: string;
   state: "pending" | "integrated" | "abandoned";
+}
+
+function scopeOf(scope: IntegrationScope): IntegrationScope {
+  const { repositoryId, targetRef, runId, taskId, logicalAttempt, operationId } = scope;
+  return { repositoryId, targetRef, runId, taskId, logicalAttempt, operationId };
 }
 
 export class ReferenceIntegrationAuthority {
@@ -702,10 +709,14 @@ export class ReferenceIntegrationAuthority {
     }
     const intent = this.intents.get(attemptKey);
     if (intent?.state === "abandoned") return { ok: false, code: "integration-abandoned" };
+    // An unresolved integration of another attempt blocks continuation on the branch.
+    const blocking = [...this.intents].find(([otherKey, other]) => otherKey !== attemptKey && other.state === "pending"
+      && other.scope.repositoryId === request.repositoryId && other.scope.targetRef === request.targetRef);
+    if (blocking) return { ok: false, code: "unresolved-integration", blockingAttempt: blocking[1].scope };
     if (intent && (intent.operationId !== request.operationId || intent.commitSha !== request.commitSha)) {
       return { ok: false, code: "conflicting-integration" };
     }
-    this.intents.set(attemptKey, { operationId: request.operationId, commitSha: request.commitSha, state: "pending" });
+    this.intents.set(attemptKey, { scope: scopeOf(request), operationId: request.operationId, commitSha: request.commitSha, state: "pending" });
     if (crash === "before-ref-update") throw new Error("simulated crash before the Git ref update");
 
     const branch = this.branch(request);
@@ -729,7 +740,7 @@ export class ReferenceIntegrationAuthority {
       return this.integrated(scope, record.commitSha, record.recordedBy, false);
     }
     if (!intent) {
-      this.intents.set(attemptKey, { operationId: scope.operationId, state: "abandoned" });
+      this.intents.set(attemptKey, { scope: scopeOf(scope), operationId: scope.operationId, state: "abandoned" });
       return { outcome: "not-integrated", reason: "no-intent" };
     }
     if (intent.operationId !== scope.operationId) return { outcome: "blocked", reason: "conflicting-operation" };

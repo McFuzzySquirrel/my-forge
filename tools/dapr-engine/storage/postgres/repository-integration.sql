@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS forge_repository_integration_intents (
   PRIMARY KEY (repository_id, target_ref, run_id, task_id, logical_attempt)
 );
 
+-- Unresolved (pending) integrations block their branch; integrate() looks them up.
+CREATE INDEX IF NOT EXISTS forge_repository_integration_intents_pending
+  ON forge_repository_integration_intents (repository_id, target_ref, created_at)
+  WHERE state = 'pending';
+
 CREATE TABLE IF NOT EXISTS forge_repository_integrations (
   schema_version integer NOT NULL CHECK (schema_version = 1),
   repository_id text NOT NULL,

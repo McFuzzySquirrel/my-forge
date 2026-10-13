@@ -66,6 +66,16 @@ export type RepositoryIntegrationResult =
         | "checkpoint-unavailable"
         | "commit-checkpoint-mismatch"
         | "integration-abandoned";
+    }
+  | {
+      readonly ok: false;
+      /**
+       * Another logical attempt's integration on this branch is still pending:
+       * in flight, interrupted, or blocked by reconciliation. The branch cannot
+       * advance until that attempt is reconciled.
+       */
+      readonly code: "unresolved-integration";
+      readonly blockingAttempt: RepositoryIntegrationScope;
     };
 
 export type IntegrationAbandonReason = "no-intent" | "commit-not-on-target" | "expected-head-mismatch";
@@ -356,6 +366,31 @@ async function readIntent(connection: SqlQueryable, scope: RepositoryIntegration
   return result.rows[0];
 }
 
+/** A pending intent of a different logical attempt on the same branch, if any. */
+async function otherPendingIntent(
+  connection: SqlQueryable,
+  scope: RepositoryIntegrationScope,
+): Promise<RepositoryIntegrationScope | undefined> {
+  const result = await connection.query<{ run_id: string; task_id: string; logical_attempt: number; operation_id: string }>(
+    `SELECT run_id, task_id, logical_attempt, operation_id
+     FROM forge_repository_integration_intents
+     WHERE repository_id = $1 AND target_ref = $2 AND state = 'pending'
+       AND NOT (run_id = $3 AND task_id = $4 AND logical_attempt = $5)
+     ORDER BY created_at
+     LIMIT 1`,
+    attemptValues(scope),
+  );
+  const row = result.rows[0];
+  return row && {
+    repositoryId: scope.repositoryId,
+    targetRef: scope.targetRef,
+    runId: row.run_id,
+    taskId: row.task_id,
+    logicalAttempt: safeInteger(row.logical_attempt, "blocking logical attempt"),
+    operationId: row.operation_id,
+  };
+}
+
 async function commitClaimedByOtherAttempt(
   connection: SqlQueryable,
   scope: RepositoryIntegrationScope,
@@ -569,6 +604,10 @@ export class PostgresRepositoryIntegrationAuthority {
 
       const intent = await readIntent(connection, request);
       if (intent?.state === "abandoned") return { ok: false, code: "integration-abandoned" };
+      // Intents are created only here, under the fence lock, so at most one
+      // attempt per branch can be pending; continuation waits for its resolution.
+      const blockingAttempt = await otherPendingIntent(connection, request);
+      if (blockingAttempt) return { ok: false, code: "unresolved-integration", blockingAttempt };
       if (intent) {
         return intent.operation_id === request.operationId && sameEffect(intent, request)
           ? undefined
@@ -706,16 +745,21 @@ export class PostgresRepositoryIntegrationAuthority {
         fencingToken: safeInteger(intent.fencing_token, "integration intent fencing token"),
         expectedHead: intent.expected_head,
         commitSha: intent.commit_sha,
-        checkpointDigest: intent.checkpoint_digest,
+        checkpointDigest: intent.checkpoint_digest as Sha256Digest,
       };
+      // An unverifiable effect stays pending (its intent keeps the audit
+      // trail), so the branch remains blocked until the binding can be proven.
+      const binding = await this.verifyBinding(repositoryRoot, scope, effect);
+      if (binding) return { outcome: "blocked", reason: binding };
       await recordIntegration(connection, scope, effect, "reconciliation");
-      return this.integratedOutcome(
-        scope,
-        { expected_head: effect.expectedHead, commit_sha: effect.commitSha, checkpoint_digest: effect.checkpointDigest },
-        "reconciliation",
-        true,
-        repositoryRoot,
-      );
+      return {
+        outcome: "integrated",
+        commitSha: effect.commitSha,
+        checkpointDigest: effect.checkpointDigest,
+        effectDigest: effectDigestOf(scope, effect),
+        recordedBy: "reconciliation",
+        backfilled: true,
+      };
     });
   }
 
@@ -724,14 +768,13 @@ export class PostgresRepositoryIntegrationAuthority {
     row: { readonly expected_head: string; readonly commit_sha: string; readonly checkpoint_digest: string },
     recordedBy: IntegrationRecorder,
     backfilled: boolean,
-    knownRoot?: string,
   ): Promise<RepositoryIntegrationReconciliation> {
     const effect = {
       expectedHead: row.expected_head,
       commitSha: row.commit_sha,
       checkpointDigest: row.checkpoint_digest as Sha256Digest,
     };
-    const repositoryRoot = knownRoot ?? await this.repositoryRoot(scope.repositoryId);
+    const repositoryRoot = await this.repositoryRoot(scope.repositoryId);
     const binding = await this.verifyBinding(repositoryRoot, scope, effect);
     if (binding) return { outcome: "blocked", reason: binding };
     return {

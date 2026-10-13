@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
@@ -8,8 +9,10 @@ import type {
   SecretReferenceV1,
   Sha256Digest,
   TaskCheckpointV1,
+  ToolchainEntryV1,
 } from "../contract/v1/index.ts";
 import type {
+  ArtifactPublishResult,
   ArtifactResolveResult,
   TaskCheckpointResult,
 } from "../storage/files/artifact-checkpoint-store.ts";
@@ -129,6 +132,7 @@ function runGit(
   args: readonly string[],
   signal?: AbortSignal,
   input?: string,
+  extraEnv: NodeJS.ProcessEnv = {},
 ): Promise<Buffer> {
   return new Promise((resolvePromise, reject) => {
     const child = execFile(
@@ -136,7 +140,7 @@ function runGit(
       [...args],
       {
         cwd,
-        env: gitEnvironment(cwd),
+        env: { ...gitEnvironment(cwd), ...extraEnv },
         encoding: "buffer",
         maxBuffer: GIT_MAX_BUFFER_BYTES,
         timeout: GIT_TIMEOUT_MS,
@@ -566,4 +570,171 @@ export async function resolveWorkspaceCredentialEnvironment(
     environment[binding.environmentVariable] = value;
   }
   return Object.freeze(environment);
+}
+
+export interface WorkspaceCheckpointPublisher {
+  publishArtifact(
+    bytes: Uint8Array,
+    declared: Pick<ArtifactRefV1, "mediaType" | "sizeBytes" | "sha256"> &
+      Partial<Pick<ArtifactRefV1, "sensitivity" | "retentionClass">>,
+  ): Promise<ArtifactPublishResult>;
+  publishCheckpoint(checkpoint: TaskCheckpointV1): Promise<TaskCheckpointResult>;
+}
+
+export interface CaptureWorkspaceCheckpointOptions {
+  /** Git working tree whose current files (tracked and untracked, honouring .gitignore) are captured. */
+  readonly workspacePath: string;
+  /** Commit the captured changes are relative to; the result commit's only parent. */
+  readonly baseRevision: string;
+  readonly runId: string;
+  readonly manifestDigest: Sha256Digest;
+  readonly publisher: WorkspaceCheckpointPublisher;
+  readonly parentCheckpointDigest?: Sha256Digest;
+  /** Already-published validation evidence (test output, reports); at least one is required. */
+  readonly validationEvidence: readonly ArtifactRefV1[];
+  readonly toolchain?: readonly ToolchainEntryV1[];
+  /** Regular files in the captured tree to publish as dependency lockfiles. */
+  readonly dependencyLockfilePaths?: readonly string[];
+  readonly commitMessage?: string;
+  /** Fixed commit time (ISO-8601); defaults to the capture time. */
+  readonly commitDate?: string;
+  readonly signal?: AbortSignal;
+}
+
+export type WorkspaceCaptureResult =
+  | {
+      readonly ok: true;
+      readonly digest: Sha256Digest;
+      readonly checkpoint: TaskCheckpointV1;
+      /** Commit with tree gitTreeId and sole parent baseRevision, present in the bundle. */
+      readonly resultCommit: string;
+    }
+  | {
+      readonly ok: false;
+      readonly code: "artifact-publish-failure" | "checkpoint-integrity-failure" | "checkpoint-missing";
+      readonly failures: readonly string[];
+    };
+
+const CHECKPOINT_IDENTITY = {
+  GIT_AUTHOR_NAME: "MyForge checkpoint",
+  GIT_AUTHOR_EMAIL: "checkpoint@myforge.invalid",
+  GIT_COMMITTER_NAME: "MyForge checkpoint",
+  GIT_COMMITTER_EMAIL: "checkpoint@myforge.invalid",
+};
+
+function digestOf(bytes: Uint8Array): Sha256Digest {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+async function publishBytes(
+  publisher: WorkspaceCheckpointPublisher,
+  bytes: Uint8Array,
+  mediaType: string,
+): Promise<ArtifactPublishResult> {
+  return publisher.publishArtifact(bytes, {
+    mediaType,
+    sizeBytes: bytes.byteLength,
+    sha256: digestOf(bytes),
+    retentionClass: "checkpoint-evidence",
+  });
+}
+
+/**
+ * Capture a workspace as an immutable task checkpoint: the working tree is
+ * staged into a private index (the workspace index and refs are untouched),
+ * committed on top of baseRevision, bundled with its history, and published
+ * with its change list and object inventory so that
+ * CheckpointWorkspaceReconstructor can rebuild the same tree elsewhere.
+ */
+export async function captureWorkspaceCheckpoint(
+  options: CaptureWorkspaceCheckpointOptions,
+): Promise<WorkspaceCaptureResult> {
+  const { workspacePath, publisher, signal } = options;
+  if (!isAbsolute(workspacePath)) throw new TypeError("Workspace path must be absolute");
+  if (!GIT_OID_PATTERN.test(options.baseRevision)) throw new TypeError("Base revision must be a full Git object ID");
+  signal?.throwIfAborted();
+
+  const scratch = await mkdtemp(join(tmpdir(), "myforge-capture-"));
+  try {
+    const baseType = (await gitText(workspacePath, ["cat-file", "-t", options.baseRevision], signal)).trim();
+    if (baseType !== "commit") throw new TypeError("Base revision is not a commit in the workspace");
+
+    const indexEnv = { GIT_INDEX_FILE: join(scratch, "index") };
+    await runGit(workspacePath, ["read-tree", options.baseRevision], signal, undefined, indexEnv);
+    await runGit(workspacePath, ["add", "-A", "--", "."], signal, undefined, indexEnv);
+    const gitTreeId = (await runGit(workspacePath, ["write-tree"], signal, undefined, indexEnv)).toString("utf8").trim();
+    const commitDate = options.commitDate ?? new Date().toISOString();
+    const resultCommit = (await runGit(
+      workspacePath,
+      ["commit-tree", gitTreeId, "-p", options.baseRevision, "-F", "-"],
+      signal,
+      options.commitMessage ?? `MyForge checkpoint for ${options.runId}\n`,
+      { ...CHECKPOINT_IDENTITY, GIT_AUTHOR_DATE: commitDate, GIT_COMMITTER_DATE: commitDate },
+    )).toString("utf8").trim();
+
+    const baseTreeId = (await gitText(workspacePath, ["rev-parse", `${options.baseRevision}^{tree}`], signal)).trim();
+    const baseTree = parseTree(await runGit(workspacePath, ["ls-tree", "-r", "-z", "--full-tree", baseTreeId], signal));
+    const resultTree = parseTree(await runGit(workspacePath, ["ls-tree", "-r", "-z", "--full-tree", gitTreeId], signal));
+    const changes = await checkpointChanges(workspacePath, baseTree, resultTree, signal);
+    const gitObjectIds = [...new Set([
+      options.baseRevision,
+      resultCommit,
+      ...await collectTreeObjects(workspacePath, baseTreeId, "", new Set(), signal),
+      ...await collectTreeObjects(workspacePath, gitTreeId, "", new Set(), signal),
+    ])];
+
+    // Bundle from a scratch repository that borrows the workspace objects, so
+    // the bundle carries a HEAD for the result commit without adding refs to the workspace.
+    const objectDirectory = resolve(workspacePath, (await gitText(workspacePath, ["rev-parse", "--git-path", "objects"], signal)).trim());
+    const bundleRepository = join(scratch, "bundle.git");
+    await gitText(scratch, ["init", "--quiet", "--bare", bundleRepository], signal);
+    await writeFile(join(bundleRepository, "objects", "info", "alternates"), `${objectDirectory}\n`);
+    await gitText(bundleRepository, ["update-ref", "refs/heads/checkpoint", resultCommit], signal);
+    await gitText(bundleRepository, ["symbolic-ref", "HEAD", "refs/heads/checkpoint"], signal);
+    const bundlePath = join(scratch, "checkpoint.bundle");
+    await gitText(bundleRepository, ["bundle", "create", bundlePath, "--all"], signal);
+
+    const failures: string[] = [];
+    const bundle = await publishBytes(publisher, await readFile(bundlePath), "application/vnd.git.bundle");
+    if (!bundle.ok) failures.push(`git object bundle: ${bundle.code}`);
+    const dependencyLockfiles: DependencyLockfileV1[] = [];
+    for (const path of new Set(options.dependencyLockfilePaths ?? [])) {
+      const entry = safeRelativePath(path) ? resultTree.get(path) : undefined;
+      if (!entry || entry.type !== "blob" || (entry.mode !== "100644" && entry.mode !== "100755")) {
+        throw new TypeError(`Dependency lockfile is not a regular file in the captured tree: ${path}`);
+      }
+      const published = await publishBytes(
+        publisher,
+        await runGit(workspacePath, ["cat-file", "blob", entry.oid], signal),
+        "application/octet-stream",
+      );
+      if (published.ok) dependencyLockfiles.push({ path, artifact: published.ref });
+      else failures.push(`dependency lockfile ${path}: ${published.code}`);
+    }
+    if (!bundle.ok || failures.length > 0) {
+      return { ok: false, code: "artifact-publish-failure", failures };
+    }
+
+    const validationEvidence = [...options.validationEvidence];
+    const checkpoint: TaskCheckpointV1 = {
+      schemaVersion: 1,
+      runId: options.runId,
+      manifestDigest: options.manifestDigest,
+      ...(options.parentCheckpointDigest ? { parentCheckpointDigest: options.parentCheckpointDigest } : {}),
+      artifacts: [bundle.ref, ...validationEvidence, ...dependencyLockfiles.map((lockfile) => lockfile.artifact)],
+      gitTreeId,
+      baseRevision: options.baseRevision,
+      changes,
+      gitObjectIds,
+      gitObjectBundle: bundle.ref,
+      validationEvidence,
+      toolchain: [...(options.toolchain ?? [])],
+      dependencyLockfiles,
+    };
+    const published = await publisher.publishCheckpoint(checkpoint);
+    if (!published.ok) return { ok: false, code: published.code, failures: published.failures };
+    return { ok: true, digest: published.digest, checkpoint: published.checkpoint, resultCommit };
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 }

@@ -15,6 +15,7 @@ import {
   type TaskCheckpointResult,
 } from "../../storage/index.ts";
 import {
+  captureWorkspaceCheckpoint,
   CheckpointWorkspaceReconstructor,
   resolveWorkspaceCredentialEnvironment,
   type WorkspaceCheckpointStore,
@@ -348,5 +349,108 @@ test("reports checkpoint lookup failures and refuses unscoped dependency provisi
     );
   } finally {
     await removeFixture(fixture);
+  }
+});
+
+test("captures a dirty workspace as a checkpoint that reconstructs the same tree elsewhere", async () => {
+  const root = await mkdtemp(join(tmpdir(), "myforge-capture-test-"));
+  try {
+    const source = join(root, "source");
+    const store = new FileArtifactCheckpointStore(join(root, "artifact-store"));
+    await mkdir(join(source, "src"), { recursive: true });
+    git(root, ["init", "--quiet", "--initial-branch=main", source]);
+    git(source, ["config", "user.name", "MyForge test"]);
+    git(source, ["config", "user.email", "myforge-test@example.invalid"]);
+    await writeFile(join(source, "src", "index.ts"), "export const value = 1;\n");
+    await writeFile(join(source, "legacy.txt"), "remove this file\n");
+    await writeFile(join(source, ".gitignore"), "node_modules/\n");
+    git(source, ["add", "-A"]);
+    git(source, ["commit", "--quiet", "-m", "base"]);
+    const baseRevision = git(source, ["rev-parse", "HEAD"]);
+
+    await writeFile(join(source, "src", "index.ts"), "export const value = 2;\n");
+    await rm(join(source, "legacy.txt"));
+    await mkdir(join(source, "assets"));
+    await writeFile(join(source, "assets", "payload.bin"), Uint8Array.from([0, 1, 2, 255]));
+    await writeFile(join(source, "package-lock.json"), '{"lockfileVersion":3}\n');
+    await mkdir(join(source, "node_modules"));
+    await writeFile(join(source, "node_modules", "ignored.js"), "ignored\n");
+    git(source, ["add", "src/index.ts"]);
+    const indexBefore = git(source, ["diff", "--cached", "--name-only"]);
+    const refsBefore = git(source, ["for-each-ref"]);
+
+    const evidence = await publishArtifact(store, bytes("tests passed"), "text/plain");
+    const captured = await captureWorkspaceCheckpoint({
+      workspacePath: source,
+      baseRevision,
+      runId: "run-capture",
+      manifestDigest: sha256Digest("manifest"),
+      publisher: store,
+      validationEvidence: [evidence],
+      toolchain: [{ name: "Node.js", version: process.version }],
+      dependencyLockfilePaths: ["package-lock.json"],
+      commitDate: "2026-01-01T00:00:00Z",
+    });
+    assert.ok(captured.ok, JSON.stringify(captured));
+    assert.equal(git(source, ["diff", "--cached", "--name-only"]), indexBefore);
+    assert.equal(git(source, ["for-each-ref"]), refsBefore);
+    assert.equal(git(source, ["rev-parse", "HEAD"]), baseRevision);
+    assert.equal(git(source, ["rev-parse", `${captured.resultCommit}^`]), baseRevision);
+    assert.equal(git(source, ["rev-parse", `${captured.resultCommit}^{tree}`]), captured.checkpoint.gitTreeId);
+    assert.deepEqual(
+      captured.checkpoint.changes.map((change) => [change.path, change.change, change.binary]),
+      [
+        ["assets/payload.bin", "added", true],
+        ["legacy.txt", "deleted", false],
+        ["package-lock.json", "added", false],
+        ["src/index.ts", "modified", false],
+      ],
+    );
+    assert.deepEqual(captured.checkpoint.validationEvidence, [evidence]);
+    assert.deepEqual(captured.checkpoint.dependencyLockfiles.map((lockfile) => lockfile.path), ["package-lock.json"]);
+
+    await writeFile(join(source, "after-capture.txt"), "not part of the checkpoint\n");
+    const reconstructor = new CheckpointWorkspaceReconstructor({ workspaceRoot: join(root, "workspaces"), store });
+    const rebuilt = await reconstructor.reconstruct({ checkpointDigest: captured.digest });
+    assert.ok(rebuilt.ok, JSON.stringify(rebuilt));
+    git(rebuilt.workspace.path, ["add", "-A"]);
+    assert.equal(git(rebuilt.workspace.path, ["write-tree"]), captured.checkpoint.gitTreeId);
+    assert.deepEqual(
+      await readFile(join(rebuilt.workspace.path, "assets", "payload.bin")),
+      Buffer.from([0, 1, 2, 255]),
+    );
+    assert.equal(git(rebuilt.workspace.path, ["cat-file", "-t", captured.resultCommit]), "commit");
+    await assert.rejects(readFile(join(rebuilt.workspace.path, "after-capture.txt")), /ENOENT/);
+    await assert.rejects(readFile(join(rebuilt.workspace.path, "node_modules", "ignored.js")), /ENOENT/);
+
+    const again = await captureWorkspaceCheckpoint({
+      workspacePath: rebuilt.workspace.path,
+      baseRevision,
+      runId: "run-capture",
+      manifestDigest: sha256Digest("manifest"),
+      publisher: store,
+      validationEvidence: [evidence],
+      toolchain: [{ name: "Node.js", version: process.version }],
+      dependencyLockfilePaths: ["package-lock.json"],
+      commitDate: "2026-01-01T00:00:00Z",
+    });
+    assert.ok(again.ok);
+    assert.equal(again.checkpoint.gitTreeId, captured.checkpoint.gitTreeId);
+    assert.equal(again.resultCommit, captured.resultCommit);
+
+    await assert.rejects(
+      captureWorkspaceCheckpoint({
+        workspacePath: source,
+        baseRevision,
+        runId: "run-capture",
+        manifestDigest: sha256Digest("manifest"),
+        publisher: store,
+        validationEvidence: [evidence],
+        dependencyLockfilePaths: ["node_modules/ignored.js"],
+      }),
+      /not a regular file in the captured tree/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });

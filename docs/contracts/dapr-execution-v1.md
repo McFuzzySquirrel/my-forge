@@ -176,6 +176,18 @@ references that are missing or fail integrity checks. Checkpoint metadata is
 stored as canonical JSON at a digest-derived path and reverified with every
 recovery read.
 
+`captureWorkspaceCheckpoint` in
+`tools/dapr-engine/execution/workspace-reconstruction.ts` produces a task
+checkpoint from a workspace. It stages the working tree (honouring
+`.gitignore`) into a private index, so the workspace index, `HEAD`, and refs
+are untouched. It commits that tree with the base revision as its only parent
+and bundles the result commit's history from a scratch repository. It also
+publishes the requested regular-file lockfiles and the checkpoint with its
+computed changes and required-object inventory. The returned `resultCommit`
+binds to the checkpoint, so it can be integrated with the base revision as the
+expected head. With a fixed commit time, capturing the same tree again yields
+the same commit.
+
 Retention may remove terminal diagnostics only after the retention policy
 expires and no live workflow, checkpoint, approval, or review references them.
 There is no automatic deletion of live references. Missing or digest-mismatched
@@ -263,13 +275,29 @@ reporting a head mismatch or creating a second commit.
 | Durable state | Git state | Result |
 |---|---|---|
 | Integration record exists | — | `integrated` (checkpoint re-verified) |
-| Pending intent | Commit reachable from branch | Backfill record as `reconciliation`; `integrated` |
+| Pending intent, checkpoint verified and bound | Commit reachable from branch | Backfill record as `reconciliation`; `integrated` |
 | Pending intent | Commit not reachable | Abandon intent; `not-integrated` |
 | No intent | — | Write an abandoned tombstone; `not-integrated` |
-| Checkpoint missing/corrupt or commit not bound to it | — | `blocked`; never accepted |
+| Checkpoint missing/corrupt or commit not bound to it | — | `blocked`; never accepted; a pending intent stays pending |
 | Different operation or commit already claimed by another attempt | — | `blocked` |
 
-Git read failures throw and leave state unchanged. Because an abandoned intent
+Git read failures throw and leave state unchanged. A blocked backfill records
+nothing, because the pending intent already holds the audit data.
+
+**Unresolved integrations block the branch.** At most one intent can be pending
+per `(repository, targetRef)`, because intents are inserted only while holding
+the fence row lock. While one attempt's intent is pending, whether in flight,
+lost, or ambiguous, `integrate` for any other attempt on that branch returns
+`unresolved-integration` with the blocking attempt and changes nothing. This
+stops later work from building on an effect that may never be accepted. The
+block clears only when the attempt completes or `reconcile` resolves it. An
+operator clears a `blocked` reconciliation by restoring the checkpoint data and
+reconciling again, or by moving the branch so that the commit is unreachable and
+reconciling to `not-integrated`. Reconcile another attempt only after its
+execution is lost (heartbeat expired and fenced) or its receipt is `ambiguous`.
+A pending intent alone may belong to a live owner between its two transactions.
+
+Because an abandoned intent
 is checked inside the same fenced transaction as the mutation, a worker that
 outlives reconciliation cannot integrate that logical attempt later; a retry
 allocates a new logical attempt. `reconcileIntegrationReceipt` applies the
@@ -440,6 +468,7 @@ unlisted case. Fixture files live in `tools/dapr-engine/tests/conformance/`.
 | C27 | Worker loss, then redelivery | Take over with the next epoch and original deadline only after the heartbeat expires; reject stale heartbeats, exits, and publications; never relaunch after publication or the deadline; stop a harness whose owner cannot renew | `lifecycle.test.ts` |
 | C28 | Outcome reported while the process runs, after cancel, or with unconfirmed cleanup | Reject `process-running`; fail the receipt as `late-result` with preserved diagnostics; reject an effect with unconfirmed cleanup but admit a failure; fail a cancelled lost execution | `lifecycle.test.ts` |
 | C29 | Harness environment, home, or container spec exposes host home, engine sockets, or service credentials | Strip forbidden variables and credentials, use a private non-host home, and reject host-home/socket binds, privileged mode, host PID, and engine endpoints | `lifecycle.test.ts` |
+| C30 | Another attempt integrates while an earlier attempt's integration is pending or ambiguous | Reject `unresolved-integration` without changing the branch until reconciliation accepts or abandons the earlier attempt | `effects.test.ts` |
 C10, C17, C18, and C19 pin intentional compatibility changes: the legacy engine
 ignores unknown selected IDs, accepts a confirmation flag as review intent, and
 lets reconciliation rewrite selection in place.
@@ -455,7 +484,11 @@ settles to the resumable `paused` status at the task boundary.
 C26 and C29 run real POSIX subprocesses through the harness runner; C27 and C28
 use an in-memory execution store (`tests/conformance/support/execution-store.ts`)
 built on the same ownership decisions as the PostgreSQL store, which is covered
-by `tests/storage/postgres-operation-executions.integration.test.ts`.
+by `tests/storage/postgres-operation-executions.integration.test.ts`. The
+composed P3-GATE scenarios in `tests/storage/p3-gate.integration.test.ts` chain
+checkpoint capture and reconstruction, the execution supervisor, worker-loss
+fencing, and the integration authority against PostgreSQL and real Git. They
+cover C23, C27, and C30 end to end.
 
 ## 6. Compatibility and exclusions
 

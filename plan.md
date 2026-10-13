@@ -57,7 +57,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Gate accepted; baseline unblocked | [P0 review #2](https://github.com/McFuzzySquirrel/my-forge/issues/2); [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
-| P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-04/05/06 PostgreSQL fencing, Git ref CAS, Git-effect reconciliation, and execution-ownership checks pass; P3-GATE not accepted | Unassigned |
+| P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-04/05/06 PostgreSQL fencing, Git ref CAS, Git-effect reconciliation, and execution-ownership checks pass; P3-GATE evidence prepared, awaiting operator acceptance | Unassigned |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
@@ -449,11 +449,26 @@ socket binds are rejected. Target builds that need containers require a
 separately approved dedicated builder (contract §3). Fixtures C26–C29 and the
 live PostgreSQL tests pass.
 
-**Next: P3-GATE.** Review the P3 evidence: redelivered activities produce one
-accepted effect set, stale owners cannot mutate the target branch, checkpoints
-reconstruct a task workspace, and ambiguous integration blocks unsafe
-continuation. P3-GATE remains unaccepted; the conformance fixtures remain
-semantic evidence only, not proof of full durable Dapr effects.
+**P3-GATE evidence prepared (awaiting operator acceptance).** The gate audit
+found and fixed two gaps:
+
+- While an earlier attempt's integration was pending or ambiguous, another
+  attempt could advance the same branch. `integrate` now returns
+  `unresolved-integration` until reconciliation resolves the earlier attempt,
+  and a blocked reconciliation records nothing (fixture C30).
+- No production code captured a task checkpoint. `captureWorkspaceCheckpoint`
+  now does this.
+
+A composed live test (`tests/storage/p3-gate.integration.test.ts`) chains
+capture, the integration authority, the execution supervisor, worker-loss
+fencing, and checkpoint reconstruction against PostgreSQL and a real Git
+repository. A negative control without the unresolved-integration check fails
+it.
+
+**Next: operator review of P3-GATE.** The operator decides; this plan does not
+mark the gate accepted. The conformance fixtures remain semantic evidence only,
+not proof of full durable Dapr effects. The evidence also does not cover Dapr
+PostgreSQL state, deployment volumes, or a running service.
 Console migration and legacy-engine retirement remain gated by their later phases.
 
 ## P0 evidence — 2026-10-13

@@ -263,6 +263,26 @@ test("C24: an attempt whose commit never reached the branch fails, and its late 
   assert.deepEqual(neverStarted.authority.accept(neverStarted.request), { ok: false, code: "integration-abandoned" });
 });
 
+test("C30: an unresolved integration blocks continuation on the branch until reconciliation resolves it", async () => {
+  const fixture = integrationFixture();
+  assert.throws(() => fixture.authority.accept(fixture.request, "after-ref-update"), /after the Git ref update/);
+  const dependent = { ...fixture.request, taskId: "T2", operationId: randomUUID(), commitSha: "b".repeat(40) };
+  assert.deepEqual(fixture.authority.accept(dependent), { ok: false, code: "unresolved-integration", blockingAttempt: fixture.scope });
+  assert.deepEqual(fixture.authority.branchCommits("repo_fixture", "refs/heads/main"), ["a".repeat(40)]);
+
+  assert.equal((await reconcileIntegrationReceipt(fixture.receiptPort, fixture.authorityPort, fixture.scope)).resolution, "accepted");
+  assert.deepEqual(fixture.authority.accept(dependent), { ok: true, commitSha: "b".repeat(40), reused: false });
+
+  const interrupted = { ...fixture.request, taskId: "T3", operationId: randomUUID(), commitSha: "c".repeat(40) };
+  assert.throws(() => fixture.authority.accept(interrupted, "before-ref-update"), /before the Git ref update/);
+  const next = { ...fixture.request, taskId: "T4", operationId: randomUUID(), commitSha: "d".repeat(40) };
+  const blocked = fixture.authority.accept(next);
+  assert.ok(!blocked.ok && blocked.code === "unresolved-integration");
+  assert.deepEqual(fixture.authority.reconcile(interrupted), { outcome: "not-integrated", reason: "commit-not-on-target" });
+  assert.deepEqual(fixture.authority.accept(next), { ok: true, commitSha: "d".repeat(40), reused: false });
+  assert.deepEqual(fixture.authority.branchCommits("repo_fixture", "refs/heads/main"), ["a", "b", "d"].map((c) => c.repeat(40)));
+});
+
 test("C25: disabled auto-commit and commit failures accept only a verified checkpoint; rejected or ambiguous integration blocks success", () => {
   assert.deepEqual(
     resolveGitEffectPolicy({ autoCommit: false, checkpoint: "verified", commit: "not-requested", integration: "not-attempted" }),

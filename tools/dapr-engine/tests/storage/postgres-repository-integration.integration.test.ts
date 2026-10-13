@@ -430,11 +430,78 @@ test("reconciliation blocks an integrated commit whose checkpoint is unavailable
     assert.equal(blocked.blockedReason, "checkpoint-unavailable");
     assert.equal(blocked.receipt.state, "ambiguous");
     assert.deepEqual(blocked.receipt.diagnosticRefs, ["git-integration:blocked:checkpoint-unavailable"]);
-    assert.deepEqual(await integrationRows(database), [{ commit_sha: fixture.first, recorded_by: "reconciliation" }],
-      "the observed Git effect is still recorded for audit");
+    assert.deepEqual(await integrationRows(database), [],
+      "an unverifiable effect is not recorded; its pending intent keeps the audit trail");
 
     checkpoints.unavailable.delete(request.checkpointDigest);
     const accepted = await reconcileIntegrationReceipt(receipts, authority, request);
     assert.equal(accepted.resolution, "accepted");
+    assert.deepEqual(await integrationRows(database), [{ commit_sha: fixture.first, recorded_by: "reconciliation" }]);
   }, ambiguousAfterUpdate());
+});
+
+test("an unresolved integration blocks the branch until reconciliation resolves it", {
+  skip: !connectionString,
+}, async () => {
+  let crash: "after-update" | "before-update" | undefined = "after-update";
+  const gitRepository = new ScriptedGit(async (actual) => {
+    if (crash === "before-update") throw new Error("simulated worker crash before the ref update");
+    const updated = await actual();
+    if (crash === "after-update") throw new GitRefMutationAmbiguousError("refs/heads/main", new Error("simulated lost Git result"));
+    return updated;
+  });
+
+  await withAuthority(async (harness) => {
+    const { authority, receipts, checkpoints, database, fixture } = harness;
+    // A's commit lands but its outcome is lost.
+    const a = await leasedRequest(harness);
+    await assert.rejects(authority.integrate(a), RepositoryIntegrationAmbiguousError);
+    crash = undefined;
+    const blockingAttempt = {
+      repositoryId: a.repositoryId, targetRef: a.targetRef, runId: a.runId, taskId: a.taskId,
+      logicalAttempt: a.logicalAttempt, operationId: a.operationId,
+    };
+
+    // A dependent task built on A's commit cannot continue while A is unresolved.
+    const b = { ...a, taskId: "task_b", operationId: "operation_b", expectedHead: fixture.first, commitSha: fixture.second,
+      checkpointDigest: checkpoints.for("run_a", fixture.second) };
+    assert.deepEqual(await authority.integrate(b), { ok: false, code: "unresolved-integration", blockingAttempt });
+
+    // Reconciliation that cannot verify A's checkpoint keeps the branch blocked.
+    checkpoints.unavailable.add(a.checkpointDigest);
+    assert.deepEqual(await authority.reconcile(a), { outcome: "blocked", reason: "checkpoint-unavailable" });
+    assert.deepEqual(await authority.integrate(b), { ok: false, code: "unresolved-integration", blockingAttempt });
+    assert.equal(git(fixture.root, ["rev-parse", a.targetRef]), fixture.first, "the branch did not advance past A");
+
+    // Once A is proven integrated, continuation proceeds.
+    checkpoints.unavailable.delete(a.checkpointDigest);
+    const aKey = { runId: a.runId, taskId: a.taskId, logicalAttempt: a.logicalAttempt, operationId: a.operationId };
+    await receipts.claim(aKey);
+    await receipts.transition(aKey, 1, "executing");
+    assert.equal((await reconcileIntegrationReceipt(receipts, authority, a)).resolution, "accepted");
+    const continued = await authority.integrate(b);
+    assert.ok(continued.ok && !continued.reused);
+    assert.equal(git(fixture.root, ["rev-parse", a.targetRef]), fixture.second);
+
+    // An interrupted attempt that never reached the branch also blocks, and is abandoned by reconciliation.
+    git(fixture.root, ["checkout", "--quiet", "--detach", fixture.second]);
+    writeFileSync(join(fixture.root, "change.txt"), "third\n");
+    git(fixture.root, ["commit", "--quiet", "-am", "third"]);
+    const third = git(fixture.root, ["rev-parse", "HEAD"]);
+    crash = "before-update";
+    const c = { ...a, taskId: "task_c", operationId: "operation_c", expectedHead: fixture.second, commitSha: third,
+      checkpointDigest: checkpoints.for("run_a", third) };
+    await assert.rejects(authority.integrate(c), /simulated worker crash/);
+    crash = undefined;
+    const d = { ...c, taskId: "task_d", operationId: "operation_d" };
+    const dResult = await authority.integrate(d);
+    assert.equal(dResult.ok, false);
+    assert.equal(!dResult.ok && dResult.code, "unresolved-integration");
+    assert.deepEqual(await authority.reconcile(c), { outcome: "not-integrated", reason: "commit-not-on-target" });
+    assert.deepEqual(await authority.integrate(c), { ok: false, code: "integration-abandoned" });
+    assert.deepEqual(await integrationRows(database), [
+      { commit_sha: fixture.first, recorded_by: "reconciliation" },
+      { commit_sha: fixture.second, recorded_by: "authority" },
+    ]);
+  }, gitRepository);
 });

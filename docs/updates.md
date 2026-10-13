@@ -4,6 +4,37 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.111
+
+### P3-GATE evidence: unresolved integrations and checkpoint capture
+
+- An unresolved integration now blocks its branch. While one logical attempt's
+  integration intent is pending (in flight, lost, or ambiguous), another
+  attempt's `integrate` on the same repository and branch returns
+  `unresolved-integration` with the blocking attempt and leaves the branch
+  unchanged. The block clears only when the attempt completes or `reconcile`
+  resolves it, so later work cannot build on an effect that may never be
+  accepted. A partial index serves the pending-intent check.
+- Reconciliation verifies the checkpoint binding before it backfills a lost
+  integration record. A `blocked` reconciliation (for example, an unavailable
+  checkpoint) now records nothing and keeps the intent pending, so the branch
+  stays blocked until the operator restores the checkpoint or abandons the
+  attempt.
+- Add `captureWorkspaceCheckpoint`. It stages a workspace through a private
+  index, so the workspace index, `HEAD`, and refs are untouched, and commits
+  the tree on top of the base revision. It then bundles the history and
+  publishes a verified `TaskCheckpointV1` (changes, required objects,
+  validation evidence, toolchain, lockfiles). The returned result commit binds
+  to the checkpoint for integration. With a fixed commit time, capture is
+  deterministic.
+- Add conformance fixture C30 and a composed live P3-GATE test
+  (`tests/storage/p3-gate.integration.test.ts`, part of
+  `npm run test:postgres`). It covers worker loss after an ambiguous
+  integration, supervised takeover that rebuilds from the checkpoint alone,
+  exactly one accepted effect, a fenced stale owner, and an ambiguous
+  integration blocking a dependent task until reconciliation. P3-GATE awaits
+  operator review.
+
 ## October 2026 - v3.110
 
 ### P3 process lifecycle and isolation

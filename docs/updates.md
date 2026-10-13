@@ -4,6 +4,16 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.102
+
+### Dapr replacement decision and P2 execution contracts
+
+- Record the accepted P1 full-replacement architecture in ADR-066, including
+  pinned spike versions, topology, ownership boundaries, and unqualified risks.
+- Author the P2 canonical feature and v1 run/control/storage contract with
+  normative conformance outcomes; runnable fixtures and utility extraction
+  remain pending behind P2-GATE.
+
 ## October 2026 - v3.101
 
 ### Dapr spike recovery evidence and launcher baseline

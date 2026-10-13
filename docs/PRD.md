@@ -7,11 +7,12 @@ supports local rootless Podman and hosted deployment profiles. Preserve canonica
 requirements, manifest compilation, harness portability, verification, artifact
 projection, and isolated Git integration.
 
-This first increment owns the baseline review and runtime spike (P0/P1).
+The foundation increment owns the baseline review and runtime spike (P0/P1).
+After those gates passed, the P2 execution-boundary contracts were authored.
 Production extraction, integration, client migration, retirement, and hosting
-remain gated roadmap work in [the implementation tracker](../plan.md); author
-their execution contracts only after the foundation gates pass. This is not a
-manifest and must not be executed as authorization to retire the current engine.
+remain gated roadmap work in [the implementation tracker](../plan.md). This is
+not a manifest and must not be executed as authorization to retire the current
+engine.
 
 ## 2. Shared constraints
 
@@ -48,11 +49,12 @@ the human-review tasks below.
 | # | Feature | File | Dependencies |
 |---|---|---|---|
 | 1 | Dapr foundation and runtime spike | [features/dapr-foundation.md](features/dapr-foundation.md) | None |
+| 2 | Dapr execution boundary and reusable contracts | [features/dapr-execution-boundary.md](features/dapr-execution-boundary.md) | Dapr foundation and runtime spike |
 
 ## 15. Traceability and rollout
 
-The feature owns foundation requirements and executable gate/spike tasks.
-`plan.md` owns work-package status and evidence links, not a duplicate requirement
-catalogue. P2–P8 remain blocked until their predecessor gates pass. Planned
+Each feature owns its requirements and executable task contracts. `plan.md`
+owns work-package status and evidence links, not a duplicate requirement
+catalogue. P3–P8 remain blocked until their predecessor gates pass. Planned
 specialist names in feature contracts must be generated deliberately before
 compiling a runnable manifest; this increment does not generate an agent team.

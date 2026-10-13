@@ -3,7 +3,7 @@
 **Date:** 2026-10-12
 **Revised:** 2026-10-13
 **Status:** Full-replacement roadmap for the MyForge fork; production replacement
-not implemented, isolated P1 runtime evidence prepared for operator review
+not implemented, P1 architecture accepted, P2 contract work started
 
 **Implementation tracking:** [Phased implementation plan](../../plan.md).
 The plan contains stable work-package IDs, dependencies, checklists, and
@@ -11,8 +11,12 @@ acceptance gates; this document retains the architectural rationale.
 
 **Foundation increment:** [Canonical PRD](../PRD.md) and
 [foundation contracts](../features/dapr-foundation.md) define P0 review and the
-isolated P1 spike. P0-GATE and P1-GATE were accepted on 2026-10-13; P1-06 and P2
-are authorized. This is not authorization to replace the production engine.
+isolated P1 spike. P0-GATE and P1-GATE were accepted on 2026-10-13; the accepted
+P1 architecture is recorded in [ADR-066](../adr/066-dapr-workflow-full-replacement-architecture.md).
+P2 execution contracts are defined in
+[the feature](../features/dapr-execution-boundary.md) and
+[v1 contract](../contracts/dapr-execution-v1.md). This is not authorization to
+replace the production engine.
 
 ## Question
 
@@ -153,9 +157,9 @@ accepted 3 GiB threshold. The pod had no network and no published ports; three
 persistent volumes remained intact. Evidence establishes a clean single-host
 restart and cached stub execution only. It does not establish cancellation,
 crash/partition recovery, cross-host failover, backup/restore, fresh offline
-installation, or local-model support. The operator accepted P1-GATE; the P1-06
-architecture ADR remains to be written, and production replacement remains
-gated by later phases.
+installation, or local-model support. The operator accepted P1-GATE and the architecture decision is recorded in
+[ADR-066](../adr/066-dapr-workflow-full-replacement-architecture.md). The spike
+remains experimental, and production replacement remains gated by later phases.
 
 Dapr documents Podman initialization explicitly. Its default development
 initialization is a useful spike path, not the production topology proposed below.

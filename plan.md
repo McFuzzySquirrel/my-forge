@@ -2,9 +2,10 @@
 
 **Created:** 2026-10-13
 
-**Status:** P0-GATE and P1-GATE accepted by the operator; P1-06 and P2 are
-authorized. The runtime remains an experimental spike, not a production
-replacement.
+**Status:** P0-GATE and P1-GATE accepted by the operator; P1-06 is recorded in
+ADR-066 and the P2 v1 contract is drafted. P2 extraction and conformance
+fixtures remain pending. The runtime remains an experimental spike, not a
+production replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
 profiles; no permanent legacy backend
@@ -51,8 +52,8 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | Phase | Depends on | Accountable role to assign | Status | Issue/PR and acceptance evidence |
 |---|---|---|---|---|
 | P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Gate accepted; baseline unblocked | [P0 review #2](https://github.com/McFuzzySquirrel/my-forge/issues/2); [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
-| P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 ADR authorized | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [foundation contracts](docs/features/dapr-foundation.md) |
-| P2 — Reusable execution boundary | P1 gate | Engine + contracts | Authorized; not started | Unassigned |
+| P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
+| P2 — Reusable execution boundary | P1 gate | Engine + contracts | Contracts authored; implementation and gate pending | [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | Not started | Unassigned |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
@@ -144,6 +145,10 @@ backend.
 
 **Deliverables:** versioned contracts, conformance fixtures, and reusable task
 execution without dependence on the old scheduler.
+
+**Canonical contract:** [Dapr execution boundary](docs/features/dapr-execution-boundary.md)
+and [Dapr execution contract v1](docs/contracts/dapr-execution-v1.md). P2 work
+does not change the production engine; P3 remains gated by P2-GATE.
 
 - [ ] **P2-01 — Define run submission and identity.** Specify repository/branch,
   run, task, logical attempt, operation, and manifest digest identities. Snapshot
@@ -398,9 +403,11 @@ change does not alter runtime behavior or imply a new release.
 
 ## Immediate next work package
 
-Commit and push the accepted P1 evidence first. Then create the **P1-06**
-architecture ADR and begin P2 in the next session. Console migration and
-legacy-engine retirement remain gated by their later phases.
+P1-06 is recorded in [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md).
+P2's canonical feature and v1 contract are authored; next, complete P2-01
+through P2-06 with runnable conformance fixtures and passing legacy utility
+checks before requesting P2-GATE review. Console migration and legacy-engine
+retirement remain gated by their later phases.
 
 ## P0 evidence — 2026-10-13
 
@@ -424,11 +431,11 @@ without changing it.
 | P0-06 | Budgets/trust boundaries below accepted by the operator on 2026-10-13 | Acceptance recorded; startup, memory, and restart thresholds measured in P1; remaining limits stay unqualified |
 | P0-GATE | Explicit human-review contract `P0-GATE` | Accepted by operator on 2026-10-13; isolated P1 authorized; no review JSON generated |
 
-Only P0/P1 execution contracts are authored in this increment. P2–P8 remain
-roadmap work: author their canonical features after the preceding gates pass,
-rather than freezing unsupported runtime assumptions into runnable contracts.
-Preparing an isolated SDK experiment does not grant permission to execute the
-gated canonical feature chain or replace the production engine.
+At the time of the P0 review, only P0/P1 execution contracts were authored.
+After P1-GATE passed, P2's canonical feature and versioned contracts were
+authored; P3–P8 remain gated roadmap work. Preparing the isolated SDK experiment
+and P2 contract design does not authorize production runtime changes or engine
+replacement.
 
 ### Baseline environment and results
 
@@ -595,7 +602,10 @@ evidence below.
 The isolated live verification passed, and the operator accepted P1-GATE on
 2026-10-13, authorizing P1-06 and P2. This does not qualify a production
 replacement. Tracking is in [P1 issue #3](https://github.com/McFuzzySquirrel/my-forge/issues/3).
-No human review JSON or architecture ADR has been generated yet.
+The accepted architecture is recorded in [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md).
+No human-review JSON is generated by the agent. `evidence.json` records the
+measurement-time snapshot; its `phaseGateAccepted` value predates the later
+operator acceptance recorded here.
 
 | Work package | Recorded evidence | Remaining disposition |
 |---|---|---|

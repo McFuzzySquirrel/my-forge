@@ -1,0 +1,2702 @@
+# Updates
+
+Detailed release and change notes for MyForge.
+
+---
+
+## October 2026 - v3.99
+
+### Workflow blockers describe the current run
+
+- Stale preflight blockers are cleared when a new run starts, while manifest
+  reconciliation notices remain visible for the run that detects them.
+
+## October 2026 - v3.98
+
+### Windows interactive authoring avoids empty Windows Terminal commands
+
+- Interactive authoring now starts PowerShell directly before attempting a
+  Windows Terminal tab, avoiding the `0x80070002` failure when the Console is
+  itself running inside Windows Terminal.
+
+## October 2026 - v3.97
+
+### Claude harnesses default to Claude Code for authoring
+
+- Claude harnesses now use Claude Code for interactive PRD and feature
+  authoring by default, matching their engine and launch-CLI behavior.
+- OpenCode remains available through an explicit runner selection.
+
+## October 2026 - v3.96
+
+### Interactive authoring finds the CLI on desktop platforms
+
+- Interactive PRD authoring now pins the discovered harness executable when
+  opening a new terminal, so npm-installed runners are found from macOS login
+  shells as well as Linux.
+- Windows falls back to PowerShell unless the launcher is already running
+  inside Windows Terminal, avoiding the `0x80070002` launch failure.
+
+## October 2026 - v3.95
+
+### Author PRD works again on the default authoring runner
+
+- **The dead button is fixed.** Plan & Team → **Author PRD (interactive)** (and
+  its equivalents on Overview and the launcher) opened a terminal running
+  `opencode --prompt … --model <id>`. OpenCode v2's root command has no
+  `--model` flag, so it rejected the argument before starting and the new
+  terminal showed `Unrecognized flag: --model in command opencode`. Sessions now
+  open in `opencode mini`, the one interactive surface that takes both a queued
+  prompt and a model — so the interview still runs and your PRD-stage model is
+  still honoured.
+- **It was not only OpenCode harnesses.** OpenCode is the default *authoring
+  runner* for every harness except GitHub Copilot, so Claude-harness and generic
+  `.agents` repositories were affected too. It looked intermittent because with
+  no model pinned there was no `--model` to reject.
+- **Other runners are untouched.** Copilot and Claude Code still open exactly the
+  commands they always did; their arguments are unchanged.
+- **One mapping instead of four.** The Console's Author PRD button, the launcher's
+  printed handoff, `forge-launcher resume`'s "open the CLI" step, and the Agents
+  model-planning terminal each carried a separate copy of the runner-to-command
+  mapping. They now share one builder, and a test asserts no OpenCode command can
+  put `--model` on a subcommand that cannot parse it.
+- **Two behaviour notes for OpenCode.** Authoring sessions now use the
+  prompt-focused `mini` interface instead of the full-screen TUI, and because
+  `mini` has no auto-approve flag, OpenCode asks you to approve each tool call.
+  `forge-launcher resume` additionally queues the skill prompt for OpenCode;
+  Copilot and Claude Code still open a bare session there and print the command.
+
+See [ADR-065](adr/065-opencode-mini-interactive-authoring.md) for the decision
+and its constraints.
+
+---
+
+## October 2026 - v3.94
+
+### Re-derive the team and project skills in one click
+
+- **One button fixes a stale team.** Editing a PRD or feature document used to
+  require a five-hop hunt across three views: reset changed tasks, read a
+  comma-joined list of task IDs, click Regenerate Team, wait, then click
+  Regenerate Skills — and each button was *hidden* until the stage it regenerated
+  went stale. **Re-derive team & skills** now runs team → project skills →
+  manifest as one background job.
+- **Progress survives a reload.** Each step's status, message and timing are
+  persisted to `docs/rederive-state.json`, so reloading mid-run resumes the step
+  machine. A failure names the step and offers **Retry from a step**, which
+  re-runs it and its tail.
+- **The Console now says *why* something is stale.** Each stage's input
+  fingerprint is compared against a fresh one, and the offending files are named
+  with their age — "Inputs changed after this stage completed: docs/PRD.md,
+  changed 3h ago" — on Overview and in Plan & Team. Deleted or edited outputs are
+  reported as such.
+- **Stage actions are no longer hidden.** A stage you cannot run yet shows a
+  disabled button with the reason instead of nothing.
+- **The chain will not do two dangerous things.** It never authors requirements
+  (requirements authoring stays interactive), and it never resets completed tasks.
+  **Reset changed tasks for review** moved into the Manifest panel beside the
+  reconciliation it acts on, listing each changed task and behind a confirmation
+  that names everything it will discard.
+- **CLI:** `forge-launcher rederive [--repo <path>] [--from team|skills|manifest]`.
+
+See [ADR-062](adr/062-console-rederivation-chain.md).
+
+### A live dependency Gantt on the Forge Board
+
+- **New Gantt mode** alongside Kanban, sharing the same live stream, camera, HUD
+  and legend. Measured bars are filled; forecast bars are outlined and hatched.
+- **The forecast follows the engine's own rules.** Dependencies come from
+  `task-graph.ts` — direct dependencies plus every task of a depended-on phase —
+  and the schedule respects the configured concurrency, so it never promises a
+  sequence the engine will not run.
+- **Estimates are inferred from observed durations** and labelled as such: the
+  task's own attempts across the run, then the same agent's other tasks, then a
+  default. Retried tasks contribute every attempt.
+- **Phase rollups, human-review milestones, a highlighted critical path and a
+  moving "now" line**, with a time axis that follows your local clock.
+- **Mode and filters are remembered per project.**
+
+See [ADR-064](adr/064-forge-board-gantt-mode.md).
+
+### Make the Forge Board navigable, honest and accessible
+
+- **Board chrome.** A **Kanban | Gantt** switch and status filters above the
+  frame; filters dim tasks rather than hiding them so the build's shape stays
+  visible.
+- **A Table view** renders the same data as a real table, and the mode control is
+  a proper tablist. The board is a canvas and previously had no text a keyboard or
+  screen-reader user could reach.
+- **The board is no longer a dead end.** Hovering a card or bar offers **Open in
+  Tasks**, **Logs** and **Artifacts**.
+- **Failures persist.** A failed-task list stays in the corner with a link into
+  Tasks, instead of a one-off screen tint.
+- **Distinct states.** "Cannot reach the Console server", "No execution manifest
+  yet" and "Ready to build" are now told apart, and a dropped event stream reports
+  how stale the picture is instead of only saying "disconnected".
+- **Reduced motion is honoured** in both modes.
+
+See [ADR-063](adr/063-forge-board-chrome-and-accessibility.md).
+
+### Fixes
+
+- **`/api/layout` no longer returns `null`.** The Console now serves the tested
+  board layouts from the engine instead of having the board re-derive its own
+  geometry in JavaScript — two implementations of the same board, only one of
+  them tested.
+- **A half-authored repository no longer takes down the event stream.** Each
+  snapshot source is read independently, so an unreadable manifest or a missing
+  harness root stops updating that field instead of every view.
+- **A failing request can no longer crash the Console.** The error path reports
+  which route failed and ends the socket instead of writing headers twice.
+- **One `BackgroundJobType` definition.** The job union was declared twice and
+  had already drifted; adding a job type to one copy type-checked fine and only
+  failed in the caller.
+- **Board tooltips are positioned** beside the pointer, flipped and clamped to the
+  window, instead of rendering at their static position.
+- **Task start and end times are retained** on the board, so timings appear in the
+  table view and expanded card detail.
+
+## October 2026 - v3.93
+
+### Document MyForge's position in the agentic development value chain
+
+- Added research explaining how MyForge relates to agent harnesses, workflow
+  engines, CI/CD, and the longer-term software-factory model.
+
+## October 2026 - v3.92
+
+### Fix Console human-review approval in globally installed launcher
+
+- The Console now loads its bundled workflow-engine TypeScript modules through
+  the launcher's existing `tsx` runtime. This avoids Node's native type-stripping
+  restriction on `.ts` files located under `node_modules`, which previously
+  returned a 400 error when confirming a human review.
+
+## October 2026 - v3.91
+
+### Generated agents declare `mode: all` instead of landing as subagent-only
+
+- **Specialists were disappearing from OpenCode's agent switcher.** `mode` is
+  the one field that decides whether an agent can drive the session or can only
+  be dispatched. Nothing in the forge constrained it, so the writing model chose
+  it — and "specialist agent" is a strong prior for `mode: subagent`, which
+  removes the agent from primary-agent cycling. It remains reachable by dispatch
+  or `@` mention, but cannot be selected as the agent driving the session. A
+  generated team was therefore not directly selectable as the primary agent.
+
+- **Every generated agent now declares `mode: all` explicitly.** One specialist
+  file serves both roles: selectable as the session's agent *and* dispatchable
+  as a subagent. `forge-build-agent-team` requires it in Steps 2 and 3, explains
+  it in Gotchas, and checks it in its Validation checklist.
+  `feature-increment-mode.md` covers the incremental path — new agents get
+  `mode: all`, and normalizing the `mode` key is the one permitted frontmatter
+  edit on an agent the feature otherwise leaves untouched, so teams generated
+  before this change converge on the next increment instead of staying frozen.
+  `vision-features-mode.md` inherits the parent rule.
+
+- **The shipped personas comply.** `forge-team-builder`,
+  `project-orchestrator`, and `workflow-orchestrator` all declare `mode: all`,
+  as do the launcher's offline stub agent and the Console screenshot fixture.
+  `forge-assign-models` Apply mode is unaffected: it rewrites only `model:` and
+  `modelFallback:` and preserves every other key.
+
+- **The frontmatter gate warns rather than blocks.** `validate-frontmatter.mjs`
+  reports agent files that omit `mode` or declare something other than `all`,
+  and leaves the exit code alone. `mode` is OpenCode-specific — Copilot and
+  Claude Code agent frontmatter does not define it — so a hard gate would either
+  impose an OpenCode concept on every harness or make the contract depend on
+  which root a repository uses. The forge already writes portable fields that
+  non-honoring harnesses ignore (`modelFallback`, ADR-003/ADR-006); this keeps
+  that position, and an already-bootstrapped repository keeps building.
+
+- See [ADR-061](adr/061-agent-mode-all.md). It extends ADR-028 (native
+  `--agent` selection only helps if the agent is selectable at all) and the team
+  stage's existing frontmatter gate from ADR-041.
+
+## October 2026 - v3.90
+
+### The PRD is no longer auto-drafted — requirements authoring is always interactive
+
+- **Auto-building a PRD produced a confidently wrong spec that everything
+  downstream implemented faithfully.** The team, the execution manifest, and the
+  workflow engine are all mechanical derivations of `docs/PRD.md` plus
+  `docs/features/*.md`, so a headless requirements stage that inferred scope,
+  stack, and acceptance criteria from defaults yielded a green, passing,
+  entirely wrong build. That is the one failure mode nothing downstream can
+  detect, and it costs the whole project rather than one stage.
+
+- **Every operation that writes requirements is now interactive.** That covers
+  idea → PRD, existing-repository → PRD, feature documents, `forge-grill-idea`,
+  and `forge-decompose-prd` conversion. The rule is one sentence: **authoring
+  requirements is interactive; deriving from a reviewed PRD is headless.** The
+  team and project-skill stages stay headless, so CI and offline rebuilds still
+  work once a reviewed PRD exists.
+
+- **The five skills no longer contain a headless allowance.** `forge-build-prd`,
+  `forge-auto-build-prd`, `forge-build-feature-prd`, `forge-decompose-prd`, and
+  `forge-grill-idea` each had an opt-out that skipped the interview and recorded
+  default assumptions. Each fired on `FORGE_HEADLESS=1`, embedded
+  "auto-proceed" text, *or* a noninteractive invocation — so removing only the
+  visible toggle would have left three doors open. A noninteractive invocation now
+  reports the decisions it needs as blocking questions instead of assuming them.
+
+- **`--draft` and `FORGE_AUTO_DRAFT` are retargeted** to the team and
+  project-skill stages. A launcher run with no PRD opens a session or prints the
+  exact command and stops; it no longer drafts one. The `draft-prd`,
+  `draft-existing-prd`, and `feature-prd` subcommands report that handoff
+  instead of authoring.
+
+- **The Console no longer offers a headless alternative for the PRD stage.** The
+  Overview pipeline card already made interactive authoring primary; the
+  secondary "Auto-draft PRD (headless)" button is gone, and the documents-view
+  retry button for the PRD stage now opens the same interactive session. The
+  `draft-prd` / `draft-existing-prd` / `feature-prd` control actions return a
+  message pointing at it rather than a 400, so older clients degrade clearly.
+  Feature authoring is interactive too; **Continue after authoring** runs the
+  affected-team and manifest derivation without attempting to author requirements.
+
+- **A latent terminal-spawning leak is fixed.** `launchCliInTerminal` had no TTY
+  guard, so any piped or `--dry-run` launcher run could spawn a real detached
+  `gnome-terminal → bash → <cli>` chain. Because the posix launch script ends in
+  `; exec bash`, each one held a shell and its file descriptors open that
+  nothing could reach to close — enough of them produced `EMFILE: too many open
+  files`. It now refuses without a TTY and prints the command instead; the
+  Console passes an explicit `allowWithoutTty` opt-out, since opening terminals
+  on the user's behalf is its purpose. `openCliFor` also honors `--dry-run`,
+  which it previously did not.
+
+- **Offline coverage is preserved through the existing stub convention.**
+  Requirements authoring is allowed non-interactively only under
+  `FORGE_RUN_WITH=stub`; real runners never author requirements unattended.
+
+- **Deliberate capability loss:** a run can no longer go from `FORGE_IDEA` to a
+  finished build unattended. This is accepted, not overlooked — the removed flow
+  produced false confidence rather than throughput. Unattended operation now
+  begins at the team stage, gated on a reviewed PRD already existing.
+
+- See [ADR-060](adr/060-interactive-requirements-authoring.md). It amends
+  ADR-051 (which kept headless authoring "as an explicit alternative"), ADR-020,
+  ADR-018, and ADR-037 (which sanctioned inferring a project PRD from source
+  code without questions), and is consistent with ADR-009's existing "the PRD is
+  a quality gate, not an input to be manufactured" principle.
+
+## October 2026 - v3.89
+
+### Console concurrency labels now say "parallel tasks", not "parallel agents"
+
+- **The concurrency control was named for a capability it never had.** The
+  Overview **Controls** panel, the New Project wizard, and the Console Help view
+  all read "Concurrency (parallel agents)". Parallel execution here schedules
+  *independent* tasks that happen to be ready at the same time; it is not several
+  agents collaborating on one task. Multi-agent describes who owns a task;
+  parallel describes when tasks run, and the two are independent — a multi-agent
+  workflow can run sequentially, which is what MyForge did until per-task
+  worktree sandboxes made concurrency real.
+- All three labels now read **"Concurrency (parallel tasks)"**, and the Help
+  entry describes it as running that many independent tasks at once. No behavior,
+  flag, or persisted setting changes; `docs/engine-config.json` and
+  `--concurrency` are unaffected.
+- No keybindings, routes, or API fields changed, so nothing downstream needs
+  updating. See the worktree and scheduling discussion in
+  [Part 4 of the story](THE-STORY-PART-4.md).
+
+## September 2026 - v3.88
+
+### Fixed: sandboxed tasks ran against the engine instead of their worktree
+
+- **Parallel runs executed every task in the wrong project.** OpenCode v2
+  resolves the project from `process.env.PWD ?? process.cwd()`, so an inherited
+  stale `PWD` outranks the `cwd` the engine pinned — the opposite of what
+  [ADR-058](adr/058-opencode-v2-project-resolution.md) recorded. Because the
+  engine is normally launched from its own package directory, each task ran
+  there instead of in its sandbox worktree, could not find the execution file
+  the engine had written for it, produced nothing, and failed the output gate
+  with a *missing-`expectedOutputs`* error that pointed at the task rather than
+  the harness. See [ADR-059](adr/059-pwd-aligned-spawn-environment.md) and
+  issue [#121](https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge/issues/121).
+- **The failure was silent at `--concurrency 1` and fatal above it.** In
+  sequential mode the execution file landed in the same directory the
+  misdirected session already occupied, so tasks found it by accident. Only the
+  mode that actually isolates tasks was broken, which is how this reached a
+  released default.
+- **No action needed.** A child is now never launched with a `PWD` that
+  disagrees with its `cwd`; both are set from the same value at the spawn choke
+  points. Nothing to migrate, and no flag, environment variable, or config
+  changes.
+- **The launcher is fixed too.** Invoking `forge-launcher` from outside the
+  repository it targets had the same effect on headless skill runs,
+  `engine-run`, and the console's detached engine.
+- **Copilot and Claude tasks get the same protection.** The hazard was never
+  opencode-specific; only opencode's project resolution was verified to depend
+  on `PWD`. The launcher's `cwd` remains the mechanism that fixes the
+  filesystem — do not drop it on the theory that `PWD` covers it.
+- **Correction to v3.87 below:** its claim that the `PWD`-based replacement "was
+  verified to be wrong" was itself wrong, and its "no action needed for project
+  selection" advice was the origin of the bug. That entry is left as written; see
+  ADR-059.
+
+## September 2026 - v3.87
+
+### OpenCode v2 only: `--dir` and `--attach` retired
+
+- **The Forge OpenCode harness now requires OpenCode v2.** v2 removed
+  `opencode run --dir` and `opencode run --attach`, so the engine's project
+  pinning and warm-server modes were rebuilt. v1.x is no longer supported; there
+  is no compatibility path. See [ADR-058](adr/058-opencode-v2-project-resolution.md).
+- **Breaking: four flags are gone** — `--keep-alive`, `--keep-alive-port`,
+  `--no-keep-alive`, and `--attach <url>` — from both `workflow-engine run` and
+  `forge-launcher engine-run`. Passing one is now an explicit `Unknown option`
+  error rather than a silent no-op. `FORGE_ENGINE_ATTACH` and
+  `FORGE_ENGINE_ATTACH_URL` are accepted but ignored, and `keepAlive` / `attach`
+  in a persisted `docs/engine-config.json` are likewise ignored. Remove them from
+  your scripts, CI invocations, and config files.
+- **The engine no longer boots or owns `opencode serve`.** Each `opencode run`
+  now connects to OpenCode's own background service, which is already warm
+  (config, AGENTS.md, skills, MCP servers), and every task still gets a fresh,
+  isolated session. Set `OPENCODE_EXTRA_FLAGS=--standalone` to give a run a
+  private server instead.
+- **No action needed for project selection.** OpenCode v2 resolves the project
+  from the child's `process.cwd()`, and both the engine and the launcher's
+  headless runner already spawned with `cwd` set to the repository, so the
+  retired `--dir <repo>` was redundant. In parallel runs each task's worktree is
+  the `cwd`, which preserves per-task isolation. The `PWD`-based replacement
+  proposed in earlier planning was verified to be wrong and was not adopted.
+- **Migration note:** upgrading straight from a v1-era install fails loudly.
+  OpenCode v2 hard-fails an unknown flag with a usage dump and exit 1, so a stale
+  `--dir` or `--attach` surfaces immediately instead of running in the wrong
+  project. Fix the invocation rather than expecting a fallback.
+
+## September 2026 - v3.86
+
+### `--concurrency` is real throughput again: per-task git worktree sandboxes
+
+- **Concurrent tasks now genuinely overlap.** `--concurrency <n>` / `FORGE_ENGINE_CONCURRENCY`
+  used to be accepted and then ignored — the engine always ran one repository
+  task at a time, because output attribution compared repository-wide worktree
+  snapshots and could not say which task changed what. Each concurrent task now
+  runs in its own `git worktree` under `.forge-sandboxes/`, so what a task
+  changed is exactly what its sandbox contains. Wall-clock time on multi-agent
+  builds drops from the sum of task durations toward the critical path. The
+  default `--concurrency 1` is unchanged in every respect.
+- **`outputFiles`, the no-op output gate, and `validationCommands` are exact.**
+  The harness, the output-verification snapshot, and the task's manifest
+  validation commands all run against the task's own worktree, so a sibling
+  task's edits can no longer be mis-attributed, and a task is never validated
+  against a tree another task is halfway through editing.
+- **Per-task auto-commit stays clean.** When a task finishes, its files are
+  copied back into the repository and the normal per-task commit runs. Each
+  commit still contains exactly one task's work, and the history stays aligned
+  with the manifest.
+- **Concurrent writes to the same file now fail loudly.** If two tasks in a wave
+  change the same path, the second fails with `Concurrent write overlap on
+  <paths>` instead of silently overwriting the first. Declare a dependency
+  between those tasks or give them disjoint outputs, then `replay` the failed
+  task.
+- **Run state can no longer lose updates.** The engine is now the single writer:
+  a task owns one record and hands it to the engine, and state persistence,
+  sandbox integration, and git all run on one serialized queue. A task is
+  durable the moment it finishes, so a crash mid-wave never re-runs completed
+  work. This fixes CR-01 from the September 2026 codebase review.
+- **Two operator-visible requirements for parallel runs.** Your code and your
+  requirements must be committed: a worktree is built from a commit and cannot
+  see uncommitted work, so the engine refuses to start and names the exact
+  offending paths rather than quietly handing a task a stale tree. Uncommitted
+  `docs/PRD.md`, `docs/IDEA.md` and `docs/features/**` block the run for the same
+  reason — that is what a task is told to read. Everything else under `docs/` is
+  generated or operator input (engine config, compiled manifest, responsibility
+  matrix, progress, audit, authoring artifacts, review records) and is tolerated
+  and copied into each sandbox, so changing a Console setting does not block a
+  run, and neither does recording a human-review approval. Consequently, **`--concurrency > 1` cannot be combined with
+  `--no-auto-commit`**, and **keep-alive is downgraded to a cold start per task**
+  when a run is parallel — one warm `opencode serve` serves one project directory
+  and cannot serve several worktrees. An explicit `--attach <url>` is still
+  honored exactly as given.
+- **Same-owner serialization is unchanged**: at most one task per agent runs per
+  wave, and a harness that does not declare `supportsConcurrency` still falls
+  back to a single task at a time (with a warning, not a failure).
+- **No trace left behind.** Sandboxes are hidden with `.git/info/exclude`, so a
+  run never edits your tracked `.gitignore`. Worktrees left by a killed engine
+  are swept before the next run, and the sandbox root is deleted when the run
+  ends. Disk cost is N concurrent checkouts of `HEAD`.
+- **A human review can no longer be approved before it is reviewable.** The
+  engine always gated dispatch on a review task's prerequisites, so the task
+  never paused for work that did not exist — but the Console listed every
+  manifest task and offered its approval action on status alone. A review
+  attests to delivered work, and its attestation is fingerprinted over the task
+  and its references (so a changed reference self-invalidates) but **not** over
+  the reviewed output, meaning a premature approval survived and released every
+  downstream task on a review of pre-review code. A review row now reads
+  **Human review blocked** and lists what it is waiting on until those
+  prerequisites are done, and both the Console API and `approve-task` refuse an
+  early approval and name the prerequisites. All three surfaces call the engine's
+  own `unmetPrerequisites`, so the dispatch gate, the row, and the guard cannot
+  drift apart.
+- **Console approve-and-resume no longer deadlocks under parallel execution.**
+  The form wrote the review record and attestation and then started the run; with
+  `docs/reviews/**` classified as a requirement, the run's clean-tree preflight
+  refused the very files the form had just written, so the operator had to
+  hand-commit them to approve. Review records are now tolerated generated state.
+  Related: a Console-started run with a numeric `concurrency`, `taskTimeoutMs`,
+  or `maxRetries` in `docs/engine-config.json` could not launch at all — those
+  values were passed to `argv` as numbers and crashed the job runner.
+- **An unapproved human review no longer stops the run.** A review with no
+  operator attestation used to pause the run the moment it was dispatched. If its
+  dependencies were left undeclared in the feature document — the compiler never
+  adds them — the engine parked the run before the very work the review was meant
+  to inspect existed, and the operator was asked to approve nothing, with no way
+  out but that approval. A review is now held pending while every other task
+  continues, and the run pauses only when nothing else is dispatchable, so the
+  operator is always interrupted with the work already finished. A review also
+  stops deferring unrelated work that shared its wave. The held task keeps a
+  `Human review required` note so the Console and `PROGRESS.md` explain it, and
+  the `run.paused` audit event now names the reviews instead of reporting a stop
+  request. A review that is the only ready task still pauses immediately, and
+  `--yes` still cannot approve human work.
+- **Compiling warns when a review omits the dependency it reviews.** A
+  `human-review` task whose `references` name a file produced by another task it
+  does not depend on — directly or transitively — gets a warning naming the
+  producer. Advisory, not an error: existing feature documents keep compiling,
+  and the engine is now correct without it. The PRD authoring guide tells
+  authors to list every task whose outputs the review reads.
+- See [ADR-056](adr/056-parallel-execution-task-sandboxes.md) and the
+  [implementation plan](parallel-execution-plan.md); amends
+  [ADR-021](adr/021-parallel-task-dispatch.md) and
+  [ADR-040](adr/040-native-adapter-contracts.md). Review-wait semantics are
+  recorded in
+  [ADR-057](adr/057-human-review-waits-rather-than-pauses-the-run.md).
+
+## September 2026 - v3.85
+
+### Remove projects from Forge without changing their repositories
+
+- The Console Projects view now shows names, states, and last-accessed date/time
+  in a table instead of a dropdown. Individual checkboxes and the header select-all checkbox
+  share one column; use **Remove from Forge** or **Remove selected (N)**.
+- Removal requires confirmation and reports a separate removed, blocked, or
+  failed outcome for each project. Unfinished jobs with a live process block
+  removal and are never terminated automatically. Finished jobs never block,
+  even if the operating system has reused their old process IDs.
+- Legacy registry records with relative paths (such as `.` from
+  `console --repo .`) no longer make the registry "invalid"; they are preserved
+  and can be removed individually. New registry entries are stored as absolute
+  paths.
+- Only Forge registry entries, associated Console job history, and verified
+  Forge-owned external job-result files are removed. Repository files, Git data,
+  agents, skills, generated artifacts, shared settings, and other projects are
+  preserved. Unverified or shared result files are left untouched.
+- Missing project folders can be forgotten. Removing the current project clears
+  the selection; **Add folder** can register an existing folder again without
+  bootstrap or loss of repository content.
+- See [Forge Console](forge-console.md#remove-from-forge) and
+  [ADR-055](adr/055-console-project-removal.md).
+
+## September 2026 - v3.84
+
+### Skill section extraction no longer truncates a last-position section
+
+- The quality rubric's section reader used `\Z` to mean "end of input". JavaScript
+  has no `\Z` — it compiles to a literal `Z` — so a `##` section that was the
+  **last** section in a `SKILL.md` read as empty, and a section containing a
+  capital `Z` (`Zod`, `Zen`, …) was truncated at that letter. The correct
+  end-of-input assertion is `$(?![\s\S])`; bare `$` is not a fix, because the
+  reader's `m` flag makes it match at every line end. Fixed in both copies:
+  `forge-build-agent-team/scripts/quality-rubric.mjs` and
+  `skill-review/scripts/rubric.ts`.
+- **User-visible effect:** a skill whose `## Gotchas` is its final section scored
+  **1/3** on the blocking Gotchas-coverage axis no matter how many gotchas it
+  contained, so the project-skill stage could hard-fail it under
+  `--min-axis 2 --fail-axis-below`. The bundled `forge-auto-build` skill is one
+  such case: 8 concrete gotchas scored 1, and now score 3. Section *order* no
+  longer affects any score.
+- The same fix restores the reviewer-style proxy and long-section detection,
+  which read sections through the same helper and could never see a final
+  section.
+- Added regression tests covering a last-position `## Gotchas` section, a capital
+  `Z` inside a final section, and the reviewer-style proxy for a last-position
+  section. All three fail against the previous `\Z` reader.
+- Reverted a duplicated entry in the `skill-review` discovery list, which had
+  dropped `.agents/skills/` and listed `.opencode/skills/` twice.
+
+## September 2026 - v3.83
+
+### `reuse` skill candidates are no longer treated as authored outputs
+
+- The project-skill stage now requires a project package only for `create` and
+  `extend` candidates. A `reuse` candidate names a package that resolves outside
+  the repository (a global install or an upstream package), so the stage no
+  longer requires, authors, or validates a project-local copy of it. Previously
+  any project whose team legitimately reused an existing package could not
+  complete the skills stage, failing with `Planned project skill is missing or
+  empty: <harness-root>/skills/<name>/SKILL.md`. The validator now agrees with
+  the offline stub runner, which already skipped `omit` and `reuse`.
+- `noSkillsRequired` is derived from the handoff rather than from the output
+  count. It is true only for an empty candidate list or an all-`omit` list,
+  matching the no-model fast path. An all-`reuse` handoff now completes as a
+  normal `complete` stage instead of being reported as "no skills required" —
+  those skills *are* required, they are just not authored here.
+- The skills stage records reused candidate names in a new optional
+  `reusedSkills` field in `docs/authoring-state.json`, so an all-`reuse`
+  completion is distinguishable from an all-`omit` one.
+- Reuse targets are deliberately not verified: the launcher cannot enumerate
+  every harness's global skill roots, so a `reuse` name that resolves nowhere
+  passes silently. Documented as a known limit in `docs/forge-launcher.md` and
+  `forge-build-project-skills`; teams that need a package actually validated
+  should choose `extend`. See
+  [ADR-054](adr/054-reuse-candidates-are-not-authored-outputs.md).
+- An all-`reuse` handoff still invokes the model, because the stage's
+  reconciliation mode adopts and checks existing packages.
+
+## September 2026 - v3.82
+
+### Reachability, live integration and validation-gap visibility
+
+- The task authoring contract (`forge-build-prd/references/task-contract.md`)
+  now requires the composition root (`App.tsx`, router, `Program.cs`, DI) in the
+  outputs of the task that wires a new component, a dependent live integration
+  task for every external-service integration, and a primary-user-journey
+  criterion on human reviews of user-facing features. `forge-build-prd` adds
+  matching validation items and a gotcha against guessing external API contracts
+  (api-versions, query parameters, formats).
+- The workflow engine persists each task's `validationLimitations` and lists them
+  in a new `## Validation Gaps` section of `docs/PROGRESS.md`; `**Status**` values
+  are unchanged.
+- The Forge Console human-review dialog lists unverified checks reported by every
+  upstream task and prerequisite-phase dependency without duplicating shared
+  prerequisites. Review notes must be at least 40 characters after trimming.
+- Existing state files and reports without limitations remain compatible; the
+  display does not prove that checks ran or bypass required completion gates.
+  See [ADR-053](adr/053-reachability-and-validation-gaps.md) for the decision,
+  compatibility guidance, and branch review findings.
+
+## September 2026 - v3.81
+
+### Harness invocation and activity logging
+
+- Every CLI harness invocation now logs the executable, complete argument list,
+  working directory, timestamp, harness name, run ID, task ID, and attempt before
+  the process launches. Arguments are JSON-escaped per element, so paths with
+  spaces, quotes, and multiline prompts stay unambiguous across POSIX and
+  Windows; the referenced execution file is named, never expanded. When
+  platform-specific launcher resolution rewrites the invocation (Windows
+  `.cmd` > Node shims), the effective invocation is logged as well.
+- New opt-in activity logging, off by default: `--log-harness-activity` /
+  `FORGE_ENGINE_LOG_HARNESS_ACTIVITY=1` streams harness stdout/stderr into
+  `docs/engine-run.log` as it arrives (each line tagged with stream, task, and
+  attempt, followed by a completion record with exit status, timeout, or
+  cancellation). `--no-log-harness-activity` forces it off. Precedence is
+  explicit CLI flag > environment variable > persisted Console setting > default
+  off.
+- Recognized credentials (secret-bearing flags and inline token shapes) are
+  redacted and explicitly marked `[REDACTED]`; environment variables are never
+  dumped. Activity is bounded and truncated with explicit markers, and it never
+  changes captured-result parsing, timeouts, cancellation, or task outcomes.
+- The Forge Console's Overview **Controls** panel gains a default-off
+  **Log harness activity** checkbox that persists the choice, restores it after a
+  reload, forwards it to Console-started runs as an explicit flag, and warns that
+  activity logs can contain sensitive repository content and increase log volume.
+  Command invocation logging is always on, independent of the toggle.
+- Documented limitation: the Claude adapter keeps `--output-format json` for
+  structured parsing, so its live activity is limited to whatever the CLI writes
+  before the completion envelope. See
+  [ADR-052](adr/052-harness-invocation-activity-logging.md) and
+  [workflow-engine.md](workflow-engine.md#harness-invocation-and-activity-logging).
+
+### Forge Console visual tour refresh
+
+- The [Forge Console visual tour](forge-console-screenshots.md) and all of its
+  images (numbered tour, responsive `current/` set, thumbnails, and the
+  walkthrough GIF) were regenerated from a deterministic fixture. The Overview
+  captures are now full-page so the **Controls** panel - including the new
+  **Log harness activity** toggle - and the wide document popup are visible.
+- New `tools/console-screenshots` developer tool regenerates the captures
+  repeatably (`npm run capture`): it builds the launcher, starts the Console
+  against a fixed fixture, drives the installed Chrome via `puppeteer-core`, and
+  writes the images with `ffmpeg`. No model or external authoring runs.
+
+---
+
+## September 2026 - v3.80
+
+### Interactive authoring in the Forge Console
+
+- The Overview pipeline now leads with interactive authoring for the PRD and
+  Feature PRD phases. The primary action opens the configured authoring runner in
+  a terminal with the skill queued, so `forge-build-prd` / `forge-auto-build-prd`
+  interview the user before drafting. The headless auto-draft path remains
+  available as a secondary action. These interactive actions live only on the
+  Overview page.
+- New `POST /api/authoring/session` endpoint launches an interactive
+  `idea`, `prd`, or `feature-prd` session, resolving the authoring runner and the
+  PRD-stage model. New `POST /api/authoring/validate` runs the read-only PRD
+  validation; the Overview pipeline exposes it as **Validate PRD** once a PRD
+  exists.
+- New `forge-grill-idea` skill: a stateful adaptation of the `grill-me` /
+  `grilling` technique that interviews the user in rounds of the frontier, then
+  rewrites and commits `docs/IDEA.md`. It is offered as **Grill the idea
+  (interactive)** on the Overview page.
+- The new-project wizard's auto-draft checkbox is relabeled as the headless path
+  and defaults off; interactive authoring happens from the Overview page after
+  selecting the project.
+
+### Plan & Team document rendering
+
+- `forge-requirement` and `forge-task` blocks render as tables instead of code.
+  Requirements show ID / kind / text; tasks show ID / title / owner /
+  dependencies / outputs with an expandable detail row. This is UI-only; the
+  authored documents are unchanged.
+- Documents now render as a table (kind, title, path, status). Selecting a
+  document opens a wide modal dialog that uses the available space, replacing the
+  narrow split-pane detail view.
+
+### Security
+
+- Updated the transitive `js-yaml` dependency in the `forge-execution-adapter`
+  lockfile from 3.15.1 to 3.15.2, addressing GHSA-2883-xcg3-v3hh
+  (`maxTotalMergeKeys` unbounded CPU). No `package.json` change.
+
+---
+
+## September 2026 - v3.79
+
+### Generated skill name quoting
+
+- Clarified that skill candidate names must be written as YAML values rather
+  than copied with JSON delimiter quotes.
+- Added an explicit preflight repair for generated frontmatter names whose
+  parsed value contains accidental wrapping quote characters.
+
+---
+
+## September 2026 - v3.78
+
+### PRD path normalization
+
+- Accepted ADR-050 and retired `docs/PRD.md` as an active source.
+  `docs/PRD.md` now exclusively owns the product-level vision contract, with
+  feature requirements and tasks staying in `docs/features/*.md`.
+- Updated active skills/templates, generated output references, and authoring
+  documentation to consistently reference `docs/PRD.md`.
+- Added explicit legacy handling in discovery/validation: repositories with only
+  `docs/PRD.md` now fail closed with migration guidance; repositories
+  with both files use `docs/PRD.md` and surface a warning that the legacy file is
+  ignored.
+- Added regression coverage for PRD-only, legacy-layout-only, both-files, and
+  missing-document layouts under execution-adapter validation/discovery tests.
+
+---
+
+## September 2026 - v3.77
+
+### Human-review workflow guide
+
+- Documented what creates a human-review task, why the engine pauses, and how
+  to complete and prove review through the Console or CLI.
+- Added ADR-049 for the shared evidence, attestation, fingerprint, and stale
+  approval behavior used by both paths.
+
+---
+
+## September 2026 - v3.76
+
+### Human-review Console styling
+
+- Styled the human-review dialog with the Console's dark theme, including themed
+  surfaces, fields, review criteria, actions, and modal backdrop.
+- Completed human-review tasks now show a disabled green `Human review complete`
+  action after the task refreshes.
+
+---
+
+## September 2026 - v3.75
+
+### Team-stage frontmatter enforcement
+
+- The launcher now validates generated agent frontmatter immediately after the
+  team-building stage, rejecting folded/literal block scalars and other invalid
+  descriptions before the team is committed.
+- Headless team-generation prompts now explicitly require single-line,
+  double-quoted descriptions and forbid `description: >`, `description: |`, and
+  multiline values.
+
+---
+
+## September 2026 - v3.74
+
+### Console human-review completion
+
+- Added a **Complete human review** action to paused human-review tasks in the Forge Console.
+- The review form captures the reviewer, findings, and explicit approval, writes repository-local evidence, records the existing workflow-engine attestation, and resumes the build through the normal background controller.
+- The CLI approval flow remains available, and review fingerprints continue to invalidate stale approvals.
+
+### Authoring runner selection
+
+- Restored `opencode` as the default authoring runner for Claude-harness repositories.
+  The Console's model inventory is per runner and had no runner selector, so the `claude`
+  default hid OpenCode's multi-provider models on Claude repos. The Claude runner is
+  selected with `FORGE_RUN_WITH=claude` (ADR-043 amendment).
+- Inheritance now consults the machine: when the inherited runner's CLI is not installed
+  and the harness's own CLI is, the harness's CLI is used. Explicit selections are never
+  substituted.
+- Made the authoring runner an explicit, persisted choice: an optional `runner` in
+  `docs/authoring-config.json`, a `--runner` flag on the launcher and `authoring-config`,
+  and an **Authoring runner** select in the Console wizard and authoring settings that the
+  stage model dropdowns follow. `FORGE_RUN_WITH` still outranks the saved value, and
+  `FORGE_RUN_WITH=stub` is an offline lock that even `--runner` cannot override (ADR-048).
+
+---
+
+## September 2026 - v3.73
+
+### Copilot Names-Only Parser
+
+- Fixed model discovery for `/model list names only` responses that contain
+  only one model ID per line and no heading.
+
+---
+
+## September 2026 - v3.72
+
+### Copilot Names-Only Discovery
+
+- Copilot authoring inventory now requests `copilot -p "/model list names only"`
+  so Windows table output and other CLI formatting variations do not affect
+  model discovery.
+
+---
+
+## September 2026 - v3.71
+
+### Copilot Discovery Stream Handling
+
+- Fixed model discovery when Copilot writes its `/model list` response to
+  stderr instead of stdout.
+- Friendly model labels such as `GPT-5.6 Luna` are normalized to selectable
+  model IDs while preserving dotted version components.
+
+---
+
+## September 2026 - v3.70
+
+### Copilot Markdown Model Lists
+
+- Fixed discovery for current Copilot CLI output, which returns models as a
+  Markdown list under `Available models include:` rather than a table.
+- Copilot output is collected from both stdout and stderr because current
+  releases write the model list to stderr.
+
+---
+
+## September 2026 - v3.69
+
+### Copilot Model Table Compatibility
+
+- Fixed Copilot model discovery for box-drawn terminal tables returned by
+  `copilot -p "/model list"`.
+- ANSI and Unicode table formatting is now removed before extracting the
+  `Model` column.
+
+---
+
+## September 2026 - v3.68
+
+### Copilot Model Discovery
+
+- Fixed Copilot authoring model discovery to use `copilot -p "/model list"`.
+- The inventory parser now extracts only model names from the command's `Model`
+  table column instead of treating help output and other table columns as models.
+
+---
+
+## September 2026 - v3.67
+
+### Consistent Terminated Process Results
+
+- Fixed a Windows process-transport race where timed-out invocations could
+  report exit status 1 instead of null depending on whether `taskkill` completed
+  before the child's output streams closed.
+- Runner-initiated timeout, cancellation, and output-overflow termination now
+  consistently returns null status. Failure reasons and classifications are
+  preserved; processes that exit normally retain their actual exit codes.
+- Added deterministic regressions for both Windows cleanup callback orders
+  across all three termination reasons, plus normal zero and nonzero exits.
+- Existing target repositories need the updated workflow-engine
+  `scripts/harness/run.ts`. Cleanup deadlines and retry policy are unchanged.
+
+---
+
+## September 2026 - v3.66
+
+### Bounded OpenCode Server Shutdown
+
+- Fixed Windows workflow-engine validation hanging after test 133: owned
+  OpenCode server shutdown now terminates the Windows PID tree, including
+  command wrappers, before reporting completion.
+- POSIX shutdown signals an owned process group and escalates from SIGTERM to
+  SIGKILL after one second. Cleanup has a five-second deadline on both platforms;
+  failures are reported explicitly and inherited stderr handles are released.
+- Repeated and concurrent shutdown calls share one result. Startup failures
+  retain both the original error and any cleanup error; external attach servers
+  remain outside engine lifecycle management.
+- Added bounded lifecycle regressions for actual server PID removal, startup
+  timeout/cancellation, failed or stalled Windows cleanup, and POSIX escalation.
+  The engine test runner now defaults to a 120-second test-file timeout.
+- Existing target repositories need the updated workflow-engine
+  `scripts/harness/opencode-server.ts`; the GitHub job timeout remains 15 minutes.
+
+---
+
+## September 2026 - v3.65
+
+### Auto-Commit with Ignored Artifacts
+
+- Fixed task auto-commit failing with Git exit code 1 when generated artifact
+  directories are ignored. Staging still excludes `docs/artifacts/` and legacy
+  `docs/task-executions/`, including nested files, without force-adding them.
+- Staging failures now log bounded Git output and process errors instead of
+  only an exit code. They remain nonfatal to completed tasks.
+- Added regressions for ignored and unignored artifact directories, nested
+  snapshots, similarly named source directories, pre-staged artifact protection,
+  and Git index-lock diagnostics.
+- Existing target repositories need the updated workflow-engine
+  `scripts/commit.ts`. Updating the template does not recover skipped commits,
+  modify the target index, or rerun completed tasks.
+
+---
+
+## September 2026 - v3.64
+
+### Canonical PRD Discovery for Execution
+
+- Fixed execution-adapter discovery reading the retired `docs/PRD.md`
+  filename while reporting that `docs/PRD.md` was required. Repositories with a
+  canonical PRD and feature documents can now compile their execution manifest.
+- Aligned discovery and authoring-validator regression fixtures with
+  `docs/PRD.md`, retaining coverage that historical documents cannot supply tasks
+  or validation commands.
+- Existing target repositories need the updated execution-adapter discovery
+  script; requirements documents do not need to be renamed or regenerated.
+
+---
+
+## September 2026 - v3.63
+
+### Console PRD Completion Detection
+
+- Fixed the console checking the retired `docs/PRD.md` filename
+  instead of the canonical `docs/PRD.md`. After PRD and feature authoring,
+  the overview can now advance from "Author project PRD" to "Generate team".
+- Updated the Plan & Team PRD link to open `docs/PRD.md`.
+- Added regression coverage for detecting newly authored requirements without
+  a legacy PRD file or an existing agent team.
+
+---
+
+## September 2026 - v3.62
+
+### Consolidated Task Architecture Decisions
+
+- Consolidated the seven unpublished task ADRs into four final decisions:
+  [execution and completion contracts](adr/044-structured-task-contracts.md),
+  [canonical authoring, readiness and sizing](adr/045-prd-readiness-and-task-sizing.md),
+  [execution files and generated-artifact lifecycle](adr/046-task-execution-files.md),
+  and [attempt diagnostics and retry feedback](adr/047-task-completion-diagnostics.md).
+- Preserved the rationale for rejected thresholds, verbose reports and random
+  input filenames as alternatives considered, without an internal supersession
+  chain among unpublished records. Migration and verification limits remain.
+- Updated ADR references and added reciprocal amendment notices to ADR-017,
+  ADR-018, ADR-022, ADR-024, ADR-030 and ADR-035. Claude ADR-042/043 remain separate.
+- Earlier release entries retain their historical behavior descriptions; their
+  task ADR references now point to the consolidated records. Runtime behavior,
+  target templates, workflow state and recorded task outcomes are unchanged by
+  this documentation consolidation.
+
+---
+
+## September 2026 - v3.61
+
+### Task Contracts Integrated with Claude
+
+- Integrated structured contracts, canonical features, completion diagnostics and
+  compact task results with the mainline Claude execution and authoring support.
+- Claude repository tasks now use the shared short execution-file prompt, native
+  agent selection and file-based fallback personas. JSON-envelope classification,
+  model handling, permissions and authoring defaults remain unchanged.
+- Added Claude coverage for Windows BAT large-request transport, compact reports,
+  retry feedback and execution snapshots; text-only requests remain inline.
+- Consolidated task input snapshots, latest outputs and archived attempt traces
+  under `docs/artifacts/`. Bootstrap now ignores that directory; auto-commit
+  excludes new and legacy generated records without changing the user's index.
+  Existing files and audit links are preserved. See
+  [ADR-046](adr/046-task-execution-files.md).
+- Preserved Claude ADR-042/043 alongside the task-contract decisions, now
+  consolidated as ADR-044 through ADR-047 with explicit transport relationships.
+- Existing target engines require template updates; this integration does not
+  migrate target state, rerun tasks or change previously recorded evidence.
+
+### Claude Code as an execution harness and authoring runner
+
+- Added `--harness claude` to the workflow engine: `claude -p --output-format json` with
+  native `--agent` selection on `.claude/agents/`, `--permission-mode bypassPermissions`,
+  and JSON-envelope failure classification (ADR-042).
+- The launcher defaults a Claude-bootstrapped repo to the `claude` engine harness.
+- Added the `claude` authoring runner (`FORGE_RUN_WITH=claude`, default for Claude repos)
+  with model inventory from `claude -p "/model" --bare --output-format json` (ADR-043).
+- The Console defaults `.claude` repos to the Claude runner and harness and offers Claude
+  Code in the model-planning terminal.
+- Existing Claude repos with a persisted OpenCode-shaped stage model must re-pick it against
+  `claude_cli` or set inherit; `FORGE_RUN_WITH=opencode` restores the previous runner.
+
+---
+
+## September 2026 - v3.60
+
+### Ignore Generated Extraction Results
+
+- Bootstrap adds `docs/extraction-results/` to the target repository's
+  `.gitignore`, alongside dependency and engine-log exclusions.
+- Existing ignore rules are preserved, and repeated bootstrap runs do not
+  duplicate the generated entries. Already tracked files are not untracked.
+
+---
+
+## September 2026 - v3.59
+
+### Compact Results and Task-ID Execution Files
+
+- Task reports require only `summary` and `unresolved`. Summary strings and lists
+  are accepted; decisions, interfaces, tests and caveat lists are optional.
+  Existing rich reports remain supported. Mandatory engine checks are unchanged.
+- Report errors identify the actual missing field, invalid type, malformed JSON,
+  missing fence or size limit instead of treating every problem as a missing report.
+- Repository CLI attempts reuse `docs/task-executions/<task-id>.md`. Latest results
+  use `<task-id>.result.json`; timestamped, attempt-numbered result archives retain
+  history and are the targets of workflow state and audit links. Current files
+  are replaced atomically, with linked-file protections and safe filename handling.
+- Confirmed the bank's three rejected reports parse with the updated schema:
+  each used a summary list, which the old string-only check rejected despite
+  successful harness execution and existing outputs. Bank validations and state
+  were not changed or rerun during diagnosis.
+- See [ADR-044](adr/044-structured-task-contracts.md),
+  [ADR-046](adr/046-task-execution-files.md) and [Task Contracts](task-contracts.md). Reinstall updated engine
+  templates in existing target repositories before retrying their tasks.
+
+---
+
+## September 2026 - v3.58
+
+### Task Completion Diagnostics and Nonblocking Caveats
+
+- Structured result reports distinguish blocking `unresolved` requirements from
+  optional `warnings` and `validationLimitations`. Prompts define the distinction;
+  unverified required checks remain blockers. Older reports remain compatible.
+- Nonblocking caveats survive artifact creation and downstream context projection.
+  Expected outputs, report validity and engine-run validation still gate completion.
+- Retries receive the previous rejection reason (bounded to 4000 characters) and
+  its retained result path, with instructions to preserve completed work.
+- Each settled invocation retains its harness result, parsed report when valid,
+  and passed/failed/skipped completion gates in `docs/task-executions/*.result.json`.
+  Workflow attempt history and audit events link the evidence before retrying.
+  The directory remains excluded from work attribution and engine auto-commits.
+- Added regression coverage for caveats, blockers, every rejection gate, harness
+  failures, cancellation, retry feedback, durable history and protected paths.
+- See [ADR-047](adr/047-task-completion-diagnostics.md) and [Task Contracts](task-contracts.md). Update installed engine
+  templates before retrying target tasks; no target repository or task state is
+  modified automatically.
+
+---
+
+## September 2026 - v3.57
+
+### Canonical Features and Compact Requirements
+
+- Every solution now requires a PRD and at least one feature, with no
+  size threshold or monolithic authoring/compilation fallback. Imported documents
+  remain source material; historical originals are preserved, not executed.
+- New authoring writes canonical features directly. ID-only traceability and
+  version-2 contracts reuse requirement/constraint definitions rather than
+  duplicating prose; compilation emits complete version-1 execution contracts.
+- Authoring and compilation reject duplicate definitions, uncovered canonical
+  requirements and copied active task bodies. Repeated prose produces warnings.
+- Scoped references select exact headings or canonical IDs, deduplicate inline
+  content, preserve repository path/size protections, and bind human reviews to
+  relevant source content. Repository agents still read references on demand.
+- Saved manifests without feature-layout metadata must be recompiled. Existing
+  target repositories are not modified automatically. See
+  [ADR-045](adr/045-prd-readiness-and-task-sizing.md) and the
+  [migration guide](canonical-features.md).
+
+---
+
+## September 2026 - v3.56
+
+### Short task launch prompts and on-demand references
+
+- Copilot and OpenCode repository tasks now launch with a short, single-line
+  instruction pointing to a per-attempt file under `docs/task-executions/`.
+  The validated task scope, mandatory criteria, validation commands, dependency
+  context and fallback persona remain in the execution file, not CLI arguments.
+- Repository reference files are validated but read by agents on demand instead
+  of embedding their entire contents. Explicit text-only requests retain inline
+  context; the OpenAI API transport and human-review gates are unchanged.
+- Copilot uses the supported `--agent` flag for native selection, replacing the
+  multiline `/agent` directive that is truncated by Windows batch wrappers.
+- Execution files have unique names and SHA-256 digests, are retained for
+  diagnosis, cannot be task deliverables, and are excluded from work attribution
+  and engine auto-commits. Pre-staged execution files stop auto-commit without
+  discarding the user's staged work.
+- Windows regression tests cover large references/personas through actual BAT
+  wrappers for both adapters and both native/fallback selection modes.
+- Added ADR-046. Update installed target-repository engine templates to use this
+  transport; no target project is changed automatically by this source update.
+
+---
+
+## September 2026 - v3.55
+
+### Enforced PRD readiness and execution-sized task authoring
+
+- New and existing-repository PRD authoring share the mandatory decomposition
+  threshold: 15+ functional requirements or 3+ phases. Existing domain documents
+  and "authoring only" instructions do not waive the canonical vision/features
+  layout. Headless decomposition does not require a second opt-in.
+- A read-only adapter validator checks task contracts before team generation:
+  planned owners, concrete output files, reference existence/limits, duplicate
+  IDs, unknown dependencies, empty phases and task/feature cycles. The launcher
+  uses its bundled validator and records the resulting document fingerprints.
+- Draft reuse, resume and team generation revalidate existing artifacts; stale
+  completion markers cannot bypass missing decomposition. Invalid output leaves
+  authoring failed with repair guidance. Additive feature validation preserves
+  the original PRD and resolves prerequisites from existing structured tasks.
+- Task guidance now includes work-package split examples, a task/check review
+  table, surface-specific tests, zero-test safeguards, explicit prerequisites,
+  separate broad evaluation tasks and human-review gates. Granularity and test
+  relevance remain author/reviewer judgments, not claimed machine guarantees.
+- The launcher ships `tsx` as a runtime dependency for bundled validation;
+  target projects do not need adapter dependencies installed for this gate.
+- Added ADR-045. Existing target projects are not rewritten automatically;
+  legacy checkbox inspection remains available with `--allow-legacy`.
+
+---
+
+## September 2026 - v3.54
+
+### Structured task contracts and evidence-based execution
+
+- New planning guidance uses explicit `forge-task` JSON blocks with bounded
+  outcomes, specialist ownership, requirements, criteria, references, outputs,
+  dependency IDs and validation commands. Legacy plans remain supported with
+  migration warnings; existing target projects are not rewritten automatically.
+- Structured compilation preserves task text, rejects unresolved owners and
+  dependencies/cycles, and carries prerequisite-phase artifacts into prompts.
+- Runtime prompts include bounded local reference contents and acceptance
+  criteria. Structured tasks require passing validation and a `forge-result`
+  outcome report, independent of the legacy opt-in validation flag.
+- Human-review tasks pause without model dispatch and require operator evidence
+  via `approve-task`; changed task/reference/evidence fingerprints invalidate
+  approval. Attestations are local audit records, not authenticated identities.
+- Artifact handoffs now preserve outcome reports, decisions, interfaces and
+  engine-verified commands without invented confidence scores.
+- Legacy path inference excludes numeric versions and explicit source references.
+  Validation shell commands preserve quoted arguments on Windows; standard npm
+  Node CLI shims are resolved directly to preserve multiline task prompts.
+- Added ADR-044 and the task-contract authoring/migration guide.
+
+---
+
+## September 2026 - v3.53
+
+### Complete authoring quality and Console modernization
+
+- Replaced Copilot's generative `/model list` inventory probe with
+  non-generative CLI metadata discovery and explicit failure semantics.
+- Preserved New Project's independent PRD, team, and project-skill model
+  selections, kept invocation overrides temporary, and excluded dependency,
+  build, coverage, and cache directories from authoring fingerprints.
+- Unified team validation and `skill-review` scoring/structural checks, then
+  enforced the structural and per-axis gate on affected non-omit project
+  skills before authoring completion or manifest compilation.
+- Fixed Console task-control races, model preservation across inventory and
+  harness changes, dirty-save/retry behavior, stale-stage regeneration, and
+  same-project generated-list refreshes.
+- Updated active launcher, Console, skill, schema, and bundled-resource
+  documentation to match the non-generative inventory contract.
+- Updated the README clone and package-install paths for
+  `forge-launcher@1.0.0-beta.5`.
+- Synchronized launcher help and Console user guides, including supported
+  text-upload formats, Copilot planning flags, and targeted engine options.
+- Added ADR-041 documenting the shared authoring-quality and Console contracts.
+- Replaced the supplied beta-5 Console media with verified live-browser
+  captures from the current Console build, including desktop, responsive,
+  and detail-state views, and refreshed the README walkthrough GIF.
+
+---
+
+## September 2026 - v3.52
+
+### Retire FlowForge integration and clarify the native pipeline
+
+- Active documentation now describes the native pipeline: separate PRD, team,
+  and project-skill authoring stages, execution-adapter manifest compilation,
+  and workflow-engine runtime dispatch.
+- Removed active command guidance for the retired FlowForge kernel and workforce
+  compiler while preserving historical research, story, ADR, and changelog
+  records.
+- Added ADR-038 to supersede the former workforce handoff decision and document
+  non-destructive migration expectations.
+- Corrected the architecture boundary: the execution adapter compiles the
+  manifest; the workflow engine owns retries, verification, and durable state.
+- Marked committed Console screenshots as historical until they are refreshed
+  against a current browser session.
+- Standardized metadata discovery across the adapter, launcher, and Console:
+  explicit roots win, fallback prefers generated agents and then tooling
+  agents/directories, and Console operations stay scoped to the selected
+  harness without merging duplicate identities.
+- The workflow-engine test entry point now performs explicit recursive
+  cross-platform discovery of root and nested `.test.ts` files and fails when
+  discovery is empty. After `npm ci` resolved the local `tsx` dependency, the
+  completed Linux Node 22.22.2 baseline is standard engine 130/130, final
+  targeted engine 92/92, launcher 110/110, and adapter 22/22. Historical
+  Windows failures remain archival evidence; no Windows result is implied by
+  this entry.
+- Two subsequent explicit-harness-root regression tests also pass; a later
+  full integration run is still required before treating that addition as a
+  replacement for the recorded 130-test engine baseline.
+- Authoring model configuration now has a versioned
+  `docs/authoring-config.json` contract for independent `prd`, `team`, and
+  `skills` models, with matching stage environment overrides and explicit
+  inheritance/unavailability semantics.
+- Independent authoring progress is persisted in versioned
+  `docs/authoring-state.json`, including stage status, input/output
+  fingerprints, outputs, and invocation provenance for resumable PRD, team, and
+  project-skill work.
+- Authoring now exposes separate `draft-skills`, `authoring-config`, and
+  `authoring-models` launcher commands. All authoring entry points accept
+  independent `--prd-model`, `--team-model`, and `--skills-model` overrides;
+  runner inventories are refreshed and validated separately from execution
+  model overrides.
+- Workflow execution now persists each task's authoritative state, progress,
+  and commit bookkeeping before starting the next task, validates owners before
+  dispatch, and fails discovery errors explicitly. Native adapters share a
+  read-only `TaskAttemptRequest`; capability requirements default
+  conservatively to `repository-tools`, while OpenAI accepts only explicit
+  text tasks.
+- The native adapter contract now uses read-only `TaskAttemptRequest` values,
+  explicit capabilities and transport defaults, and optional run-scoped
+  `prepare`/`cleanup` hooks. OpenCode-owned server lifecycles are cleaned up
+  reliably while externally attached servers remain operator-owned.
+- Added [ADR-040](adr/040-native-adapter-contracts.md) as the accepted native
+  adapter contract decision.
+- Added [ADR-039](adr/039-independent-authoring-models-and-stages.md) for the
+  independent PRD, team, and project-skill stages, their model precedence, and
+  persisted authoring configuration/state contracts.
+- Task records now classify failures as `retryable`, `configuration`,
+  `exception`, `timeout`, or `cancelled`; cancellation emits
+  `task.cancelled`. An `AbortSignal` can cancel immediately and leave the
+  current task pending with the run paused for resume, distinct from graceful
+  CLI pause/stop after the in-flight task.
+- Initial auto-draft now runs PRD → team → project skills → native manifest
+  compilation → engine decision. The obsolete fourth LLM plan-and-validate
+  invocation no longer authors `docs/PROGRESS.md`; manual stage handoffs retain
+  their stage-specific model arguments.
+- Authoring state now records the invoked skill and argv. The team-to-skills
+  candidate handoff fails closed when required data is missing, while empty or
+  all-`omit` candidates explicitly complete as `no-skills-required`; authoring
+  cannot write compiler- or engine-owned manifest/progress artifacts.
+- The stable authoring CLI now exposes separate `draft-prd`,
+  `draft-existing-prd`, `draft-team`, `draft-skills`, `feature-prd`,
+  `feature-increment`, and `compile-manifest` stages. Direct stages are
+  headless; `--headless` full-flow mode starts the native engine after
+  preparation, and supplied PRDs skip PRD drafting. Config saves validate schema
+  without probing live model availability.
+- Engine subprocess cleanup now owns dedicated POSIX process groups and
+  recursive Windows termination, with bounded pipe settlement and explicit
+  cleanup exceptions that prevent unsafe automatic retries. Replay persists its
+  pending reset before preparation and preserves a paused pending task when
+  cancellation occurs before or during replay. Linux Node 22 engine validation
+  is now 138/138; the Windows implementation is configured but has not been
+  executed here.
+- Added `.github/workflows/validation.yml` with a Node 22 Linux/Windows matrix
+  for launcher, adapter, engine, and skill-review typechecks/tests, plus the
+  team validation gate and launcher build/version checks. This configures
+  cross-platform CI only; no Windows run is claimed here.
+- Console and `engine-run` now prefer the compiled manifest's selected
+  `harnessRoot` over automatic detection, while explicit authoring CLI
+  selection remains higher priority. A stale manifest root must be updated and
+  recompiled explicitly; roots are never switched silently.
+
+---
+
+## September 2026 - v3.51
+
+### Fix Copilot model terminal launches on Windows
+
+- Windows Terminal now receives the repository working directory through its `-d` option instead of parsing a semicolon-delimited PowerShell script as multiple terminal commands.
+- Windows CLI resolution now prefers executable `.com`, `.exe`, `.bat`, and `.cmd` shims over extensionless npm shell shims, allowing global Copilot installs to launch through `copilot.cmd`.
+- Copilot model-planning terminals now launch with `--yolo`, matching the launcher's existing unattended Copilot execution mode.
+- Model inventory and agent discovery now retain provider-qualified IDs so OpenCode receives identifiers such as `github-copilot/gpt-5.6-luna` unchanged; Copilot strips its provider prefix only at its own CLI boundary.
+
+---
+
+## September 2026 - v3.50
+
+### Feature increment manifest refresh stays additive
+
+- Feature Increment Mode now allows the generated `docs/EXECUTION-MANIFEST.json` and `docs/agent-responsibility-matrix.md` artifacts to refresh alongside agent updates.
+- The launcher rejects feature-increment manifest rewrites that alter or remove pre-existing task definitions, so existing work stays preserved and only additive task growth is accepted.
+
+---
+
+## September 2026 - v3.49
+
+### Fresh-clone launcher installs no longer require a prebuilt tarball
+
+- Removed the `scripts/forge-launcher` self-dependency on `file:forge-launcher-1.0.0-beta.4.tgz`, so `npm install` now works immediately after cloning the repository, including on Windows where the missing tarball could surface as `EPERM`/`ENOENT` install failures.
+
+---
+
+## September 2026 - v3.48
+
+### Documentation refresh: deep dives, execution reality, and Story Part 3
+
+- Refreshed the workflow-engine, artifact-store, and workforce-compiler deep dives so they match the current code paths: manual task selection, output-verification and attribution, auto-commit, model override inputs, and the current serialized execution behavior while repo-wide worktree attribution remains authoritative.
+- Updated related operator docs (`README.md`, `docs/workflow-engine.md`, `docs/forge-launcher.md`, and `docs/forge-console-user-guide.md`) so concurrency settings are described as persisted configuration rather than active parallel dispatch in the current engine implementation.
+- Added [`docs/THE-STORY-PART-3.md`](THE-STORY-PART-3.md), continuing the MyForge narrative from the end of Part 2 through the Console, incremental existing-repo workflows, model planning, observability, and the lessons those changes taught.
+
+---
+
+## September 2026 - v3.47
+
+### Preserve provider-qualified OpenCode model IDs
+
+- The OpenCode workflow adapter now passes provider-qualified model IDs (for example, `github-copilot/gpt-5.6-luna`) unchanged to `opencode run`.
+- Added regression coverage for model IDs containing a provider prefix.
+
+---
+
+## September 2026 - v3.46
+
+### Live model inventory and agent-level model overrides
+
+- `forge-assign-models` can discover normalized model IDs from `opencode models` and `copilot -p "/model list"`, retain diagnostics, and enrich capabilities with BenchLM evidence.
+- Plan & Team exposes agent-level primary/fallback model overrides backed by `docs/model-overrides.json`; overrides are inherited by every task owned by that agent.
+- The Console can launch an interactive OpenCode or Copilot model-planning terminal from the Model Plan view.
+- OpenCode agent and skill discovery is explicitly supported, including `.opencode/agents` and `.opencode/skills`.
+- Windows terminal launch now detects installed Windows Terminal and PowerShell executables, preserves interactive `-NoExit` sessions, resolves npm CLI shims, and reports spawn failures instead of claiming success.
+
+---
+
+## September 2026 - v3.45
+
+### Forge Console: synchronize the user guide and Quick help
+
+- Refreshed the in-console user guide to match the current Console workflow, including manual manifest preparation, targeted task selection, dependency expansion, incremental feature work, reconciliation review, task timeouts, concurrency, auto-commit, and background job behavior.
+- Corrected the New Project document guidance so existing PRDs are limited to the formats accepted by the PRD picker, while research/seed documents retain their broader format support.
+- Expanded the Help dialog's Quick help with the current build controls, incremental-work flow, and updated view descriptions. The User guide tab continues to render the canonical `docs/forge-console-user-guide.md` source.
+
+---
+
+## September 2026 - v3.44
+
+### Reviewable authoring and incremental execution controls
+
+- Authoring lifecycle events are persisted as structured JSON Lines in `docs/AUTHORING-EVENTS.jsonl`. The existing `FORGE_EVENT` records in `docs/engine-run.log` and Console SSE `authoring` stream remain compatible with existing consumers.
+- The Console exposes `POST /api/tasks/reset-changed` and a matching Overview control to reset completed or skipped tasks listed in manifest reconciliation's `changedTaskIds` back to pending after review. Task output, timestamps, errors, and artifact references are cleared so the task can execute against its revised contract.
+- Added `npm run check:version`, an automated guard that verifies README's Latest version matches the first release heading in `docs/updates.md`, with unit coverage for matching, drift, and missing metadata.
+
+---
+
+## September 2026 - v3.43
+
+### Increment authoring observability and reconciliation guidance
+
+- Launcher feature authoring emits structured `FORGE_EVENT` lifecycle records while preserving ordinary process-log lines.
+- Console SSE exposes lifecycle records as `authoring` events alongside the existing `log` stream.
+- Overview shows reconciliation counts, changed task IDs, and the next action for new pending feature tasks.
+- Added coverage for authoring SSE/plain-log compatibility and reconciliation projection.
+- Documented Feature Increment Mode review and recovery actions.
+
+---
+
+## September 2026 - v3.42
+
+### Existing repository bootstrap and incremental project work
+
+- The Forge Console Home and Projects views can bootstrap MyForge into an existing repository with explicit harness, overwrite, and Git initialization controls.
+- Existing repositories can author context-aware project PRDs and additive Feature PRDs through `forge-build-feature-prd`, including after a completed build.
+- Manifest recompilation preserves task state by stable task ID and adds new feature tasks as pending.
+- Bootstrap and authoring output is written to the repository's `docs/engine-run.log` for live Console streaming.
+- Linux users may install `xdg-utils` for automatic browser/document opening; manual URL and path fallbacks remain available.
+- Feature increment runs are scoped to their newly emitted task IDs, reject missing Feature PRD output, and expose reconciliation details for review.
+- `forge-launcher draft-prd` now authors from an existing repository when `docs/IDEA.md` is absent, using source, docs, tests, manifests, and history as context.
+- Added `forge-launcher feature-increment --prompt ... [--run]` to author a feature, invoke Feature Increment Mode, reconcile the manifest, and optionally run it.
+- Monolithic PRD repositories may add `docs/features/*.md`; those tasks compile additively after existing PRD phases. Reconciliation now reports changed task contracts as well as added and removed IDs.
+- Authoring remains a launcher job and its process output is streamed through the existing repository log and Console SSE endpoint. See [ADR-037](adr/037-existing-repository-incremental-authoring.md).
+
+---
+
+## September 2026 - v3.41
+
+### Forge Console: elapsed time now reflects completed task work
+
+- **Overview no longer shows wall-clock runtime as elapsed.** The elapsed stat is now the combined duration of all completed tasks in the current visible run scope, so it reflects actual finished work instead of how long the dashboard has been open or how long the run has existed.
+- **The Forge Board HUD now matches Overview.** Its timer uses the same summed completed-task duration, keeping the board and overview consistent during full and manual/scoped runs.
+
+---
+
+## September 2026 - v3.40
+
+### Forge Console: manual pre-build now stops at manifest creation
+
+- **Overview's pipeline card is simpler.** Before a manifest exists it now shows only a **Manual build** checkbox plus the next pipeline action, instead of exposing task-selection-oriented controls that cannot work yet.
+- **Manual pre-build no longer dead-ends.** When that checkbox is enabled at the team → build stage, the pipeline action becomes **Create manifest**. The console compiles `docs/EXECUTION-MANIFEST.json` without auto-starting the full workflow, so you can review tasks and make a targeted selection first.
+- **Manifest-driven controls stay in the Controls panel.** Once the manifest exists, build mode selection, task-count feedback, **Choose tasks**, and the existing Run/Resume/Pause/Stop actions remain together in **Overview → Controls** where they are actually actionable.
+
+---
+
+## September 2026 - v3.39
+
+### Forge Console: tracked background jobs from project creation through build
+
+- **Detached work is now a first-class console concept.** The console records a shared background-job model for project creation, headless PRD drafting, team generation, engine runs/resumes, and task replay. Each job keeps its repo path, PID, log path, timestamps, status, and the latest status message.
+- **Home, Projects, Overview, and New Project now surface live job state.** Instead of a one-shot "started" toast, the browser can now show whether a project is **creating**, **drafting PRD**, **generating team**, **running**, **paused**, **ready**, or **failed**, with status derived from the live PID plus repo/run artifacts rather than brittle log scraping.
+- **Project creation is visibly asynchronous.** The New Project wizard now shows a live status card for the background bootstrap job and lets you select the repo once it exists, while the Overview pipeline shows completion/failure banners with a direct path to the Logs view.
+
+### Forge Console + Workflow Engine: manual execution mode for targeted task runs
+
+- **Manual mode is now persisted in `docs/engine-config.json`.** In addition to harness, granularity, concurrency, timeouts, retries, and auto-commit, the engine config now stores an execution mode (`auto` vs `manual`), the selection scope (`single`, `range`, or `list`), and the selected task IDs to use on Run/Resume.
+- **Overview and Tasks now support targeted runs.** The Overview **Controls** panel gains an execution-mode toggle and switches its primary action copy between **Run** and **Run selected**. The Tasks view now supports explicit multi-select plus contiguous range selection, shows the selected-task count, and saves that selection back to engine config for later resumes.
+- **Scoped execution happens in the engine, not by mutating task state.** Manual runs pass the selected task IDs into `forge-launcher engine-run` / `workflow-engine run`, the engine auto-expands unmet dependencies, and only the scoped slice contributes to ready-frontier selection and progress counts. Unselected tasks remain untouched for future full or manual runs, while paused scoped runs keep their active selection in `docs/WORKFLOW-STATE.json`.
+
+---
+
+## September 2026 - v3.38
+
+### Console: concurrency setting in Overview and New Project
+
+- **Concurrency is now configurable from the browser.** The Overview **Controls** panel gains a "Concurrency (parallel agents)" number input with a **Set** button. Enter a positive integer to run that many agents in parallel on the next run/resume; set it to 0 to revert to the engine default. The value is saved to `docs/engine-config.json` and passed as `--concurrency N` when the engine starts, exactly as the CLI `--concurrency` flag works.
+- **New Project wizard gains a Concurrency field.** Creating a project from the browser now includes an optional "Concurrency (parallel agents)" number field. When set, it is forwarded to the launcher as `FORGE_ENGINE_CONCURRENCY` so the new repo is pre-configured at creation time.
+
+### Engine: output files now recorded for tasks that only modify existing files
+
+- **Fix.** When an agent edited pre-existing files rather than creating new ones, the engine recorded an empty `outputFiles` list for the completed task. This produced warnings about tasks completing without recorded output files, and meant downstream tasks saw no file context in the artifact `filesChanged` field.
+- **Now** the engine takes a worktree snapshot before and after each task (via `git status --porcelain`). Files that transition from clean to dirty during the task are detected by diffing the two snapshots and merged into `outputFiles` before the artifact and run state are saved. Both new files and in-place modifications are captured; files that were already dirty before the task ran are correctly excluded. This requires a git repo; non-git directories fall back to the existing behaviour.
+
+### Engine: richer artifact context projected to downstream agents
+
+- **Problem.** Synthesised artifacts (created automatically when a task completes) had two weaknesses: the summary was grabbed from the first stdout line — often an agent's internal monologue — so downstream agents got unhelpful context; and the projected context block only included `summary` and `confidence`, omitting the `filesChanged` list and the agent output excerpt that were stored in the artifact.
+- **Summary now reflects the task itself.** `synthesise()` now sets the artifact summary to `"<task title>: <task description>"` (up to 200 chars), which always describes what the task was supposed to do — not what the agent said it was going to do. The stdout excerpt is still stored in the payload for diagnostics.
+- **Confidence defaults to 0.9** for all synthesised completion artifacts (was absent, rendering the field as "N/A" in projections).
+- **`filesChanged` and `agentOutputExcerpt` are now projected by default.** The default context field set is expanded from `["summary", "confidence"]` to `["summary", "confidence", "filesChanged", "agentOutputExcerpt"]`. The `filesChanged` list is rendered as a markdown bullet list in the context block; an empty list is suppressed. This means downstream agents automatically receive a list of every file the upstream task touched — including files detected via the new git-diff enrichment above.
+
+---
+
+## October 2026 - v3.37
+
+### Forge Console: user guide refreshed and available in the Help modal
+
+- **The user guide is now in the console.** The Help dialog (top-right **Help** button) gains a **User guide** tab alongside the quick reference. It renders the walkthrough (`docs/forge-console-user-guide.md`, shipped with the package as `guide.md` and served at `/guide.md`), so the full walkthrough is one click away from any view instead of living only in the repo docs.
+- **Guide refreshed for v3.37.** Brought `forge-console-user-guide.md` up to date with the current UI: the `--port` flag, the New Project wizard's **Description** and **Visibility** fields, research/seed docs accepting `.md`/`.txt`/`.pdf`/`.docx` (multi-file via picker or comma-separated paths), the Overview **Manifest** panel and Live/Idle + harness header, and the Plan & Team **skills cards grouped into Forge vs Project skills**. Section titles were tightened into a parallel verb-first style and a pointer to the changelog was added.
+- **Relative doc links render as text** in the guide tab (they can't resolve inside the served page), while external and fragment links stay clickable.
+
+---
+
+## September 2026 - v3.36
+
+### Engine log no longer duplicates every line on detached runs
+
+- **Fix.** When a run was started detached (from the Forge Console's Run/Resume,
+  or the interactive launcher's "run now detached"), the launcher's `runTee`
+  wrote the engine output to `docs/engine-run.log` **and** forwarded it to its
+  stdout — which the console/detached spawn had already redirected to that same
+  log file. Every engine line (phase, context projection, "starting task",
+  heartbeats, etc.) was therefore logged twice, sometimes merged mid-line.
+- **Now** `runTee` only echoes to stdout/stderr when they are attached to a
+  terminal, so a detached run writes each line exactly once. Terminal runs
+  (`forge-launcher engine-run` in a shell) still stream live output unchanged.
+
+### Execution adapter: a skills-only harness root no longer shadows the real one
+
+- **Fix.** `discoverForgeRepo`'s harness-root detection matched any root with
+  `agents/` **or** `skills/`. A stray skills-only root (e.g. a `.github/` that
+  has skills but no agents) could shadow the real harness root, so agent
+  discovery returned **zero agents** — the engine then *skipped* every task
+  ("No agent matched owner …"), and because skipped counts as done, a resume
+  could mark a whole run complete without executing anything.
+- **Now** a root that owns `agents/` wins; a skills-only root is only used when
+  no root has agents, and a warning records any ignored skills-only root. This
+  restores correct owner matching (and real execution) for runs with mixed
+  harness roots.
+
+### Forge Board: clearer expanded cards and fixed avatar moods
+
+- **Expanded cards get wider.** Clicking a task card now widens it (+150px) in
+  addition to growing taller, so the expanded detail (full title, description,
+  status/owner/phase/timeout/inputs/outputs rows) has room to breathe; the
+  card floats over its right neighbor on an opaque backdrop.
+- **Detail rows no longer overlap.** The key/value rows previously drew the
+  label and value at the same spot, so "Status · complete" rendered on top of
+  itself. Labels now sit in their own column with the value indented beside
+  them, and row spacing was increased.
+- **Avatars smile when done.** The face's mouth had the smile/frown arcs
+  reversed, so completed cards looked cross and failed ones grinned. Completed
+  cards now smile, failed ones frown (running = dot, pending/skipped = neutral).
+- **Long task ids are trimmed** to fit the card instead of spilling over the
+  edge.
+
+### Engine heartbeat default raised to 60s
+
+- The engine's per-task heartbeat line (`…still working on task <id> (@<agent>, Ns elapsed)`)
+  now prints every **60 seconds** by default instead of 15, so `docs/engine-run.log`
+  stays quieter during long tasks. Override with `--heartbeat-ms` /
+  `FORGE_ENGINE_HEARTBEAT_MS` (or `0` to disable).
+
+### Auto-commit after each completed task (default on)
+
+- **One commit per completed task.** The workflow engine now commits the
+  working tree after each task completes, sequenced after the wave merge so it
+  is safe at any concurrency level. The commit includes the task's work **and**
+  the engine-owned files (`docs/WORKFLOW-STATE.json`, `docs/EXECUTION-AUDIT.jsonl`,
+  `docs/PROGRESS.md`), producing a clear, attributable history aligned with the
+  manifest's task decomposition.
+- **Default on** (per product decision). Existing runs change behaviour by
+  default. Disable with `--no-auto-commit` (`FORGE_ENGINE_AUTO_COMMIT=0`) —
+  for example when mid-rebase or with pre-existing uncommitted changes you
+  don't want mixed with agent output.
+- **Custom message template.** `--commit-message-template "<tmpl>"` (or
+  `FORGE_ENGINE_COMMIT_MESSAGE_TEMPLATE`) with `{taskId}` / `{taskTitle}`
+  placeholders; default is `feat(forge-engine): complete task {taskId} - {taskTitle}`.
+- **Non-fatal failures.** A repo without `.git`, an empty diff, or a failed
+  commit (e.g. no git identity) is logged/skipped and never fails the task or
+  the run. A new `task.committed` audit event records the commit SHA.
+- **Wired through the CLI and console.** `forge-launcher engine-run` accepts
+  `--auto-commit|--no-auto-commit` and `--commit-message-template`; the setting
+  persists in `docs/engine-config.json` (new `autoCommit` field) and appears as
+  a checkbox on the console **Overview** (Controls panel). The interactive
+  launcher's engine configuration also asks about it (default yes).
+
+### Forge Console: add an existing PRD and research/seed documents in the New Project wizard
+
+- **Mirrors the CLI's Step 6.** The New Project wizard now has a **Project
+  documents** section (after the idea) where you can add an existing PRD and
+  research/seed documents (design specs, market research, technical notes) —
+  exactly like the terminal flow. Docs are copied to `docs/PRD.md` and
+  `docs/research/`, so the later PRD build (`forge-auto-build-prd`) reads the
+  research context and a supplied PRD is used as-is instead of being drafted.
+- **Browse by file picker or absolute path.** Both fields support a file-picker
+  browse (upload) **and** a typed absolute path (comma-separated for multiple
+  research docs). Picked files are staged server-side (`POST /api/uploads`) and
+  the launcher is handed the paths via `FORGE_PRD_FILE` / `FORGE_RESEARCH_FILES`.
+- **Research docs are visible afterwards.** The console's Plan & Team view now
+  lists `docs/research/*.md` entries (kind `research`), so the docs you added
+  are browsable in the browser.
+
+### Forge Console: launch the harness CLI from a task
+
+- **"Launch <harness> CLI"** button on the **Tasks** view header and the
+  **Overview** header opens the project's harness CLI (opencode / copilot /
+  claude, chosen from the repo's harness root) in a new terminal window in the
+  project folder — so you can watch the live run and take over at any point.
+  Backed by `POST /api/launch-cli` (injectable in tests); when no desktop
+  terminal emulator is found the UI shows the exact command to run manually.
+
+---
+
+## August 2026 - v3.35
+
+### Forge Console: skills shown as cards, grouped Forge vs Project
+
+- **Skills render as cards in Plan & Team.** The Skills section of the console's
+  Plan & Team view previously listed skills as a plain bulleted list. They now
+  use the same card layout as the agent team, with the skill name, a category
+  badge, description, its location under the harness, and an **Open** button
+  (opens the skill directory in your file manager).
+- **Skills are grouped into Forge skills and Project skills.** Skills
+  bootstrapped from the forge templates (the `forge-*` skills plus
+  `skill-creator`/`skill-review`/`skill-review-updater`) are classified as
+  **Forge skills**; skills the generated team wrote for the project are grouped
+  under **Project skills**. Each group renders its own card grid with a count
+  in its heading, and empty groups are omitted.
+- **Classification is derived, not stored.** The console matches a skill's
+  directory against the forge template set it bootstraps from, so the grouping
+  stays in sync as forge skills are added or renamed, and no re-bootstrap of
+  existing projects is required.
+
+---
+
+## August 2026 - v3.34
+
+### Agent/skill descriptions: single-line, double-quoted frontmatter
+
+- **No more block scalars.** Generated agents and skills sometimes used a YAML
+  folded/literal block scalar (`description: >` / `|`), which harnesses with
+  simple frontmatter readers render as just `>` — the agent/skill looked
+  undecorated (e.g. the Forge Console's Plan & Team view). Descriptions must
+  now be **single-line and double-quoted** (`description: "..."`).
+- **The `validate-frontmatter.mjs` gate now rejects them.** It flags block
+  scalars (`>`/`|` and their `-`/`+` variants), multi-line values, unquoted
+  descriptions, and the existing unquoted `: ` / `#` hazards — so
+  `forge-build-agent-team` fails the gate instead of shipping broken files.
+- **Templates and instructions updated.** `forge-build-agent-team` and
+  `skill-creator` callouts/checklists/templates now mandate the single-line
+  double-quoted form; the bootstrapped agent/skill template files were swept to
+  match, so fresh teams pass the gate cleanly.
+- **Parsers now tolerate block scalars anyway.** The Forge Console
+  (`forge-launcher`) and the workforce compiler read folded/literal
+  descriptions correctly, so pre-existing or third-party files written with
+  `>`/`|` still display properly.
+
+---
+
+## August 2026 - v3.33
+
+### Forge Console: restore Copilot harness for pre-existing GitHub repos
+
+- The console **Run** action now infers the engine harness from the repo's
+  harness root when `docs/engine-config.json` is absent, so projects bootstrapped
+  before engine-config persistence existed run with `copilot` again instead of
+  silently defaulting to `opencode`. New projects (bootstrapped via the launcher
+  or console) are unaffected: their harness is already persisted during
+  bootstrap.
+- Setting the engine-wide default timeout (`set all` / Controls) on a repo
+  without a config now writes the inferred harness too, instead of pinning
+  `opencode`.
+- The engine execution harness for Claude and generic `.agents` repos remains
+  `opencode` — the workflow engine currently ships opencode, Copilot, OpenAI,
+  stub, and FlowForge kernel adapters only.
+
+---
+
+## August 2026 - v3.32
+
+### Forge Console: edit task timeouts
+
+- **Per-task timeout editor.** Each task's detail drawer in the **Tasks** view
+  now lets you set that task's `timeoutMs` override (a number input + Apply),
+  and the Overview **Controls** panel has a matching task picker + Set control.
+  This is the "bump the timeout on a failed task, then Replay it" flow: builds
+  and tests that exceed the default can be given a larger budget and retried.
+- **Set every task's timeout at once.** The Tasks view header and the Overview
+  Controls panel both offer a "set all" control that writes `timeoutMs` to every
+  manifest task *and* updates the engine-wide default in
+  `docs/engine-config.json`, so the whole run gets a longer budget in one step.
+- **How it's stored.** Per-task values are written back to
+  `docs/EXECUTION-MANIFEST.json` (`ManifestTask.timeoutMs`); the "all tasks"
+  action also writes `taskTimeoutMs` into `docs/engine-config.json`. Edits are
+  preserved by `replay` and by `run`/`resume` unless a granularity is explicitly
+  set (which recompiles the manifest from the PRD, regenerating `timeoutMs`).
+- New token-gated `POST /api/tasks/timeout` endpoint (`{ taskId?, timeoutMs }`)
+  validates the value and broadcasts a snapshot refresh.
+- **Enter timeouts in minutes.** The timeout inputs (Tasks detail, "Set all",
+  and Overview Controls) accept minutes with decimals (`1.5` = 90s) and convert
+  to/from the millisecond values stored in the manifest and `engine-config.json`.
+- **Finished tasks are read-only.** Completed/skipped tasks show their timeout
+  as plain text instead of an editor - the task's own `timeoutMs`, or the
+  effective default (`default · 10 min`) when it never had an override. Failed,
+  pending, and running tasks stay editable so a failed task can be bumped and
+  replayed.
+
+### Forge Console: Manifest panel links to Plan & Team
+
+- The Overview **Manifest** panel now shows a single **Open Plan & Team** link
+  (replacing the IDEA/PRD-only links) - the Plan & Team view lists every
+  document (IDEA, PRD, vision, features, progress, model plan) plus the agent
+  team and skills.
+- Added a practical [Forge Console user guide](forge-console-user-guide.md) for
+  launching the console, creating or opening projects, switching repos, and
+  monitoring runs from the browser.
+
+---
+
+## August 2026 - v3.31
+
+### Forge Console: a local web UI over the launcher and workflow engine
+
+- **`forge-launcher console`** opens a self-contained web UI that fronts both
+  `forge-launcher` (authoring) and `forge-launcher engine-run` →
+  `workflow-engine` (build) from one browser app. It is TypeScript compiled with
+  `tsc`, served on `127.0.0.1` (default port `4300`, next free port if busy).
+- **Project picker** landing page lists your projects and lets you add an
+  existing repo.
+- **New Project wizard** creates a repo by spawning
+  `forge-launcher --non-interactive` with `FORGE_REPO_NAME` / `_PARENT_DIR` /
+  `_DESCRIPTION` / `_VISIBILITY` / `_HARNESS_CHOICE` / `_IDEA` (plus optional
+  `FORGE_AUTO_DRAFT=1`).
+- **Resume a setup** - draft the PRD (`forge-launcher --draft`), generate the
+  team (headless `forge-build-agent-team`), or start the build.
+- **Start / resume a build** - `forge-launcher engine-run --harness <h> --yes`,
+  detached, logged to `docs/engine-run.log`.
+- **Views** - Overview (run header, progress, counts, blockers), **Board** (the
+  existing PixiJS Forge Board embedded full-screen at `/board`), Tasks
+  (filterable/sortable table + detail), Logs (`engine-run.log` tail + audit
+  stream), Documents (read-only IDEA/PRD/vision/features/progress/model-plan +
+  agent team, "open externally"), Artifacts (browse by type/task + preview), and
+  Timeline (audit events, failure-highlighted).
+- **Run controls** - Pause / Stop (write `docs/engine-control.json` + SIGTERM
+  `docs/engine.pid`), Replay a failed task (`workflow-engine replay <task>`), and
+  Run / Resume.
+
+### Project registry
+
+- Projects are remembered in a registry at `~/.myforge/projects.json` (honoring
+  `FORGE_HOME` / `XDG_CONFIG_HOME`).
+
+### TypeScript client + loopback security
+
+- The console client is plain TypeScript compiled with `tsc` (no bundler),
+  served loopback-only, and state-changing POST endpoints require an
+  `X-Forge-Token` header (a per-server random token embedded in the served HTML)
+  to block cross-origin drive-by requests; file reads are path-traversal
+  guarded.
+
+### `forge-launcher engine-run` tees engine output to a log
+
+- `forge-launcher engine-run` tees engine output to `docs/engine-run.log`, so a
+  detached run is tail-able from the terminal and the console alike.
+
+- See [ADR-034](adr/034-forge-console-web-ui.md).
+
+---
+
+## August 2026 - v3.30
+
+### Branding: "Agent Forge" is now "MyForge"
+
+- Rebranded the project from **McFuzzy Agent Forge** to **MyForge** across the
+  README, `docs/`, `plan.md`, `AGENTS.md`, agent templates, and skill templates.
+- Technical identifiers are unchanged: the `forge-*` package/CLI/skill names
+  (`forge-launcher`, `forge-workflow-engine`, `forge-execution-adapter`,
+  `forge-workforce-compiler`), `FORGE_*` environment variables, and the
+  **FlowForge** kernel name all keep their existing names.
+- The workforce compiler's default package ID root changed from
+  `dev.agent-forge.*` to `dev.myforge.*` (for example
+  `dev.myforge.my-project`), so freshly compiled workforce packages use the new
+  branding. See `docs/adr/033-brand-rename-to-myforge.md`.
+
+---
+
+## August 2026 - v3.29
+
+### Research/docs: Forge Console feature plan
+
+- Added `docs/research/forge-console-desktop-frontend-plan.md`, a proposed plan
+  for introducing a desktop/web front end for `forge-launcher` and
+  `forge-workflow-engine`.
+- The plan compares desktop-first vs. web-first approaches and recommends
+  evolving the existing local Forge Board dashboard into a broader **Forge
+  Console** first, then evaluating desktop packaging later.
+- The phased roadmap covers MVP observability (status/tasks/logs/output), run
+  controls (pause/stop/replay), artifact/history views, and optional desktop
+  wrapping after adoption is validated.
+
+---
+
+## August 2026 - v3.28
+
+### Workflow engine: same-owner task serialization under parallelism
+
+- **Same-owner tasks never run concurrently.** With `--concurrency > 1`, the
+  engine previously dispatched the whole ready frontier in parallel - including
+  tasks owned by the same agent, which share a subsystem (project dir, build
+  outputs, ports) and can collide even when the dependency graph sees them as
+  independent (e.g. a port-`Address already in use` clash between an Edge
+  scaffold task and an Edge build task).
+- The wave dispatcher now keeps **at most one task per owning agent** per wave
+  (`ownerUniqueReady`); same-owner tasks drain one per wave while cross-owner
+  tasks still parallelize up to `--concurrency`. Sequential runs (`--concurrency
+  1`) are unchanged. Unassigned tasks are bucketed together conservatively.
+- This is a dispatch-layer guard; the manifest dependency graph and the
+  responsibility matrix are untouched. Cross-owner tasks on shared paths (one
+  task scaffolding a directory while another builds inside it) remain the
+  operator's responsibility - a future file-overlap gate would close that.
+- New tests: `ownerUniqueReady` (per-owner first-wins, unassigned bucketing,
+  empty), same-owner serialization under concurrency 2, and different-owner
+  concurrency under concurrency 2. See ADR-021 (amended).
+
+### Execution-adapter: framework names no longer mistaken for expected outputs
+
+- **`extractPaths` no longer treats framework/runtime names as file paths.**
+  A PRD bullet like "Build **ASP.NET** Core minimal API …" previously declared
+  `ASP.NET` as an expected output file, which can never exist on disk - so the
+  engine's output-verification gate failed the task on **every** attempt (and
+  each retry spawned a fresh identically-titled opencode session, looking like a
+  collision). A `NON_PATH_DOTTED_TOKENS` blocklist (`asp.net`, `.net`, `dotnet`,
+  `nuget`) now excludes these; real paths such as `src/HumanGateway.Core` are
+  still extracted.
+- Regression test added; recompiling a manifest drops the bogus `ASP.NET`
+  expected output, so affected tasks pass the output gate on the next
+  `replay`/`run`.
+
+---
+
+## August 2026 - v3.27
+
+### Engine pause & stop (graceful), launcher config persistence
+
+- **`workflow-engine stop`** (and a fixed `pause`) now actually stop a running
+  detached engine. The engine polls `docs/engine-control.json` at the top of
+  each task wave and writes its PID to `docs/engine.pid` at startup. `stop`
+  writes a stop request **and** SIGTERMs the PID; Ctrl+C / SIGTERM on the engine
+  process triggers the same graceful stop via an in-process flag. Either way the
+  in-flight task finishes, state is saved as `paused`, and `run` resumes from the
+  last completed task. Previously `pause` only flipped the state file and the
+  loop never re-read it, so a live run could not be stopped.
+- **`forge-launcher engine-run --stop` / `--pause`** request the same graceful
+  stop/pause from the launcher (no manifest or recompile needed) - the terminal
+  counterpart to `workflow-engine stop`.
+- **`forge-launcher resume`** offers **"Stop the engine after the current task"**
+  when it detects a live run, and its resume/monitor commands now reuse the last
+  configured engine options instead of the minimal `--harness`-only command.
+- **Engine options persist**: the launcher writes the menu choices
+  (harness, granularity, concurrency, timeout, retries, viz, keep-alive, attach)
+  to `docs/engine-config.json`; resume loads them (explicit env vars still win).
+- New tests: control-file round-trip, stop-before-any-task, stop-mid-run after
+  the current task, the SIGINT/SIGTERM flag path, launcher `--stop`/`--pause`
+  delegation, resume carrying persisted config, and env-overrides-persisted.
+  See ADR-032.
+
+---
+
+## August 2026 - v3.26
+
+### Workflow engine: adaptive keep-alive default + timeout/retry surfacing
+
+- **Keep-alive is now the adaptive default.** The opencode harness boots a warm
+  `opencode serve` and attaches every task to it when **more than one task
+  remains**, and cold-starts per task when ≤1 remains (short resumes don't pay a
+  server boot). This replaces the previous all-cold-start default for multi-task
+  dark runs (see ADR-027 for the keep-alive mechanics).
+- **New escape hatches.** `--no-keep-alive` (or `FORGE_ENGINE_ATTACH=0`) forces
+  cold start per task; `--keep-alive` / `FORGE_ENGINE_ATTACH=1` still force
+  keep-alive; `--attach <url>` / `FORGE_ENGINE_ATTACH_URL` still reuse an
+  existing server. Precedence: attach → no-keep-alive → keep-alive → adaptive.
+- **Pre-run summary** now shows max retries, retry delay, concurrency, and the
+  keep-alive mode (not just the per-task timeout).
+- **Agents learn their execution budget.** `HarnessAdapter.invoke` now receives
+  `maxRetries`, and the opencode/copilot adapters render an **Execution budget**
+  hint (per-task timeout in seconds + retry count + "don't rely on retries to fix
+  hollow output") in the task prompt.
+- `forge-launcher engine-run` forwards `--no-keep-alive` (flag and
+  `FORGE_ENGINE_ATTACH=0`).
+- New tests: `shouldKeepAlive` precedence table, `remainingTaskCount` (fresh /
+  complete / skipped / leftover-running), engine→harness `maxRetries` threading,
+  and budget-hint rendering. See ADR-031.
+
+---
+
+## August 2026 - v3.25
+
+### Launcher: "stop and resume later" checkpoints + post-team execution plan
+
+- **Stop here and resume later.** After each launcher checkpoint - idea captured,
+  PRD added/drafted, team generated, execution plan drafted, build configured -
+  the interactive flow asks "Stop here and resume later?" and, when you say yes,
+  prints `forge-launcher resume --repo "<path>"` and stops at the "where to pick
+  up" summary. Pick the run back up any time with `forge-launcher resume`.
+- **Post-team plan & validate step.** After the agent team is generated, the
+  launcher now runs project-orchestrator (via `forge-orchestrate-build`, headless)
+  with the prompt-playbook 5a prompt to produce the **execution plan** in
+  `docs/PROGRESS.md`, commits it (`docs: add execution plan`), and stops for
+  review before the build. It selects the monolithic vs. feature-based 5a prompt
+  from the repo layout; if the headless run fails or writes no plan, it prints
+  the manual `@project-orchestrator` command instead.
+- Non-interactive auto-draft (`FORGE_AUTO_DRAFT=1`) runs the plan step
+  automatically; stub mode writes a canned `docs/PROGRESS.md` so the flow is
+  testable offline.
+- Covered by new launcher tests (plan step + checkpoints are interactive-only,
+  so non-interactive coverage asserts the plan doc, commit, and engine decision).
+  Launcher suite green.
+
+---
+
+## August 2026 - v3.24
+
+### Copilot harness selects the forge agent natively via `/agent`
+
+The copilot adapter previously inlined every agent file into the `copilot -p`
+prompt. The Copilot CLI supports an inline `/agent <name>` directive that loads
+a repo agent natively - the same idea as opencode's `--agent <name>` (v3.21).
+
+- **Native selection.** When the owning agent's file lives under the project's
+  `.github/agents/` directory, the adapter now prepends `/agent <name>` to the
+  prompt and lets Copilot load the persona itself; the persona is no longer
+  inlined. For other harness roots (`.agents`, `.claude`, `.opencode`) Copilot
+  cannot discover the agent files, so the inline-persona fallback is kept.
+- **Shared escape hatch.** `FORGE_ENGINE_NATIVE_AGENT=0` forces the inline
+  fallback on the copilot harness too (already supported by opencode).
+- Covered by a new `harness/copilot-adapter.test.ts` (native, fallback, no-name,
+  env-escape, and the execute-now directive). Engine suite green.
+
+- [ADR-030](adr/030-copilot-native-agent-selection.md): copilot `/agent` selection.
+
+---
+
+## August 2026 - v3.23
+
+### Workflow engine output verification gate (no more hollow "complete" runs)
+
+A run could previously report **complete** with no code: every harness adapter
+returned `success` on a zero-exit call, and the engine marked the task complete
+without checking that anything was produced. A model replying "Ready for the
+task." exited 0, the engine synthesized an artifact with `filesChanged: []` for
+every task, and the run finished "successfully" with no solution.
+
+- **Expected-output gate.** A task declaring `expectedOutputs` now requires every
+  one to exist after the harness call. Missing → the attempt fails, retries, then
+  the task is marked `failed` with the missing list.
+- **No-op detection.** Tasks declaring no `expectedOutputs` must show evidence of
+  work: a git working-tree diff before/after the call (engine-owned `docs/` files
+  excluded) or a substantive agent response. "Ready for the task." with no file
+  changes is a failed attempt, never a completion.
+- **`--allow-noop` / `FORGE_ENGINE_ALLOW_NOOP=1`** relaxes the no-op heuristic
+  (the expected-output check stays).
+- **`--run-validation` / `FORGE_ENGINE_RUN_VALIDATION=1`** executes each task's
+  manifest `validationCommands` (cwd = repo root) and requires them all to pass
+  before the task completes. Tasks with validation are gated on it.
+- **Hollow-run visibility.** The final summary and `status` flag tasks completed
+  with no recorded output files; `forge-launcher resume` does too.
+- **Prompt hardening.** Both the opencode and copilot adapters append an explicit
+  "perform the task now, then list the files you changed" directive, so agents
+  stop merely acknowledging tasks.
+- **`FORGE_ENGINE_NATIVE_AGENT=0`** restores the pre-v3.21 opencode behavior
+  (inline the persona instead of `--agent <name>`) for `.opencode/` harnesses.
+- New `scripts/verify.ts` (gate + git-diff + validation runner) with unit tests;
+  engine tests cover the gate, `--allow-noop`, and validation-command failure.
+  Engine suite green; `forge-launcher engine-run` passes the new flags through.
+
+- [ADR-029](adr/029-output-verification-gate.md): the engine's output-verification gate.
+
+---
+
+## August 2026 - v3.22
+
+### Launcher as the single entry point: `forge-launcher resume`, review links, conditional in-harness command
+
+The launcher becomes the one terminal on-ramp, and "when to use what" collapses
+to a single mental model: **`forge-launcher` starts you, then you either drive
+the build interactively in the harness (`@project-orchestrator`) or hand it to
+the autonomous engine (`@workflow-orchestrator` / `forge-launcher engine-run`).**
+
+- **`forge-launcher resume [--repo]`** - re-enters an existing project at its
+  current stage (idea → PRD → team → build) as a full interactive wizard. It
+  detects what's already drafted, prints where you are with clickable review
+  links, and offers the right next action: capture an idea, auto-draft the PRD /
+  team headlessly, resume a paused or failed engine run, tail logs, or open the
+  harness CLI. `--non-interactive` prints the state plus the exact next commands
+  to run. This covers the "walk away to review and make changes, come back
+  later" gap in the previous linear 9-step flow.
+- **Review links** - the review boundaries (drafted PRD, generated team) and the
+  engine summary now emit OSC 8 terminal hyperlinks (Ctrl/Cmd+click to open the
+  file), falling back to plain paths on non-TTY output.
+- **Conditional in-harness command** - when the launcher opens the CLI (or prints
+  next steps) and the agent team already exists, it now queues
+  `/forge-orchestrate-build` (project-orchestrator) instead of
+  `/forge-auto-build`, honouring "in the harness = project-orchestrator". When
+  no team exists yet it keeps queueing `/forge-auto-build` (which generates the
+  team in-chat); headless runs keep using `/forge-auto-build` as the terminal
+  fast-path.
+- **`forge-auto-build` demoted, not removed** - it stays installed but is
+  repositioned as the **terminal/headless fast-path** (launcher-driven,
+  `opencode run --auto`), explicitly *not* the in-harness entry point. The
+  `project-orchestrator` and `workflow-orchestrator` agents now document their
+  in-harness roles and the launcher's `engine-run` / `resume` as the canonical
+  terminal entry.
+- **When to use what:**
+  - New project → `forge-launcher` (terminal).
+  - In the harness, interactive build → `@project-orchestrator`.
+  - Autonomous build → `forge-launcher engine-run` or `@workflow-orchestrator`.
+  - Lost your place → `forge-launcher resume`.
+  - Authoring only → `/forge-build-prd`, `/forge-auto-build-prd`,
+    `/forge-build-agent-team`.
+- New tests: `resume.test.ts` (state detection + next-action branches) and
+  conditional-queue coverage in `launcher.test.ts`; `format.test.ts` covers the
+  OSC 8 `hyperlink` helper. Launcher suite green.
+
+- [ADR-028](adr/028-launcher-entry-resume-and-auto-build-demotion.md): entry-point
+  consolidation, `forge-launcher resume`, and the `forge-auto-build` demotion.
+
+---
+
+## August 2026 - v3.21
+
+### OpenCode harness selects the forge agent natively
+
+`opencode run` supports an `--agent <name>` flag, but the workflow engine's
+opencode adapter never passed it - every task ran under opencode's **default
+agent**, with the forge persona inlined into the prompt. Session lists in
+opencode showed default "build" sessions instead of the forge agents
+(`discovery-engineer`, `qa-engineer`, …).
+
+- **`--agent` when possible.** When the owning agent's file lives under the
+  project's `.opencode/agents/` directory, `OpenCodeAdapter` now passes
+  `--agent <name>` and lets opencode load the persona itself. The persona is no
+  longer inlined into the prompt, so sessions are attributed to the real forge
+  agent and per-task prompts carry no duplicated system text.
+- **Graceful fallback.** For other harness roots (`.agents`, `.claude`,
+  `.github`) opencode cannot discover the agent files, so the adapter keeps the
+  previous inline-persona behavior and passes no `--agent`.
+- Covered by new adapter tests (`opencode-adapter.test.ts`) asserting the
+  `.opencode` vs non-`.opencode` split and the no-name case.
+
+---
+
+## August 2026 - v3.20
+
+### Generated-team frontmatter quoting guard
+
+Auto-drafted teams could break the build: `forge-build-agent-team` generated
+`description:` frontmatter without quotes, and LLM prose routinely contains
+`: ` (colon-space), which YAML treats as a nested mapping. `gray-matter` - used
+by `forge-execution-adapter compile` to parse every agent/skill file - then
+threw, the manifest was never written, and the engine failed with a confusing
+"EXECUTION-MANIFEST.json not found".
+
+- **Always-quoted templates.** `forge-build-agent-team`'s agent and skill
+  templates now mandate double-quoted `description:` values, with a Gotcha
+  explaining the `: ` footgun.
+- **Mechanical gate.** A new dependency-free
+  `forge-build-agent-team/scripts/validate-frontmatter.mjs` scans the harness
+  agents/skills (the same files the adapter parses) and fails deterministically
+  on unquoted `: ` values, `#` inside an unquoted value, missing `name` /
+  `description`, or unterminated frontmatter. Step 7 of the skill now requires
+  it to pass instead of relying on self-report.
+- **Clear compile errors.** `forge-execution-adapter` discovery wraps frontmatter
+  parsing and rethrows `Invalid YAML frontmatter in <path>: <message> - hint:
+  wrap description values in double quotes`, naming the offending file instead
+  of a bare js-yaml error.
+- **Launcher fail-fast.** `forge-launcher engine-run` aborts immediately when the
+  manifest compile exits non-zero (surfacing the compile output) instead of
+  continuing to a misleading "manifest not found".
+- **Tests.** Adapter suite 17, launcher suite 40, engine suite 25 - all green;
+  the validator was exercised against a clean team and a deliberately broken
+  fixture.
+
+---
+
+## August 2026 - v3.19
+
+### Headless PRD quality: the gap check now runs automatically
+
+The manual PRD flow runs a dedicated gap check (Step 2b of the prompt playbook):
+verify every major component has clear acceptance criteria, a defined tech stack,
+non-functional requirements (performance, security, privacy), and implementation
+phases - then fill any gaps. Headless/auto-draft PRD runs skipped that pass:
+
+- **Headless PRD gap check.** `forge-auto-build-prd` (headless) now runs the same
+  gap check on `docs/PRD.md` after drafting and re-invokes `forge-build-prd` in
+  gap-fill mode to fix any gaps, re-verifying before the decomposition check.
+  Direct headless `forge-build-prd` invocations do the same before saving. The
+  launcher's headless PRD command now spells the check out so the printed
+  command documents it.
+- **Decomposition and team validation were already covered.** `forge-decompose-prd`
+  Step 6 (coverage, valid dependency DAG, no cycles) and `forge-build-agent-team`
+  Step 7 (one owner per requirement, no conflicts, naming/frontmatter rules) run
+  unconditionally, headless included - no change needed there.
+- **Responsibility matrix from the team skill.** `forge-build-agent-team` Step 7
+  now writes `docs/agent-responsibility-matrix.md` (ownership by agent, team
+  validation summary, phase execution order) matching the execution-adapter's
+  deterministic matrix, so headless team generation produces the same durable
+  artifact the manual validation prompt and the compile gate do.
+- **Tests.** The launcher suite is now **40** `node --test` cases (new: the
+  headless PRD message documents the gap check). All packages typecheck clean.
+
+### Forge Board: crisp zoom and in-place expanding cards
+
+- **Crisp text at any zoom.** The dashboard bakes all text at **2× resolution**
+  (a shared text-style factory) and bakes the small dot/glow textures at 2×, so
+  zooming in no longer upscales soft rasters. Max zoom is clamped to 2× to match
+  the bake ceiling.
+- **Click a card to expand it in place.** Instead of a side panel, clicking a
+  card expands it on the board (floating above its neighbors) with the task's
+  detail: description, status, owner, phase, duration, timeout, artifact, error,
+  inputs, dependencies, output files, and validation commands. Click the card
+  again, the board, or press Escape to collapse it; it animates open/closed and
+  stays live as the task's status changes mid-run. The DOM side panel was
+  removed.
+
+---
+
+## August 2026 - v3.18
+
+### Workflow-engine keep-alive attach mode
+
+The opencode harness cold-starts a fresh `opencode run` process for **every
+task**, and each one re-boots the project instance: config, AGENTS.md, skills,
+agent files, and every MCP server. On multi-task runs that per-task overhead can
+rival the actual model work. The engine now attaches tasks to a single warm
+`opencode serve` instance instead:
+
+- **`--keep-alive`** (`FORGE_ENGINE_ATTACH=1`): the engine boots one headless
+  `opencode serve` for the run, waits for `GET /global/health`, attaches every
+  task via `opencode run --attach`, and tears the server down when the run
+  finishes (even on error). `--keep-alive-port <n>` pins the port; otherwise a
+  free port is chosen.
+- **`--attach <url>`** (`FORGE_ENGINE_ATTACH_URL`): reuse an already-running
+  server (e.g. one started by the TUI or a long-lived `opencode serve`) with no
+  lifecycle management. `--keep-alive` is ignored (with a warning) for
+  non-opencode harnesses.
+- **Tasks stay isolated.** Each `opencode run --attach` invocation creates a
+  fresh session (no `--continue`/`--session`/`--fork`), so one task's context
+  never leaks into the next - the server only keeps the shared project instance
+  warm.
+- **Server hygiene.** The engine-spawned server is loopback-only and strips any
+  ambient `OPENCODE_SERVER_*` auth so the engine's own health probe and attach
+  calls aren't 401'd. Attaching to a user-managed authenticated server still
+  works (the client auto-sends credentials from the environment).
+- **Robust readiness.** `opencode serve` binds its port before it is fully
+  booted, so a health request in that window can connect but hang; each probe
+  now aborts itself (`AbortSignal.timeout`, 2s) so the readiness loop always
+  advances.
+- **Measurable win.** `run.ts` reports `bootMs` (ms to first output) and the
+  adapter prints `[opencode] task <id>: boot=… total=…` when attaching, so
+  per-task durations in `docs/EXECUTION-AUDIT.jsonl` show the cold-boot cost
+  dropping to ~0 on tasks 2..N.
+- **Launcher passthrough.** `forge-launcher engine-run` accepts
+  `--keep-alive`, `--keep-alive-port <n>`, and `--attach <url>` (with
+  `FORGE_ENGINE_ATTACH` / `FORGE_ENGINE_ATTACH_URL` env equivalents), so the
+  engine can run warm via the launcher too.
+- **Tests.** Engine suite is now **25** `node --test` cases (new: attach-server
+  healthy startup + ambient-auth stripping, and the hung-health-attempt abort);
+  the launcher suite is now **39** (new: engine-run flag forwarding + env
+  defaults, and the auto-draft keep-alive/attach command). All packages
+  typecheck clean.
+
+Related architecture decision:
+
+- [ADR-027](adr/027-workflow-engine-keep-alive-attach.md): keep-alive attach
+  mode - server lifecycle, session isolation, and auth/health-probe handling.
+
+---
+
+## August 2026 - v3.17
+
+### Cross-platform `forge-launcher` fixes for Windows
+
+The `forge-launcher` npm package (`1.0.0-beta.2`) is now reliable on Windows,
+where the interactive TUI and CLI spawning previously misbehaved:
+
+- **Directory picker that works on Windows.** `@clack/prompts`' `path`
+  autocomplete hardcodes `/` and does case-sensitive full-path prefix matching,
+  so on Windows the "Parent directory" step listed nothing and typing a name to
+  search found nothing. The launcher now uses its own cross-platform picker
+  (a clack `select` list over a directory listing): subfolders show immediately,
+  `..` goes up (disabled at a drive root), and a "Type a path…" entry accepts
+  either `\` or `/` case-insensitively. The readline/Tab-completion fallback
+  shares the fix.
+- **No more `spawn opencode ENOENT`.** CLIs installed via `npm install -g`
+  (opencode, copilot, claude) are `.cmd` shims on Windows, which plain
+  `child_process.spawn` cannot launch. Spawning now goes through `cross-spawn`,
+  which resolves shims with correct argument quoting. A failed spawn reports
+  `Failed to run '<cmd>': … - is it installed and on PATH?` instead of a cryptic
+  ENOENT. The terminal auto-launch code also gets correct PATH detection
+  (`;`-delimited, `.exe`/`.cmd`/`.bat`) and Windows Terminal detection via
+  `WT_SESSION`.
+- **Friendlier pre-publish install guidance.** The README and
+  `docs/forge-launcher.md` document a simple local install
+  (`npm install` → `npm pack` → `npm install -g <tarball>`), a dev symlink
+  (`npm link`), and the matching uninstall/unlink cleanup - no temp-workspace
+  ceremony for day-to-day testing.
+- **Update check.** On startup, `forge-launcher` checks the npm registry once a
+  day (honoring the configured registry, so a local Verdaccio works) and prints
+  a notice when a newer version exists - prereleases check the `beta` tag,
+  releases check `latest`. The result is cached in a user-level file, the
+  fetch is timeout-bounded and fails silently offline, and it can be disabled
+  with `--no-update-check` or `FORGE_SKIP_UPDATE_CHECK=1` (also skipped in CI).
+
+### Cross-platform `forge-workflow-engine` fixes
+
+The workflow engine (the separate package bootstrapped into target repos) had
+the same Windows blind spot as the launcher:
+
+- **Engine tasks spawn correctly on Windows.** The engine's per-task harness
+  (`opencode`, `copilot`, and flowforge-kernel adapters) now spawns through
+  `cross-spawn`, resolving npm-installed `.cmd`/`.bat` shims - so `opencode run`
+  tasks no longer fail with `spawn opencode ENOENT` during an engine run.
+- **The Forge Board dashboard renders and connects.** The vendored PixiJS v8
+  build exposes the `PIXI` global, but `app.js` referenced `Pixi`, so the
+  dashboard script aborted with `ReferenceError: Pixi is not defined` before
+  opening the SSE connection. `index.html` now normalizes the global
+  (`window.Pixi = window.PIXI || window.Pixi`), so the board renders and the
+  dashboard connects.
+- **Kanban dashboard theme.** The oak-tree-and-squirrel metaphor is gone. The
+  build now renders as a **kanban board** - renamed **The Forge Board** - one
+  band per phase stacked top-to-bottom (bands **auto-size** so stacked cards
+  never overlap the next band), with tasks as cards flowing left-to-right
+  through **To Do · In Progress · Done · Failed**. Cards are colored by their
+  owning agent (deterministic accent + legend), re-position themselves smoothly
+  as their status changes, and dependency/artifact edges connect them
+  (brightening on hover) with artifact hand-offs shown as dots. Long titles are
+  trimmed to fit the card, context-projection and artifact badges sit on each
+  card, and the HUD counts *done / total* tasks. Pan/zoom (from the
+  board/background), hover tooltips, and the click detail panel all work as
+  before; the fireflies, leaves, and squirrel animations were removed in favor
+  of a calm, legible board.
+- **Cards are name tags with agent faces.** Each task renders as a **name tag**
+  badge: a status-colored header ribbon, an avatar circle holding a
+  procedurally-drawn **agent face** (deterministic skin/hair tinted per agent,
+  with a mouth that reacts - neutral, working, smiling on complete, frowning on
+  failure), the agent's readable name, the task title, and the task id. Agent
+  identity is the ring/border color, so the legend and the cards agree at a
+  glance.
+- **In Progress is live, not stale.** The engine now **persists a task's
+  `running` status when it starts**, so snapshots and dashboard reconnects show
+  in-flight work instead of a stale "pending" (previously the state was only
+  saved after a task finished). A crash that leaves a task "running" is
+  recovered on restart: `runEngine` resets such tasks to `pending` so they run
+  instead of deadlocking.
+- **Tests.** The engine suite is now **23** `node --test` cases (kanban layout
+  replaces the whorl-tree layout, squirrel-name module removed, plus a crash-
+  recovery regression test); the launcher suite remains at **36**.
+
+Related architecture decisions:
+
+- [ADR-026](adr/026-forge-board-kanban-dashboard.md): the Forge Board - kanban
+  redesign, name-tag cards with agent faces, and the running-status
+  persistence/crash-recovery behavior.
+- [ADR-025](adr/025-squirrel-forge-live-workflow-viz.md): the original Squirrel
+  Forge oak-tree visualization (superseded by ADR-026).
+
+---
+
+## August 2026 - v3.16
+
+### Live visualization: The Squirrel Forge
+
+Watching "dark orchestration" used to mean tailing
+`docs/WORKFLOW-STATE.json` or the audit log. The workflow engine now ships a
+live, localhost **PixiJS dashboard** that renders the build as a single oak
+tree which **grows over the course of the run**:
+
+- **`--viz` on `workflow-engine run`.** Starts a dependency-free `node:http`
+  server before the main loop, broadcasts every audit event in-process over
+  **SSE** (a single hook inside `writeAuditEvent` - no engine rework), auto-opens
+  the browser at `http://127.0.0.1:4299` (next free port if busy), and shuts
+  down shortly after the run so the finale renders. Pass `--no-open` to skip
+  auto-opening.
+- **The scene.** Phases are whorls up the trunk; tasks hang from each whorl's
+  branch line. Every agent is a **named squirrel** (deterministic names -
+  `api-engineer` → Tailor, `qa-engineer` → Nutsy - with a seeded hash fallback
+  for arbitrary agents) whose pose maps to status: dozing = pending, scurrying =
+  running, celebration bounce = complete, tumble = failed, faded = skipped. On
+  `artifact.created` an **acorn rolls up the trunk** to the consuming squirrel,
+  and `context.projected` shows a knapsack-arc gauge of token reduction on a
+  busy squirrel. The canopy fills with leaves as tasks complete, browns on
+  failure, and blooms when all squirrels gather and hoist a golden acorn at the
+  end.
+- **Interactions.** Hover for a tooltip, click a squirrel for the task panel
+  (title, owner, status, duration, output files, artifact), drag to pan, scroll
+  to zoom. A snapshot replays on every (re)connect.
+- **`workflow-engine viz` attach mode.** Tails `docs/EXECUTION-AUDIT.jsonl` and
+  serves the same dashboard, so you can watch an **already-running or detached**
+  engine run (e.g. the `forge-auto-build` path) from any terminal.
+- **Launcher pass-through.** `forge-launcher engine-run --viz` (and
+  `--viz-port <n>` / `--no-open`) forwards to the engine; `FORGE_ENGINE_VIZ=1`
+  and `FORGE_ENGINE_VIZ_PORT` set the same defaults.
+- **Zero new runtime dependencies.** PixiJS v8 is vendored
+  (`viz/dashboard/vendor/pixi.min.js`, ~0.8 MB); events stream over SSE via
+  `node:http`; no WebSocket or npm dependency was added to the engine.
+- **Tests.** The engine suite grew to **26** `node --test` cases (new:
+  whorl-tree layout, deterministic squirrel naming, and the viz server's
+  manifest/state/layout endpoints, SSE snapshot + in-process broadcast, tail
+  source, `done`-on-shutdown, and port binding). Launcher suite stays at 16.
+  All packages typecheck clean.
+
+### Live dashboard: TUI toggle, detached-run logging, and connection feedback
+
+- **Viz option in the engine decision.** The launcher's engine configuration
+  now asks whether to **launch the live Squirrel Forge dashboard** during the
+  run (default on, optional port), and the detached run / printed command carry
+  `--viz` / `--viz-port` (`FORGE_ENGINE_VIZ`, `FORGE_ENGINE_VIZ_PORT`).
+- **Detached runs are actually observable.** `spawnDetached` now tees the
+  detached child's stdout+stderr into `docs/engine-run.log` even when only a
+  log file is configured (previously the streams went to `/dev/null`, so a
+  silent failure looked like "it never started"). A no-PRD warning appears
+  before starting detached, since the engine can't compile a manifest without
+  one. The dashboard starts once the engine starts (after manifest prep) and
+  its URL is printed to the log.
+- **The dashboard can't look "unconnected" anymore.** The HUD status line is
+  now driven by the live connection: `connected · run <id> · <status>` on
+  snapshot/state, "connection lost · retrying…" / "disconnected" via an
+  `onerror` handler, and "run finished" on shutdown. Render errors are caught
+  and surfaced instead of silently killing the event handlers, and the scene
+  rebuilds cleanly on reconnect. The engine also starts the dashboard before
+  the pre-run gate so the URL is available while you review the summary.
+
+Related architecture decision:
+
+- [ADR-025](adr/025-squirrel-forge-live-workflow-viz.md): the Squirrel Forge
+  visualization - design, event streaming, the two launch modes, and the
+  zero-dependency PixiJS vendoring.
+
+---
+
+## August 2026 - v3.15
+
+### Feature-based manifest compilation, team validation, and the responsibility matrix
+
+The workflow-engine path previously compiled `docs/EXECUTION-MANIFEST.json`
+**only** from the monolithic `docs/PRD.md`, ignoring the decomposed layout and
+skipping the team-validation / responsibility-matrix steps that the
+prompt-driven path (`forge-orchestrate-build` + `forge-build-agent-team`)
+performs. It now matches the original flow:
+
+- **Feature-based compile mode (auto-detected).** When
+  `docs/PRD.md` + `docs/features/*.md` exist, the adapter reads the
+  vision's `## 14. Features` dependency table, orders features topologically
+  (dependencies first; cycles or a missing table fall back to document order
+  with a warning), and compiles each feature's `## 5. Implementation Tasks` /
+  `### Phase N:` blocks into manifest phases. Phase ids are feature-tagged
+  (e.g. `BUDGETS-2`) so task ids stay globally unique across features. The
+  manifest records `sourceLayout: "features"` and `featureOrder`. Features with
+  no phase headings get a single phase synthesized from their Functional
+  Requirements bullets (warned). Monolithic repos compile exactly as before.
+- **Team-validation gate (always at compile).** Every `compile` checks for
+  unassigned tasks, output files owned by more than one agent, and orphan
+  agents (generated agents that own no task) - mirroring
+  `forge-build-agent-team` Step 7 - surfacing any findings as manifest warnings.
+- **Responsibility matrix restored.** `compile` writes
+  `docs/agent-responsibility-matrix.md` (validation results + an
+  agent × phase × task × outputs table + phase execution order) and records its
+  path on the manifest (`responsibilityMatrixPath`). The workflow engine's
+  pre-run summary prints the source layout, feature order, and matrix path.
+- **TUI engine configuration.** Choosing *run the build now (detached)* or
+  *print the engine command* in the launcher now opens an engine-configuration
+  step (defaults preselected, Esc keeps them): per-task harness, task
+  granularity, parallel-agent count, per-task timeout, and max retries. The
+  `engine-run` command gained `--granularity`, `--max-retries`,
+  `--retry-delay-ms`, and `--heartbeat-ms` (with `FORGE_ENGINE_GRANULARITY`,
+  `FORGE_ENGINE_MAX_RETRIES`, `FORGE_ENGINE_RETRY_DELAY_MS`,
+  `FORGE_ENGINE_HEARTBEAT_MS` env equivalents). Setting `--granularity`
+  recompiles the manifest at that granularity even when one already exists, with
+  a note to clear `docs/WORKFLOW-STATE.json` if a previous run is in progress.
+- **Tests.** Launcher suite is now 16 `node --test` cases (including the
+  engine-config command regression); the execution adapter covers the
+  feature-based compile, ordering, feature-tagged ids, team validation, and
+  responsibility matrix at 17 cases. All packages typecheck clean.
+
+Related architecture decision:
+
+- [ADR-024](adr/024-feature-based-compilation-and-responsibility-matrix.md):
+  feature-based manifest compilation, the deterministic team-validation gate,
+  and the generated responsibility matrix.
+
+---
+
+## August 2026 - v3.14
+
+### Forge launcher as a Node npm package with a TUI
+
+The CLI layer (`forge-launcher`, `bootstrap`, `forge-engine-run`) is now a
+single cross-platform **`forge-launcher` npm package** at
+`scripts/forge-launcher/`, replacing the six dual bash/PowerShell scripts
+(which remain as thin delegating wrappers during the transition, then are
+removed).
+
+- **One codebase, three subcommands.** `forge-launcher` (9-step onboarding),
+  `forge-launcher bootstrap`, and `forge-launcher engine-run` mirror the legacy
+  entry points with an unchanged flags/env-var contract. Run it from anywhere
+  with `npx forge-launcher` - no forge clone needed (templates are bundled as
+  resources).
+- **Interactive TUI.** All prompts use `@clack/prompts` - `select` menus
+  (harness, PRD, engine decision), `confirm`, `text`, `multiline` (Enter-twice
+  submits), and an autocomplete path picker - with a readline fallback for
+  piped/CI input and a clean Ctrl+C exit (code 130).
+- **Spinners instead of heartbeats.** Long-running steps (repo create,
+  bootstrap, push, headless skill runs) show a clack spinner with their output
+  tee'd to a per-run log (`/tmp/forge-launcher-<pid>.log`), printed on failure.
+  The old "still running… Ns" heartbeat and the bash/PSReadLine Tab-completion
+  hacks are gone.
+- **Drift fixed.** The "Launch CLI now?" prompts default to `no` everywhere
+  (the PowerShell variant had drifted to `yes`).
+- **Auto-draft reliability.** Headless skill runs now set `FORGE_HEADLESS=1`
+  for the spawned harness CLI so the forge skills' headless gate fires
+  deterministically, and pass `--dir "<repo>"` to `opencode run` so the skill
+  runs in the **target repository** - `opencode run` resolves its project
+  directory from its parent process, not the child's spawn `cwd`, so without
+  `--dir` the skill ran in the launcher's own directory and reported its input
+  (`docs/IDEA.md`) as missing. The workflow-engine `opencode` adapter passes the
+  same `--dir` for the same reason. If an auto-draft stage finishes without its
+  artifact, the launcher prints the run-log tail, `git status`, and whether the
+  skill file resolved, then offers to run the skill manually. `--debug` /
+  `FORGE_LAUNCHER_DEBUG=1` always shows the log tail, and
+  `FORGE_RUN_WITH=stub` (with `FORGE_STUB_NOOP=1`) runs the auto-draft stages
+  offline against canned artifacts for testing.
+- **Detached engine start fixed.** Choosing "Run the workflow-engine build now
+  (detached)" re-invoked the CLI via `new URL("./cli.ts")`, which resolves to
+  `dist/cli.ts` - a file that does not exist when running the compiled package -
+  so the detached child failed to start with ENOENT and no manifest or
+  `docs/engine-run.log` ever appeared. The entry now resolves to `dist/cli.js`
+  when compiled (and preloads the tsx loader when running from source), and
+  `spawnDetached` writes a "failed to start" line to the log if the spawn fails
+  instead of failing silently.
+- **Tests.** 15 `node --test` cases (bootstrap harness mapping/rewrite/
+  gitignore, path expansion, non-interactive E2E layout + queued-command
+  selection, the `--dir` pinning of headless skill commands, detached engine
+  command resolution, and stub-runner coverage of the auto-draft success and
+  failure paths). `scripts/test-forge-launcher.sh` now delegates to the package
+  suite. Interactive TUI verified end-to-end under a pty.
+
+Related architecture decisions:
+
+- [ADR-023](adr/023-forge-launcher-npm-package.md): the launcher as a Node npm
+  package (supersedes ADR-010's script-first/no-dependency decision).
+
+---
+
+## August 2026 - v3.13
+
+### Finer-grained tasks and a configurable task timeout
+
+Workflow-engine tasks were failing because each harness adapter hardcoded a
+per-task timeout (`10 * 60 * 1000`ms); when a task exceeded it, the child was
+killed and the task failed after retries. Task granularity was also locked to
+one PRD bullet per task, so a large bullet became one long, opaque task. Two
+changes fix this.
+
+- **Fine-grained task decomposition (now the default).** `forge-execution-adapter
+  compile` expands indented sub-bullets into their own chained tasks and splits
+  oversized (multi-sentence) bullets at sentence boundaries. Every task keeps
+  owner matching, the linear dependency chain, and artifact `inputs`/`produces`
+  wiring. Split tasks are reported as compile warnings. `--granularity coarse`
+  reproduces the legacy one-bullet-per-task output exactly, and the manifest
+  records `granularity: "coarse" | "fine"`.
+- **Configurable per-task timeout.** `--task-timeout-ms <ms>` (or
+  `FORGE_ENGINE_TASK_TIMEOUT_MS`) sets the engine-wide budget (default 10 min,
+  unchanged). A task's own `timeoutMs` field in the manifest overrides it. The
+  `opencode`, `copilot`, and `flowforge-kernel` adapters use the effective
+  timeout instead of a hardcoded constant; the `openai` adapter now enforces it
+  with an `AbortController` (previously unbounded). The pre-run summary prints
+  the effective timeout, and `scripts/forge-engine-run.sh` / `.ps1` pass
+  `--task-timeout-ms` / `-TaskTimeoutMs` through.
+- **Tests.** Coverage for sub-bullet expansion, long-bullet splitting, `coarse`
+  regression equivalence, timeout precedence (per-task beats global), and
+  `runCommand` enforcing a custom timeout.
+
+Related architecture decision:
+
+- [ADR-022](adr/022-task-granularity-and-configurable-timeout.md): fine-grained
+  task decomposition and the configurable task timeout.
+
+---
+
+## August 2026 - v3.12
+
+### Parallel task dispatch in the workflow engine
+
+The engine previously drained its ready-task frontier **sequentially** (a
+documented MVP tradeoff, ADR-014). It now executes that frontier in bounded
+**waves**, cutting wall-clock time on multi-agent builds from sum-of-durations to
+the critical path.
+
+- **Wave-based dispatch.** Each wave computes `nextReadyTasks` (unchanged), runs
+  the ready set through a bounded worker pool, and merges the terminal
+  transitions back into state in **manifest order** (deterministic regardless of
+  completion order). State is saved once per wave; newly-unblocked tasks are
+  picked up on the next wave.
+- **Opt-in concurrency.** `--concurrency <n>` (or `FORGE_ENGINE_CONCURRENCY`)
+  caps how many ready tasks run in parallel. Default `1` reproduces the previous
+  sequential behavior exactly. `<= 1` is treated as sequential.
+- **Per-harness safety valve.** `HarnessAdapter` gains a
+  `supportsConcurrency` capability flag; the engine only parallelizes harnesses
+  that opt in. All current adapters do (`openai`, `stub`, `opencode`, `copilot`,
+  `flowforge-kernel`). Repo-editing harnesses still rely on the manifest
+  dependency graph for file isolation.
+- **`flowforge-kernel` de-synchronized.** Converted from blocking `execFileSync`
+  to async `runCommand` (unblocks the event loop, fixes the streaming gap, and
+  promise-caches the `validatePackage` preflight).
+- **Race-safe artifacts.** `ArtifactStore` ID allocation moved to an in-memory
+  reservation counter (seeded from disk), eliminating duplicate artifact IDs
+  under concurrency.
+- **Drain-on-failure.** In-flight tasks in a wave run to completion; failed
+  tasks' dependents never enter a later wave, and the run is marked `failed`
+  exactly as before.
+- **Runner passthrough.** `scripts/forge-engine-run.sh` / `.ps1` accept
+  `--concurrency <n>` / `-Concurrency <n>` (and `FORGE_ENGINE_CONCURRENCY`), so
+  the standalone/launcher engine path can opt into parallelism.
+- **Bootstrap never ships `node_modules`.** The engine `node_modules` directories
+  were accidentally committed to the forge repo and copied into every
+  bootstrapped target by `cp -r` (~88MB each). They are now untracked (ignored),
+  and `bootstrap.sh` / `bootstrap.ps1` exclude `node_modules/` and `dist/` when
+  copying skill templates - the target repo installs engine dependencies on
+  demand via `npm install` at engine-prep time. Only `package.json` /
+  `package-lock.json` / `scripts/` / `SKILL.md` / `tsconfig.json` ship.
+
+Related architecture decision:
+
+- [ADR-021](adr/021-parallel-task-dispatch.md): wave-based parallel dispatch,
+  `supportsConcurrency`, `flowforge-kernel` async conversion, and race-safe
+  artifact IDs.
+
+---
+
+## August 2026 - v3.11
+
+### Workflow-engine heartbeat, OpenCode adapter fix, and clearer engine handoff
+
+- **OpenCode adapter no longer passes `--system-prompt`.** `opencode run` (v1.18+)
+  has no such flag, so the previous invocation printed the CLI usage and failed
+  every task. The agent persona (`agent.rawBody`) is now inlined into the prompt,
+  matching the copilot and openai adapters. Docs (SKILL.md, deep-dive) updated.
+- **Shell-safe child invocation.** The `opencode` and `copilot` adapters now use
+  asynchronous `spawn` (via a shared `harness/run.ts`) instead of `spawnSync`
+  with a shell string. This fixes `/bin/sh` interpolation errors from backticks
+  and `$` in agent bodies, and keeps the event loop free for the heartbeat.
+- **Engine heartbeat.** While a task is executing, the engine prints
+  `…still working on task <id> (@<agent>, Ns elapsed)` every
+  `--heartbeat-ms <ms>` (default 15s; `0` disables, `FORGE_ENGINE_HEARTBEAT_MS`
+  env override) so a quiet terminal doesn't look hung.
+- **`--yes` actually skips the pre-run gate.** The boolean flag was parsed with a
+  value-expecting helper, so it never matched; added a proper `hasFlag` check
+  (alongside `FORGE_ENGINE_YES=1`).
+- **Clearer engine handoff in the launcher.** Choosing "Run the workflow-engine
+  build now (detached)" now sets an engine-started flag, skips the subsequent
+  interactive CLI launch prompt, prints `tail -f` / `Get-Content -Wait` monitor
+  commands, and makes the Step 9 summary reflect the running engine instead of
+  the manual `@workspace /forge-auto-build` steps. Fixed the `Skip -I will…`
+  menu typo. (Bash + PowerShell.)
+- **Artifact store on by default.** `forge-execution-adapter compile` now
+  auto-declares `produces` (and wires `inputs` to the previous task) for every
+  task it emits, so `docs/artifacts/` is populated on every successful run
+  without hand-editing the manifest. Semantic types are still available as a
+  manual override.
+- **New user guide.** Added `docs/workflow-engine.md`, a `forge-launcher.md`-style
+  reference for running, resuming, and troubleshooting the workflow engine.
+- **Skipped tasks no longer deadlock.** The DAG readiness checks now treat a
+  `skipped` task as done (matching `isComplete`), so a skipped task no longer
+  blocks the next phase and aborts the run with "Dependency deadlock detected".
+- **Every compiled task has an owner.** `forge-execution-adapter compile` now
+  falls back to an `*orchestrator`-named agent (else the first agent) when no
+  agent confidently matches a task, instead of leaving it `unassigned`.
+- **Engine unit tests.** Added `forge-workflow-engine/scripts/engine.test.ts`
+  (`node:test`) covering the DAG readiness, deadlock, and completion logic.
+
+---
+
+## August 2026 - v3.10
+
+### Forge launcher: auto-draft flow and friendlier path input
+
+The launcher's interactive and headless paths get three quality-of-life upgrades
+for getting from an idea to a reviewable PRD/team to an engine run.
+
+- **Path prompts support Tab completion and shell shorthand.** Parent-directory,
+  PRD, and research/seed path prompts now use bash readline (`read -e`) on Bash
+  and PSReadLine (`PSConsoleReadLine::ReadLine`) on PowerShell for **Tab
+  completion** to existing files/folders. Typed paths also expand `~`, `~/`,
+  `~user`, and `$VAR` / `${VAR}` (e.g. `$HOME/docs/prd.md`) before validation -
+  so external PRD/seed locations work without typing full absolute paths.
+  Validation now normalises paths (`realpath -m`) and reports *"file not found"*
+  vs. *"not a regular file"* distinctly.
+- **Optional auto-draft flow.** At Step 8, the launcher can run the authoring
+  stages non-interactively with **review boundaries**:
+  - **Idea → PRD:** runs `forge-auto-build-prd` headless (auto-proceed, every
+    unknown recorded as an Open Question), commits `docs: add auto-drafted PRD`,
+    then points you at the result (monolithic or decomposed) for review.
+  - **PRD → team:** runs `forge-build-agent-team` headless, commits
+    `feat: generate auto-drafted agent team`, then points you at the generated
+    agents/skills for review. When a decomposed layout exists, the team is built
+    from `docs/PRD.md` + `docs/features/*.md` (Vision + Features
+    mode); otherwise from `docs/PRD.md`.
+  - **Engine decision:** after the team, choose to run the workflow engine now
+    (detached via `forge-engine-run.sh --repo <repo> --harness <h> --yes`), print
+    the command to run later, or skip and build manually.
+  - Exposed as interactive prompts, pre-answered with `--draft` (`-Draft` on
+    PowerShell), or forced headlessly with `FORGE_AUTO_DRAFT=1`.
+- **Generalised headless runner.** The queued-skill headless path and the
+  auto-draft stages share `headless_cmd_for` / `run_skill_headless` (Bash) and
+  `Get-HeadlessCommandFor` / `Invoke-SkillHeadless` (PowerShell), so `--headless`,
+  `--draft`, and `FORGE_AUTO_DRAFT=1` all print the same `opencode run --auto` /
+  `copilot -p --yolo` command shape under `--dry-run`.
+- **"Still running" indicator.** Long-running steps (bootstrap, headless/auto-draft
+  skill runs, GitHub repo creation, push) show a periodic `still running… Ns`
+  heartbeat (Bash: `run_with_heartbeat`, TTY-only and zombie-safe; PowerShell:
+  indeterminate `Write-Progress`) so users don't think the launcher is hung.
+  Output stays visible, and the interval is configurable via
+  `FORGE_HEARTBEAT_INTERVAL` (default `15`s). Skipped for piped/CI output.
+
+Related architecture decision:
+
+- [ADR-020](adr/020-launcher-auto-draft-and-path-input.md): auto-draft review-boundary flow and path-input handling.
+
+---
+
+## August 2026 - v3.9
+
+### Authoring/execution split, detached engine, and GitHub Copilot harness
+
+The workflow engine no longer runs *inside* the CLI session. Authoring (PRD → team → manifest) stays in the chat; **execution runs detached**, as a standalone process that outlives the terminal and resumes with `run`.
+
+- **Detached engine handoff.** `forge-auto-build`'s engine path (`GO --workflow-engine`) now compiles the manifest, starts the engine with `nohup … >> docs/engine-run.log 2>&1 &`, and polls `docs/WORKFLOW-STATE.json` to completion instead of blocking the session. The build survives the chat and never dies with it.
+- **Standalone runner.** New `scripts/forge-engine-run.sh` / `forge-engine-run.ps1` run the engine from outside any CLI (second terminal, CI, or `nohup`): install deps, compile the manifest if missing, then `npm run workflow-engine -- run --harness <h> --yes`. `--dry-run` prints the sequence.
+- **GitHub Copilot per-task harness.** New `--harness copilot` adapter invokes `copilot -p "<agent context + task prompt>" --yolo` per task (agent contents inlined -`copilot -p` has no `--system-prompt` flag). Env vars: `COPILOT_BIN`, `COPILOT_EXTRA_FLAGS`. Per-task harness selected with `FORGE_ENGINE_HARNESS` (default `opencode`).
+- **Engine dependencies are explicit and never committed.** `bootstrap.sh` / `bootstrap.ps1` ensure the target repo's `.gitignore` excludes `node_modules/` and `docs/engine-run.log`; `forge-auto-build`'s final commit skips `**/node_modules/**`. Docs state the engine needs `node >= 18` + npm at build time.
+
+Related architecture decision:
+
+- [ADR-019](adr/019-authoring-execution-split-and-copilot-harness.md): authoring/execution split, detached engine, Copilot adapter, dependency hygiene.
+
+---
+
+## August 2026 - v3.8
+
+### Automatic PRD quality gates and PRD-prerequisite build execution
+
+Implements CR-001. Two principles: automate deterministic mechanical gates, preserve deliberate human gates.
+
+- **PRD decomposition is automatic.** `forge-build-prd` gains a Step 5 that evaluates the existing criteria (15+ functional requirements or 3+ implementation phases) immediately after the user confirms the PRD. A qualifying PRD automatically invokes `forge-decompose-prd` -no opt-in question. A non-qualifying PRD stays monolithic and the outcome is reported. `forge-decompose-prd` remains independently invokable.
+- **`forge-build-prd` absorbs the PRD review checklist.** The review gate from the retired `forge-bootstrap-project` (Scope & intent, Requirements, Technical choices, Plan, Open items) is now part of `forge-build-prd` Step 4.
+- **`forge-bootstrap-project` is retired** and its skill directory removed. Its idea-confirmation pattern is reused by the new `forge-auto-build-prd` skill; its PRD review checklist is reused by `forge-build-prd`.
+- **New `forge-auto-build-prd` skill.** A meta-skill that confirms an idea, invokes `forge-build-prd` (review + automatic decomposition), verifies the outputs, and stops before team generation - the PRD-creation fast path.
+- **`forge-auto-build` requires an existing PRD.** It no longer generates a PRD or interviews for a one-line idea. Its pre-flight check requires `docs/PRD.md` or the decomposed `docs/PRD.md` + `docs/features/*.md`; if neither exists it stops and directs the user to `forge-auto-build-prd` / `forge-build-prd`. Stages are reduced to team generation → optional model assignment → build execution (`forge-orchestrate-build` or `--workflow-engine`).
+- **Launcher handoff updated.** `forge-launcher` (Bash + PowerShell) queues `forge-auto-build` when a PRD was captured in Step 6, or `forge-auto-build-prd` when it was not, so the build pipeline (agent team + build execution, including the workflow-engine path) runs once the PRD exists.
+- **`detect-harness.md` relocated** from `forge-bootstrap-project/references/` to `forge-build-agent-team/references/`; all referencing skills updated.
+
+Related architecture decision:
+
+- [ADR-018](adr/018-auto-prd-decomposition-and-build-prerequisite.md): automatic decomposition gate, `forge-bootstrap-project` retirement, and the PRD-prerequisite build pipeline.
+
+---
+
+## August 2026 - v3.7
+
+### Artifact Store and Context Projection in `forge-workflow-engine`
+
+- Added a file-based **artifact store** (`templates/skills/forge-workflow-engine/scripts/artifacts.ts`) that persists every meaningful agent output as a compact, typed JSON artifact under `docs/artifacts/<type-prefix>/<artifact-id>.json`.
+- Artifacts are organised into three categories: **decision** (what we are building and why), **work** (what has been done), and **evidence** (how we know it is correct).
+- Added **context projection**: before each task is dispatched, the engine resolves the task's declared `inputs`, fetches the relevant artifacts from the store, and builds a minimal markdown `contextBlock` that replaces the full workflow state in the agent prompt - dramatically reducing per-task token consumption.
+- Extended `ManifestTask` with two optional fields (`inputs` and `produces`) so workflows can declare the artifact hand-off contract directly in `EXECUTION-MANIFEST.json`.
+- Extended the `HarnessAdapter` interface with an optional `contextBlock` parameter; `OpenCodeAdapter` and `OpenAIAdapter` both prepend it when present. Existing adapters that ignore it remain unchanged.
+- Added two new audit event actions: `artifact.created` and `context.projected` (with `sourceTokenEstimate`, `projectedTokenEstimate`, and `reductionPercent` fields).
+- Added [`docs/artifact-store-deep-dive.md`](artifact-store-deep-dive.md): full walkthrough of the pattern, artifact schema, the three-category taxonomy, projection mechanics, and extension points.
+
+Related architecture decision:
+
+- [ADR-017](adr/017-artifact-store-and-context-projection.md): artifact store design, context projection layer, manifest extension, and adapter interface change.
+
+---
+
+## August 2026 - v3.6
+
+### Workforce compiler + optional FlowForge kernel handoff
+
+- Added `forge-workforce-compiler` (`templates/skills/forge-workforce-compiler/`): portable TypeScript tooling that compiles Forge artifacts into `dist/<package-id>.workforce`, writes FlowForge-style `workforce.json` + workflow files, and emits `docs/KERNEL-BRIDGE.json` for task/node mapping and state/audit bridge metadata.
+- Added a FlowForge-compatible schema gate to the compiler (`validate` command and post-compile fail-fast validation).
+- Added optional `flowforge-kernel` harness mode to `forge-workflow-engine` so Stage 4 execution can hand off to FlowForge CLI/runtime while preserving existing `opencode`, `openai`, and `stub` modes.
+- Added [`docs/workforce-compiler-deep-dive.md`](workforce-compiler-deep-dive.md): deep technical walkthrough of compiler packaging, validation gate, and kernel handoff integration.
+- Expanded [`docs/testing-guide.md`](testing-guide.md) with a dedicated manual test path for workforce compilation and FlowForge kernel handoff.
+- Updated docs and prompt playbook with the new compile + kernel execution path.
+
+Related architecture decision:
+
+- [ADR-016](adr/016-forge-workforce-compiler-and-kernel-handoff.md): Forge-as-authoring + kernel-as-execution boundary, interop contract v1, and state/audit bridge policy.
+
+---
+
+## August 2026 - v3.5
+
+### Dynamic Workflow Orchestration via `forge-workflow-engine`
+
+- `forge-workflow-engine` (`templates/skills/forge-workflow-engine/`): runtime layer that reads `docs/EXECUTION-MANIFEST.json`, builds a live task DAG, dispatches agent invocations through a pluggable harness adapter, retries failed tasks, and syncs `docs/PROGRESS.md` and `docs/EXECUTION-AUDIT.jsonl` after every state transition.
+- `workflow-orchestrator` (`templates/agents/workflow-orchestrator.md`): human-facing companion agent that handles pre-run verification, CLI invocation, blocker escalation, and post-run summaries.
+- Three harness adapters ship in MVP: `OpenCodeAdapter` (shells out to `opencode run`), `OpenAIAdapter` (direct API), and `StubAdapter` (synthetic results for testing).
+- Machine-readable run state is stored in `docs/WORKFLOW-STATE.json`; `docs/PROGRESS.md` stays in sync so existing `project-orchestrator`-style resume flows remain compatible.
+- CLI supports `run`, `status`, `replay`, and `pause` operations.
+- `forge-auto-build` now supports either/or build execution: the default Stage 4 path uses `forge-orchestrate-build`, while `GO --workflow-engine` switches Stage 4 to manifest compilation plus autonomous execution with `workflow-engine run --harness opencode`.
+- Auto-deployed by bootstrap scripts; no bootstrap changes required.
+
+Related architecture decision:
+
+- [ADR-014](adr/014-dynamic-workflow-orchestration.md): engine architecture, harness adapter interface, DAG ordering, retry policy, and integration with `forge-auto-build`.
+
+### Manual Testing Guide
+
+- [`docs/testing-guide.md`](testing-guide.md): step-by-step manual verification guide covering (1) skill creation from the team builder - confirming `skill-creator` and `skill-review` are invoked and the quality gate is enforced - and (2) workflow engine dark orchestration - verifying manifest compilation, the pre-run gate, autonomous task dispatch, state sync, resume, retry, and replay. Includes a plain-language explanation of "dark orchestration" (background/autonomous execution, not anything security-related) and a troubleshooting section.
+
+---
+
+## August 2026 - v3.4
+
+### Auto-build input auto-detection and launcher handoff alignment
+
+- `forge-auto-build` Step 0 now supports resolving input from repository context when invoked without an explicit argument.
+- Input resolution flow now prioritizes explicit user input, then checks `docs/PRD.md`, `docs/IDEA.md`, and `IDEA.md`.
+- If multiple candidate sources are present, the skill asks the user to choose one source for that run.
+- Launcher handoff guidance now points to `docs/IDEA.md` as the canonical source.
+
+Related architecture decision:
+
+- [ADR-013](adr/013-auto-build-input-auto-detection.md): Auto-detect input source in `forge-auto-build` Step 0.
+
+---
+
+## August 2026 - v3.3
+
+### Forge Execution Adapter - contract-driven bridge for external runners
+
+- `forge-execution-adapter` (`templates/skills/forge-execution-adapter/`): portable TypeScript tooling that discovers a Forge repo, normalizes harness roots, compiles `docs/EXECUTION-MANIFEST.json`, synchronizes `docs/PROGRESS.md`, and appends `docs/EXECUTION-AUDIT.jsonl` for FlowForge-style backends.
+
+Related architecture decision:
+
+- [ADR-011](adr/011-forge-execution-adapter.md): Adapter architecture, MVP scope, and rationale for keeping the bridge separate from MyForge authoring.
+
+---
+
+## August 2026 - v3.2
+
+### Forge Launcher - interactive CLI for the full lifecycle
+
+- `forge-launcher` (`scripts/forge-launcher.sh` and `scripts/forge-launcher.ps1`): one terminal command guides users from zero to auto-build by creating a repo, selecting a harness, bootstrapping MyForge, capturing project idea context, committing, and optionally spawning the harness CLI.
+- Terminal launch hardening and fallback guidance for CLI harnesses.
+- PRD-first guidance and seed-document recommendations added to launcher flow docs.
+
+Related architecture decisions:
+
+- [ADR-010](adr/010-forge-launcher.md): launcher design rationale and lifecycle structure.
+- [ADR-012](adr/012-launcher-terminal-handoff-and-prd-guidance.md): terminal handoff hardening and PRD-first guidance.
+
+---
+
+## August 2026 - v3.1
+
+### Full auto build, end-to-end pipeline in one command
+
+- `forge-auto-build` meta-skill: one command from one-liner idea (or existing PRD) to fully built, validated, and committed project.
+- Single pre-flight gate followed by autonomous execution: PRD -> agent team -> optional model assignment -> all build phases, with validation and commits after each phase.
+
+Related architecture decision:
+
+- [ADR-009](adr/009-full-auto-build-meta-skill.md): rationale and relationship to `forge-bootstrap-project`.
+
+---
+
+## August 2026 - v3.0
+
+### Skill-Forge integration and framework-agnostic skill creation
+
+- Added three integrated skills from skill-forge: `skill-creator`, `skill-review`, and `skill-review-updater`.
+- `forge-build-agent-team` now invokes `skill-creator` for project-specific skill generation and validation.
+- `skill-review` includes portable TypeScript tooling and CI providers (GitHub Actions, GitLab CI, Azure DevOps).
+- Removed `forge-build-agent-framework-solution` to keep the forge framework-agnostic.
+
+Related architecture decision:
+
+- [ADR-008](adr/008-skill-forge-integration.md): integration rationale and expected outcomes.
+
+---
+
+## June 2026 - v2
+
+### Harness-agnostic structure, leaner skills, and built-in best practices
+
+- `.agents/` migration: default bootstrap now targets `.agents/` for harness portability.
+- Progressive disclosure adoption: forge skills moved large details to `references/` content.
+- Added `## Gotchas` and `## Validation` sections to forge skills and generated skills.
+- Added `forge-optimize-skills` for skill quality audits and improvement guidance.
+
+Related architecture decisions:
+
+- [ADR-006](adr/006-agents-directory-migration.md)
+- [ADR-007](adr/007-skill-best-practices-adoption.md)
+
+For measured efficiency changes and before/after detail:
+
+- [docs/research/forge-optimization-value.md](research/forge-optimization-value.md)

@@ -1,0 +1,222 @@
+// ─── Typed API client for the Forge Console server ───────────────────────────
+
+import type {
+  Actions,
+  ArtifactIndex,
+  ArtifactMeta,
+  AuditEvent,
+  ControlAction,
+  ControlResult,
+  CreateProjectRequest,
+  CreateProjectResult,
+  DocsIndex,
+  ExecutionMode,
+  ExecutionManifest,
+  FileContent,
+  LaunchCliResult,
+  LogsResponse,
+  OpenResult,
+  ProjectsIndex,
+  RederiveProgress,
+  RederiveStepId,
+  RemoveProjectsResult,
+  SelectionScope,
+  SelectResult,
+  Summary,
+  TaskRow,
+  TeamIndex,
+  ModelInventory,
+  AuthoringConfig,
+  AuthoringInventory,
+  AuthoringSessionTarget,
+  TimeoutUpdateResult,
+  UploadResult,
+  WorkflowState,
+} from "./types.js";
+
+function token(): string {
+  const meta = document.querySelector<HTMLMetaElement>('meta[name="forge-token"]');
+  return meta?.content ?? "";
+}
+
+async function request<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    // The console API returns structured errors. Preserve their message so a
+    // failed bootstrap (or any other action) is actionable in the UI instead
+    // of collapsing everything into "400 Bad Request".
+    let detail = "";
+    try {
+      const body = await res.clone().json() as { message?: unknown };
+      if (typeof body.message === "string") detail = `: ${body.message}`;
+    } catch {
+      // Some proxy/server failures are plain text; the status is still useful.
+    }
+    throw new Error(`request failed: ${res.status} ${res.statusText}${detail}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+function post<T>(url: string, body: unknown): Promise<T> {
+  return request<T>(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Forge-Token": token() },
+    body: JSON.stringify(body),
+  });
+}
+
+export const api = {
+  summary(): Promise<Summary | null> {
+    return request<Summary | null>("/api/summary");
+  },
+  tasks(): Promise<TaskRow[]> {
+    return request<TaskRow[]>("/api/tasks");
+  },
+  audit(): Promise<AuditEvent[]> {
+    return request<AuditEvent[]>("/api/audit");
+  },
+  logs(lines = 400): Promise<LogsResponse> {
+    return request<LogsResponse>(`/api/logs?lines=${lines}`);
+  },
+  artifacts(): Promise<ArtifactIndex> {
+    return request<ArtifactIndex>("/api/artifacts");
+  },
+  artifact(id: string): Promise<unknown> {
+    return request<unknown>(`/api/artifacts/${encodeURIComponent(id)}`);
+  },
+  artifactContent(relPath: string): Promise<FileContent> {
+    return request<FileContent>(`/api/artifact/content?path=${encodeURIComponent(relPath)}`);
+  },
+  docs(): Promise<DocsIndex> {
+    return request<DocsIndex>("/api/docs");
+  },
+  docContent(relPath: string): Promise<FileContent> {
+    return request<FileContent>(`/api/docs/content?path=${encodeURIComponent(relPath)}`);
+  },
+  team(): Promise<TeamIndex> {
+    return request<TeamIndex>("/api/team");
+  },
+  modelInventory(): Promise<ModelInventory> {
+    return request<ModelInventory>("/api/model-inventory");
+  },
+  authoringConfig(): Promise<AuthoringConfig> {
+    return request<AuthoringConfig>("/api/authoring-config");
+  },
+  saveAuthoringConfig(config: AuthoringConfig): Promise<{ ok: boolean; config: AuthoringConfig; message: string }> {
+    return post("/api/authoring-config", config);
+  },
+  authoringInventory(runner?: string): Promise<AuthoringInventory> {
+    const query = runner ? `?runner=${encodeURIComponent(runner)}` : "";
+    return request<AuthoringInventory>(`/api/authoring-inventory${query}`);
+  },
+  refreshAuthoringInventory(runner: string): Promise<AuthoringInventory> {
+    return post<AuthoringInventory>("/api/authoring-inventory/refresh", { runner });
+  },
+  setModelOverride(agent: string, primary?: string, fallback?: string): Promise<{ ok: boolean; message: string }> {
+    return post("/api/model-plan/override", { agent, primary, fallback });
+  },
+  launchModelTerminal(provider: "opencode" | "copilot" | "claude", message: string): Promise<LaunchCliResult> {
+    return post<LaunchCliResult>("/api/model-plan/terminal", { provider, message });
+  },
+  startAuthoringSession(target: AuthoringSessionTarget, prompt?: string): Promise<LaunchCliResult> {
+    return post<LaunchCliResult>("/api/authoring/session", { target, prompt });
+  },
+  validateAuthoring(): Promise<{ ok: boolean; message: string }> {
+    return post<{ ok: boolean; message: string }>("/api/authoring/validate", {});
+  },
+  teamContent(relPath: string): Promise<FileContent> {
+    return request<FileContent>(`/api/team/content?path=${encodeURIComponent(relPath)}`);
+  },
+  guideMarkdown(): Promise<string> {
+    return fetch("/guide.md").then((res) => {
+      if (!res.ok) throw new Error(`request failed: ${res.status} ${res.statusText}`);
+      return res.text();
+    });
+  },
+  actions(): Promise<Actions> {
+    return request<Actions>("/api/actions");
+  },
+  projects(): Promise<ProjectsIndex> {
+    return request<ProjectsIndex>("/api/projects");
+  },
+  selectRepo(path: string): Promise<SelectResult> {
+    return post<SelectResult>("/api/projects/select", { path });
+  },
+  addRepo(path: string): Promise<SelectResult> {
+    return post<SelectResult>("/api/projects/add", { path });
+  },
+  removeProjects(paths: string[]): Promise<RemoveProjectsResult> {
+    return post<RemoveProjectsResult>("/api/projects/remove", { paths });
+  },
+  createProject(req: CreateProjectRequest): Promise<CreateProjectResult> {
+    return post<CreateProjectResult>("/api/projects/create", req);
+  },
+  upload(name: string, content: string): Promise<UploadResult> {
+    return post<UploadResult>("/api/uploads", { name, content });
+  },
+  setAutoCommit(enabled: boolean): Promise<{ ok: boolean; message: string }> {
+    return post<{ ok: boolean; message: string }>("/api/engine-config", { autoCommit: enabled });
+  },
+  setLogHarnessActivity(enabled: boolean): Promise<{ ok: boolean; message: string }> {
+    return post<{ ok: boolean; message: string }>("/api/engine-config", { logHarnessActivity: enabled });
+  },
+  setConcurrency(value: number): Promise<{ ok: boolean; message: string }> {
+    return post<{ ok: boolean; message: string }>("/api/engine-config", { concurrency: value });
+  },
+  setExecutionMode(mode: ExecutionMode): Promise<{ ok: boolean; message: string }> {
+    return post<{ ok: boolean; message: string }>("/api/engine-config", { executionMode: mode });
+  },
+  setTaskSelection(selectionScope: SelectionScope | null, selectedTaskIds: string[]): Promise<{ ok: boolean; message: string }> {
+    return post<{ ok: boolean; message: string }>("/api/engine-config", { selectionScope, selectedTaskIds });
+  },
+  launchCli(): Promise<LaunchCliResult> {
+    return post<LaunchCliResult>("/api/launch-cli", {});
+  },
+  control(action: ControlAction, taskId?: string, from?: RederiveStepId): Promise<ControlResult> {
+    return post<ControlResult>("/api/control", { action, taskId, from });
+  },
+  /**
+   * Regenerates the team, project skills, and manifest as one chain. `from`
+   * restarts at a named step, which is how a failed chain is retried.
+   */
+  rederive(from?: RederiveStepId): Promise<ControlResult> {
+    return post<ControlResult>("/api/control", { action: "rederive", from });
+  },
+  bootstrap(req: { path: string; harness?: string; force?: boolean; initGit?: boolean; runner?: string }): Promise<ControlResult> {
+    return post<ControlResult>("/api/projects/bootstrap", req);
+  },
+  featurePrd(prompt: string): Promise<ControlResult> {
+    return post<ControlResult>("/api/control", { action: "feature-prd", prompt });
+  },
+  featureIncrement(prompt: string, run = false): Promise<ControlResult> {
+    return post<ControlResult>("/api/control", { action: "feature-increment", prompt, run });
+  },
+  continueFeatureIncrement(): Promise<ControlResult> {
+    return post<ControlResult>("/api/control", { action: "feature-increment-continue" });
+  },
+  setTaskTimeout(taskId: string, timeoutMs: number): Promise<TimeoutUpdateResult> {
+    return post<TimeoutUpdateResult>("/api/tasks/timeout", { taskId, timeoutMs });
+  },
+  setAllTaskTimeouts(timeoutMs: number): Promise<TimeoutUpdateResult> {
+    return post<TimeoutUpdateResult>("/api/tasks/timeout", { timeoutMs });
+  },
+  resetChangedTasks(): Promise<{ ok: boolean; message: string; affected?: number; taskIds?: string[] }> {
+    return post("/api/tasks/reset-changed", {});
+  },
+  authoringEvents(): Promise<Record<string, unknown>[]> { return request<Record<string, unknown>[]>("/api/authoring-events"); },
+  rederiveState(): Promise<RederiveProgress | null> { return request<RederiveProgress | null>("/api/rederive"); },
+  openExternal(path: string): Promise<OpenResult> {
+    return post<OpenResult>("/api/open", { path });
+  },
+  manifest(): Promise<ExecutionManifest | null> {
+    return request<ExecutionManifest | null>("/api/manifest");
+  },
+  state(): Promise<WorkflowState | null> {
+    return request<WorkflowState | null>("/api/state");
+  },
+  completeHumanReview(taskId: string, reviewer: string, notes: string, resume = true): Promise<ControlResult & { reviewFile?: string; resumed?: boolean }> {
+    return post("/api/tasks/human-review", { taskId, reviewer, notes, resume });
+  },
+};
+
+export type { ArtifactMeta };

@@ -1,0 +1,266 @@
+import fs from "node:fs";
+import path from "node:path";
+import { ok, out, runCommand, warn } from "./format.ts";
+import { prompt, promptYesNo, prompts } from "./prompts.ts";
+import { resolveResources } from "./resources.ts";
+import { isRunnerChoice, loadAuthoringConfig, saveAuthoringConfig } from "./authoring-config.ts";
+import type { AuthoringRunnerChoice } from "./authoring-config.ts";
+
+export type Harness = "agents" | "github" | "claude" | "opencode";
+
+/** Repository-relative path of the file the runner preference is saved in. */
+const AUTHORING_CONFIG_RELATIVE = path.join("docs", "authoring-config.json");
+
+export const HARNESS_ROOTS: Record<Harness, string> = {
+  agents: ".agents",
+  github: ".github",
+  claude: ".claude",
+  opencode: ".opencode",
+};
+
+export interface BootstrapOptions {
+  targetDir: string;
+  harness?: Harness;
+  force?: boolean;
+  initGit?: boolean;
+  nonInteractive?: boolean;
+  /**
+   * Authoring runner to record in the bootstrapped repository. Omitted means
+   * the repository keeps inheriting the runner from its harness.
+   */
+  runner?: AuthoringRunnerChoice;
+  /** When set, all progress output is appended here instead of stdout. */
+  logFile?: string;
+}
+
+/** Canonical log consumed by the Console for work performed in a repository. */
+export function repositoryLogFile(repoDir: string): string {
+  return path.join(path.resolve(repoDir), "docs", "engine-run.log");
+}
+
+function makeLogger(logFile?: string) {
+  if (!logFile) {
+    return {
+      out: (l: string) => out(l),
+      ok: (l: string) => ok(l),
+      warn: (l: string) => warn(l),
+      end: () => {},
+    };
+  }
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  return {
+    // Synchronous appends keep short-lived bootstrap jobs observable as soon
+    // as they finish; the Console poller can read each line immediately.
+    out: (l: string) => fs.appendFileSync(logFile, l + "\n"),
+    ok: (l: string) => fs.appendFileSync(logFile, `✔  ${l}\n`),
+    warn: (l: string) => fs.appendFileSync(logFile, `⚠  ${l}\n`),
+    end: () => {},
+  };
+}
+
+/** Recursively copies a tree, excluding node_modules and dist, applying an optional rewrite. */
+function copyTree(srcDir: string, destDir: string, rewrite?: { from: string; to: string }): void {
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name === "dist") continue;
+    const src = path.join(srcDir, entry.name);
+    const dest = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copyTree(src, dest, rewrite);
+    } else if (entry.isFile()) {
+      fs.copyFileSync(src, dest);
+      if (rewrite && entry.name.endsWith(".md")) {
+        let text = fs.readFileSync(dest, "utf8");
+        text = text.split(rewrite.from).join(rewrite.to);
+        fs.writeFileSync(dest, text);
+      }
+    }
+  }
+}
+
+function ensureGitignore(targetDir: string): void {
+  const gi = path.join(targetDir, ".gitignore");
+  const entries = ["node_modules/", "docs/engine-run.log", "docs/artifacts/"];
+  let content = "";
+  if (fs.existsSync(gi)) content = fs.readFileSync(gi, "utf8");
+  if (content && !content.endsWith("\n")) content += "\n";
+  const missing = entries.filter((e) => !content.split("\n").includes(e));
+  if (missing.length) {
+    content += missing.join("\n") + "\n";
+    fs.writeFileSync(gi, content);
+    out(`  Updated:  ${gi} (${missing.join(", ")})`);
+  } else {
+    out(`  OK:       ${gi} already contains all required ignore entries`);
+  }
+}
+
+export async function bootstrap(opts: BootstrapOptions): Promise<number> {
+  const harness = opts.harness ?? "agents";
+  const root = HARNESS_ROOTS[harness];
+  const force = opts.force ?? false;
+
+  const targetDir = path.resolve(opts.targetDir);
+  if (!fs.existsSync(targetDir) || !fs.statSync(targetDir).isDirectory()) {
+    throw new Error(`Error: Target directory does not exist: ${targetDir}`);
+  }
+  if (!fs.existsSync(path.join(targetDir, ".git"))) {
+    if (!opts.initGit) throw new Error(`Error: Target directory is not a git repository: ${targetDir} (use --init-git to initialize it)`);
+    const result = await runCommand("git", ["init"], { cwd: targetDir, capture: true });
+    if (result.code !== 0) throw new Error(`Error: git init failed: ${result.stderr || result.stdout}`);
+  }
+
+  const { templatesDir, docsDir, usingBundled } = resolveResources();
+  // Keep bootstrap output beside the artifacts it is preparing. This also makes
+  // it visible to the Console's existing docs/engine-run.log poller.
+  const log = makeLogger(opts.logFile ?? repositoryLogFile(targetDir));
+
+  try {
+    if (usingBundled) log.out("  (using bundled resources)");
+
+    log.out("");
+    log.out(`Target:  ${targetDir}`);
+    log.out(`Harness: ${harness} (${root})`);
+    log.out("");
+
+    const agentsDir = path.join(targetDir, root, "agents");
+    const skillsDir = path.join(targetDir, root, "skills");
+    const docsTarget = path.join(targetDir, "docs");
+
+    const rewrite = harness === "agents" ? undefined : { from: ".agents/", to: `${root}/` };
+
+    // --- Agents ---
+    log.out(`Agents (${agentsDir}):`);
+    const agentTemplates = fs.existsSync(path.join(templatesDir, "agents"))
+      ? fs.readdirSync(path.join(templatesDir, "agents")).filter((f) => f.endsWith(".md"))
+      : [];
+    for (const agent of agentTemplates) {
+      const dest = path.join(agentsDir, agent);
+      if (fs.existsSync(dest) && !force) {
+        const answer = await promptYesNo(`  Overwrite existing ${agent}?`, "n");
+        if (answer === "n") continue;
+      }
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      let text = fs.readFileSync(path.join(templatesDir, "agents", agent), "utf8");
+      if (rewrite) text = text.split(rewrite.from).join(rewrite.to);
+      fs.writeFileSync(dest, text);
+      log.ok(`Copied:  ${dest}`);
+    }
+
+    // --- Skills ---
+    log.out("");
+    log.out(`Skills (${skillsDir}):`);
+    const skillDirs = fs.existsSync(path.join(templatesDir, "skills"))
+      ? fs.readdirSync(path.join(templatesDir, "skills"), { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name)
+          .sort()
+      : [];
+    for (const skillName of skillDirs) {
+      const srcDir = path.join(templatesDir, "skills", skillName);
+      const destDir = path.join(skillsDir, skillName);
+      if (fs.existsSync(destDir) && !force) {
+        const answer = await promptYesNo(`  Overwrite existing skill directory '${skillName}'?`, "n");
+        if (answer === "n") {
+          log.out(`  Skipped: ${skillName}/`);
+          continue;
+        }
+      }
+      fs.rmSync(destDir, { recursive: true, force: true });
+      copyTree(srcDir, destDir, rewrite);
+      log.ok(`Copied:  ${skillName}/`);
+    }
+
+    // --- Prompt playbook ---
+    log.out("");
+    log.out(`Docs (${docsTarget}):`);
+    const playbookSrc = path.join(docsDir, "prompt-playbook.md");
+    if (fs.existsSync(playbookSrc)) {
+      const dest = path.join(docsTarget, "prompt-playbook.md");
+      if (fs.existsSync(dest) && !force) {
+        const answer = await promptYesNo("  Overwrite existing prompt-playbook.md?", "n");
+        if (answer !== "n") {
+          fs.mkdirSync(docsTarget, { recursive: true });
+          fs.copyFileSync(playbookSrc, dest);
+          log.ok(`Copied:  ${dest}`);
+        }
+      } else {
+        fs.mkdirSync(docsTarget, { recursive: true });
+        fs.copyFileSync(playbookSrc, dest);
+        log.ok(`Copied:  ${dest}`);
+      }
+    }
+
+    // --- Gitignore hygiene ---
+    log.out("");
+    log.out(`Gitignore (${path.join(targetDir, ".gitignore")}):`);
+    ensureGitignore(targetDir);
+
+    // --- Authoring runner ---
+    // Written last so a failed copy never leaves a runner preference behind in
+    // a repository that was not actually bootstrapped.
+    if (opts.runner) {
+      log.out("");
+      // The copying above already succeeded, so a config this repository was
+      // carrying before the bootstrap must not turn a done job into a failure.
+      try {
+        const config = loadAuthoringConfig(targetDir);
+        saveAuthoringConfig(targetDir, { ...config, runner: opts.runner });
+        log.ok(`Authoring runner: ${opts.runner} (${AUTHORING_CONFIG_RELATIVE})`);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        log.warn(`Authoring runner '${opts.runner}' was not saved: ${AUTHORING_CONFIG_RELATIVE} could not be read or written (${reason}). Fix that file and re-run, or set the runner from the Console.`);
+      }
+    }
+
+    log.out("");
+    log.out("Bootstrap complete.");
+    log.out(`Commit ${root}/agents/ (.md), ${root}/skills/, and docs/ to your repository.`);
+    return 0;
+  } finally {
+    log.end();
+  }
+}
+
+export async function bootstrapCli(args: string[]): Promise<number> {
+  let targetDir = "";
+  let harness: Harness = "agents";
+  let force = false;
+  let initGit = false;
+  let runner: AuthoringRunnerChoice | undefined;
+  let i = 0;
+  for (; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--force") force = true;
+    else if (a === "--init-git") initGit = true;
+    else if (a === "--harness") {
+      const v = args[++i];
+      if (!v || !(v in HARNESS_ROOTS)) {
+        throw new Error(`Error: Unknown harness '${v}'. Valid: agents, github, claude, opencode`);
+      }
+      harness = v as Harness;
+    } else if (a === "--runner") {
+      // Rejected before any copying so an unusable runner never half-bootstraps.
+      // Same wording and same accepted values as the shared parse in `cli.ts`,
+      // which is what a real command line hits first; `inherit` reaches here as
+      // the absence of a preference, leaving the repository on the harness rule.
+      const v = args[++i];
+      if (!v || v.startsWith("--")) throw new Error("--runner requires copilot, opencode, claude, or inherit.");
+      const trimmed = v.trim();
+      if (trimmed === "inherit") runner = undefined;
+      else if (!isRunnerChoice(trimmed)) {
+        throw new Error(`Unsupported authoring runner: ${v}. Use copilot, opencode, claude, or inherit.`);
+      } else runner = trimmed;
+    } else if (a.startsWith("--")) {
+      throw new Error(`Unknown option: ${a}`);
+    } else if (!targetDir) {
+      targetDir = a;
+    }
+  }
+  if (!targetDir) {
+    if (prompts.nonInteractive) {
+      throw new Error("bootstrap: TARGET_DIR is required in non-interactive mode");
+    }
+    targetDir = await prompt("Target repository path [.]", ".");
+  }
+  return bootstrap({ targetDir: targetDir || ".", harness, force, initGit, nonInteractive: prompts.nonInteractive, ...(runner ? { runner } : {}) });
+}

@@ -1,0 +1,644 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
+import { test, type TestContext } from "node:test";
+import { get } from "node:http";
+import { startConsoleServer } from "./console/server.ts";
+import { RunController, type SpawnOptions } from "./console/control.ts";
+import { inferEngineHarness, repoPaths } from "./console/paths.ts";
+import { actions, setModelOverride, summary, tasks } from "./console/repo.ts";
+import { humanReviewGate } from "./console/dashboard/views/tasks.ts";
+import type { TaskRow } from "./console/types.ts";
+import { resolveResources } from "./resources.ts";
+import { currentJobForRepo } from "./console/jobs.ts";
+import { authoringConfigPath, saveAuthoringConfig } from "./authoring-config.ts";
+import { authoringReadiness, authoringStageIsCurrent, fingerprintFiles, saveAuthoringStage, stageInputFingerprint } from "./authoring-state.ts";
+import { writeFeatureFixture } from "./feature-fixture.ts";
+
+let port = 46700;
+function fixture(t: TestContext, harnessRoot = ".github"): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-authoring-console-"));
+  const old = process.env.FORGE_HOME;
+  process.env.FORGE_HOME = path.join(root, "registry");
+  t.after(() => {
+    if (old === undefined) delete process.env.FORGE_HOME; else process.env.FORGE_HOME = old;
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  fs.mkdirSync(path.join(root, ".git"));
+  fs.mkdirSync(path.join(root, "docs"));
+  fs.mkdirSync(path.join(root, harnessRoot, "agents"), { recursive: true });
+  fs.writeFileSync(path.join(root, harnessRoot, "agents", "worker.md"), '---\nname: worker\ndescription: "Worker"\n---\n');
+  writeFeatureFixture(root);
+  return root;
+}
+
+test("authoring settings API is token-gated, validates shape, and clears to inheritance", async (t) => {
+  const root = fixture(t);
+  const server = await startConsoleServer({ repoRoot: root, port: port++, open: false });
+  t.after(() => server.stop());
+  const url = `${server.url}/api/authoring-config`;
+  assert.deepEqual(await fetch(url).then((r) => r.json()), { version: 1, models: {} });
+  assert.equal((await fetch(url, { method: "POST", body: "{}" })).status, 403);
+  const post = (body: unknown) => fetch(url, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Forge-Token": server.token }, body: JSON.stringify(body),
+  });
+  assert.equal((await post({ version: 1, models: { unknown: "model" } })).status, 400);
+  assert.equal((await post({ version: 1, models: { prd: "one two" } })).status, 400);
+  assert.equal((await post({ version: 1, models: {}, runner: "gpt" })).status, 400);
+  assert.equal((await post({ version: 1, models: {}, runner: "claude" })).status, 200);
+  assert.equal(JSON.parse(fs.readFileSync(authoringConfigPath(root), "utf8")).runner, "claude");
+  assert.deepEqual(await fetch(url).then((r) => r.json()), { version: 1, models: {}, runner: "claude" });
+  const config = { version: 1, models: { prd: "gpt-6-astra", team: "gpt-5.6-luna" } };
+  assert.equal((await post(config)).status, 200);
+  assert.deepEqual(JSON.parse(fs.readFileSync(authoringConfigPath(root), "utf8")), config);
+  assert.equal((await post({ version: 1, models: {} })).status, 200);
+  assert.deepEqual(await fetch(url).then((r) => r.json()), { version: 1, models: {} });
+});
+
+test("human-review Console action records evidence and rejects non-review tasks", async (t) => {
+  const root = fixture(t);
+  const engineScriptsDir = path.join(root, "node_modules", "forge-test", "resources", "templates", "skills", "forge-workflow-engine", "scripts");
+  const sourceTemplates = resolveResources().templatesDir;
+  fs.mkdirSync(path.dirname(engineScriptsDir), { recursive: true });
+  fs.cpSync(path.join(sourceTemplates, "skills", "forge-workflow-engine", "scripts"), engineScriptsDir, { recursive: true });
+  fs.cpSync(
+    path.join(sourceTemplates, "skills", "forge-execution-adapter", "scripts"),
+    path.join(engineScriptsDir, "..", "..", "forge-execution-adapter", "scripts"),
+    { recursive: true },
+  );
+  fs.writeFileSync(path.join(root, "node_modules", "forge-test", "package.json"), '{"type":"module"}\n');
+  const manifestPath = path.join(root, "docs", "EXECUTION-MANIFEST.json");
+  const implementation = {
+    id: "REVIEW-1",
+    title: "Review task",
+    description: "Review the fixture",
+    ownerAgent: "worker",
+    dependencies: [],
+    expectedOutputs: ["result.txt"],
+    validationCommands: ["true"],
+    approvalRequired: false,
+  };
+  const manifest = {
+    version: "1",
+    generatedAt: new Date().toISOString(),
+    repoRoot: root,
+    harnessRoot: ".github",
+    prdPath: "docs/PRD.md",
+    progressPath: "docs/PROGRESS.md",
+    auditPath: "docs/EXECUTION-AUDIT.jsonl",
+    validationCommands: [],
+    approvalGates: { preflight: false, betweenPhases: false },
+    phases: [{ id: "P1", title: "Review", description: "Review", ownerAgents: ["worker"], dependencies: [], approvalRequired: false, tasks: [implementation] }],
+    warnings: [],
+  };
+  implementation.contract = { version: 1, kind: "implementation", requirements: ["Check it"], acceptanceCriteria: ["It is checked"], constraints: [], references: ["docs/PRD.md"] };
+  delete implementation.ownerAgent;
+  implementation.expectedOutputs = [];
+  implementation.validationCommands = [];
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  const server = await startConsoleServer({ repoRoot: root, port: port++, open: false, engineScriptsDir });
+  t.after(() => server.stop());
+  const post = (body: unknown) => fetch(`${server.url}/api/tasks/human-review`, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Forge-Token": server.token }, body: JSON.stringify(body),
+  });
+  assert.equal((await post({ taskId: implementation.id, reviewer: "Reviewer", notes: "Approved" })).status, 400);
+  implementation.contract = { ...implementation.contract, kind: "human-review", reviewFile: "docs/reviews/review.json" };
+  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+  const tooShort = await post({ taskId: implementation.id, reviewer: "Reviewer", notes: "Done", resume: false });
+  assert.equal(tooShort.status, 400);
+  assert.match((await tooShort.json()).message, /at least 40 characters/);
+  const response = await post({ taskId: implementation.id, reviewer: "Reviewer", notes: "Exercised the fixture end to end and every acceptance criterion held.", resume: false });
+  if (response.status !== 200) assert.fail(await response.text());
+  assert.equal(response.status, 200);
+  assert.equal(fs.existsSync(path.join(root, "docs", "reviews", `${implementation.id}-console-review.md`)), true);
+  assert.equal(fs.existsSync(path.join(root, "docs", "reviews", "review.json")), true);
+});
+
+test("human-review rows withhold the approval action until their prerequisites are done", (t) => {
+  const root = fixture(t);
+  const reviewManifest = () => {
+    const review = (id: string, dependencies: string[]) => ({
+      id, title: id, description: id, dependencies, expectedOutputs: [], validationCommands: [], approvalRequired: false,
+      contract: {
+        version: 1, kind: "human-review" as const, requirements: ["r"], acceptanceCriteria: ["a"], constraints: [],
+        references: ["docs/PRD.md"], reviewFile: `docs/reviews/${id}.json`,
+      },
+    });
+    const impl = (id: string, dependencies: string[]) => ({
+      id, title: id, description: id, dependencies, expectedOutputs: [], validationCommands: [], approvalRequired: false,
+      ownerAgent: "worker",
+      contract: { version: 1, kind: "implementation" as const, requirements: ["r"], acceptanceCriteria: ["a"], constraints: [], references: ["docs/PRD.md"] },
+    });
+    return {
+      version: "1", generatedAt: new Date().toISOString(), repoRoot: root, harnessRoot: ".github", prdPath: "docs/PRD.md",
+      progressPath: "docs/PROGRESS.md", auditPath: "docs/EXECUTION-AUDIT.jsonl", validationCommands: [],
+      approvalGates: { preflight: false, betweenPhases: false }, warnings: [],
+      phases: [
+        { id: "P1", title: "P1", description: "P1", ownerAgents: ["worker"], dependencies: [], approvalRequired: false, tasks: [impl("API-1", [])] },
+        { id: "P2", title: "P2", description: "P2", ownerAgents: ["worker"], dependencies: ["P1"], approvalRequired: false, tasks: [review("REVIEW-1", [])] },
+      ],
+    };
+  };
+  const writeState = (apiStatus: "pending" | "complete") => fs.writeFileSync(
+    path.join(root, "docs", "WORKFLOW-STATE.json"),
+    JSON.stringify({
+      runId: "run", startedAt: "", lastUpdatedAt: "", manifestPath: "", manifestVersion: "1", harness: "stub",
+      status: "running", blockers: [],
+      tasks: {
+        "API-1": { taskId: "API-1", status: apiStatus, attempt: apiStatus === "complete" ? 1 : 0, outputFiles: [] },
+        "REVIEW-1": { taskId: "REVIEW-1", status: "pending", attempt: 0, outputFiles: [] },
+      },
+    }),
+  );
+  fs.writeFileSync(path.join(root, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify(reviewManifest()));
+
+  // A phase dependency must count, not just a direct task dependency: the engine
+  // gates dispatch on both, so the row must reflect both.
+  writeState("pending");
+  const blocked = tasks(repoPaths(root)).find((row) => row.id === "REVIEW-1")!;
+  assert.deepEqual(blocked.unmetPrerequisites, ["API-1"]);
+  assert.deepEqual(humanReviewGate(blocked), { state: "blocked", unmet: ["API-1"] });
+
+  writeState("complete");
+  const ready = tasks(repoPaths(root)).find((row) => row.id === "REVIEW-1")!;
+  assert.deepEqual(ready.unmetPrerequisites, []);
+  assert.deepEqual(humanReviewGate(ready), { state: "ready" });
+
+  const done: TaskRow = { ...ready, status: "complete" };
+  assert.deepEqual(humanReviewGate(done), { state: "complete" });
+  assert.deepEqual(
+    humanReviewGate({ ...blocked, status: "complete" }),
+    { state: "complete" },
+    "a finished review keeps its completed state even if the state file lists late prerequisites",
+  );
+});
+
+test("the approval API refuses a review whose prerequisites are unmet", async (t) => {
+  const root = fixture(t);
+  const review = {
+    id: "REVIEW-1", title: "Review", description: "Review", dependencies: ["API-1"], expectedOutputs: [], validationCommands: [], approvalRequired: false,
+    contract: {
+      version: 1, kind: "human-review" as const, requirements: ["r"], acceptanceCriteria: ["a"], constraints: [],
+      references: ["docs/PRD.md"], reviewFile: "docs/reviews/REVIEW-1.json",
+    },
+  };
+  const impl = {
+    id: "API-1", title: "API", description: "API", dependencies: [], expectedOutputs: [], validationCommands: [], approvalRequired: false,
+    ownerAgent: "worker",
+    contract: { version: 1, kind: "implementation" as const, requirements: ["r"], acceptanceCriteria: ["a"], constraints: [], references: ["docs/PRD.md"] },
+  };
+  fs.writeFileSync(path.join(root, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify({
+    version: "1", generatedAt: new Date().toISOString(), repoRoot: root, harnessRoot: ".github", prdPath: "docs/PRD.md",
+    progressPath: "docs/PROGRESS.md", auditPath: "docs/EXECUTION-AUDIT.jsonl", validationCommands: [],
+    approvalGates: { preflight: false, betweenPhases: false }, warnings: [],
+    phases: [{ id: "P1", title: "P1", description: "P1", ownerAgents: ["worker"], dependencies: [], approvalRequired: false, tasks: [impl, review] }],
+  }));
+  const record = (taskId: string, status: string) => ({ taskId, status, attempt: status === "complete" ? 1 : 0, outputFiles: [] });
+  fs.writeFileSync(path.join(root, "docs", "WORKFLOW-STATE.json"), JSON.stringify({
+    runId: "run", startedAt: "", lastUpdatedAt: "", manifestPath: "", manifestVersion: "1", harness: "stub",
+    status: "running", blockers: [],
+    tasks: { "API-1": record("API-1", "pending"), "REVIEW-1": record("REVIEW-1", "pending") },
+  }));
+
+  const server = await startConsoleServer({ repoRoot: root, port: port++, open: false });
+  t.after(() => server.stop());
+  const post = (body: unknown) => fetch(`${server.url}/api/tasks/human-review`, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Forge-Token": server.token }, body: JSON.stringify(body),
+  });
+  const notes = "Exercised the fixture end to end and every acceptance criterion held.";
+
+  const premature = await post({ taskId: review.id, reviewer: "Reviewer", notes, resume: false });
+  const prematureBody = await premature.text();
+  assert.equal(premature.status, 400, prematureBody);
+  assert.match(prematureBody, /API-1 must be complete or skipped first/);
+  assert.equal(fs.existsSync(path.join(root, "docs", "reviews", "REVIEW-1.json")), false,
+    "a refused approval must not leave an attestation behind");
+
+  fs.writeFileSync(path.join(root, "docs", "WORKFLOW-STATE.json"), JSON.stringify({
+    runId: "run", startedAt: "", lastUpdatedAt: "", manifestPath: "", manifestVersion: "1", harness: "stub",
+    status: "running", blockers: [],
+    tasks: { "API-1": record("API-1", "complete"), "REVIEW-1": record("REVIEW-1", "pending") },
+  }));
+  const accepted = await post({ taskId: review.id, reviewer: "Reviewer", notes, resume: false });
+  assert.equal(accepted.status, 200, await accepted.text());
+  assert.equal(fs.existsSync(path.join(root, "docs", "reviews", "REVIEW-1.json")), true);
+});
+
+test("approving a review and resuming the engine passes sandbox preflight", async (t) => {
+  // Regression, end to end: the Console's approve-and-resume form writes the
+  // review record and attestation and then immediately starts the run. With
+  // concurrency above 1 the run's clean-tree preflight used to refuse the very
+  // files the form had just written, so the operator had to hand-commit them.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-review-resume-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
+  git("init", "-q");
+  git("config", "user.email", "test@example.com");
+  git("config", "user.name", "Test");
+  fs.mkdirSync(path.join(root, ".github", "agents"), { recursive: true });
+  fs.writeFileSync(path.join(root, ".github", "agents", "worker.md"), '---\nname: worker\ndescription: "Worker"\n---\n');
+  fs.mkdirSync(path.join(root, "docs"), { recursive: true });
+  fs.mkdirSync(path.join(root, "docs", "features"), { recursive: true });
+  fs.writeFileSync(path.join(root, "docs", "PRD.md"), "# PRD\n");
+  fs.writeFileSync(path.join(root, "docs", "features", "core.md"), "# Core\n");
+  // concurrency 4 is what turns on sandbox mode and therefore the preflight
+  fs.writeFileSync(path.join(root, "docs", "engine-config.json"), `${JSON.stringify({ concurrency: 4 }, null, 2)}\n`);
+  const review = {
+    id: "REVIEW-1", title: "Review", description: "Review", dependencies: ["API-1"], expectedOutputs: [], validationCommands: [], approvalRequired: false,
+    contract: {
+      version: 1, kind: "human-review" as const, requirements: ["r"], acceptanceCriteria: ["a"], constraints: [],
+      references: ["docs/PRD.md"], reviewFile: "docs/reviews/REVIEW-1.json",
+    },
+  };
+  const impl = {
+    id: "API-1", title: "API", description: "API", dependencies: [], expectedOutputs: [], validationCommands: [], approvalRequired: false,
+    ownerAgent: "worker",
+    contract: { version: 1, kind: "implementation" as const, requirements: ["r"], acceptanceCriteria: ["a"], constraints: [], references: ["docs/PRD.md"] },
+  };
+  fs.writeFileSync(path.join(root, "docs", "EXECUTION-MANIFEST.json"), `${JSON.stringify({
+    version: "1", generatedAt: new Date().toISOString(), repoRoot: root, harnessRoot: ".github", prdPath: "docs/PRD.md",
+    progressPath: "docs/PROGRESS.md", auditPath: "docs/EXECUTION-AUDIT.jsonl", validationCommands: [],
+    approvalGates: { preflight: false, betweenPhases: false }, warnings: [],
+    phases: [{ id: "P1", title: "P1", description: "P1", ownerAgents: ["worker"], dependencies: [], approvalRequired: false, tasks: [impl, review] }],
+  }, null, 2)}\n`);
+  const record = (taskId: string, status: string) => ({ taskId, status, attempt: status === "complete" ? 1 : 0, outputFiles: [] });
+  fs.writeFileSync(path.join(root, "docs", "WORKFLOW-STATE.json"), `${JSON.stringify({
+    runId: "run", startedAt: "", lastUpdatedAt: "", manifestPath: "docs/EXECUTION-MANIFEST.json", manifestVersion: "1",
+    harness: "opencode", status: "running", blockers: [],
+    tasks: { "API-1": record("API-1", "complete"), "REVIEW-1": record("REVIEW-1", "pending") },
+  }, null, 2)}\n`);
+  git("add", "-A");
+  git("commit", "-qm", "seed project");
+
+  const engineScripts = path.join(resolveResources().templatesDir, "skills", "forge-workflow-engine", "scripts");
+  // The preflight itself needs the engine's own node_modules, which this package
+  // does not install and a bootstrapped project may not have either, so the
+  // rule is not re-implemented here. This asserts the strictly stronger
+  // statement that makes the deadlock impossible: approving leaves nothing
+  // dirty except the two review records, all of which the parallel preflight
+  // tolerates. The rule's own coverage lives in the engine's sandbox suite.
+  assert.deepEqual(
+    execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root, encoding: "utf8" })
+      .split("\n").filter(Boolean).map((line) => line.slice(3)),
+    [],
+    "the repository must start clean enough to run in parallel",
+  );
+
+  const server = await startConsoleServer({
+    repoRoot: root, port: port++, open: false,
+    deps: { spawner: () => ({ pid: 1 }) },
+  });
+  t.after(() => server.stop());
+  const response = await fetch(`${server.url}/api/tasks/human-review`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Forge-Token": server.token },
+    body: JSON.stringify({ taskId: review.id, reviewer: "Reviewer", notes: "Exercised the fixture end to end and every acceptance criterion held." }),
+  });
+  const body = await response.text();
+  assert.equal(response.status, 200, body);
+  assert.equal(JSON.parse(body).resumed, true, "the approval must have started the resume run");
+  assert.equal(fs.existsSync(path.join(root, "docs", "reviews", "REVIEW-1.json")), true);
+
+  // The whole point: the resume it just triggered must not be refused, because
+  // the approval left only state the preflight tolerates.
+  assert.deepEqual(
+    execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root, encoding: "utf8" })
+      .split("\n").filter(Boolean).map((line) => line.slice(3)).sort(),
+    ["docs/reviews/REVIEW-1-console-review.md", "docs/reviews/REVIEW-1.json"],
+    "approving must not dirty anything the parallel preflight refuses",
+  );
+  assert.ok(fs.existsSync(path.join(engineScripts, "task-context.ts")), "the approval must have used the installed engine's review writer");
+});
+
+test("human-review task rows surface transitive upstream validation gaps", (t) => {
+  const root = fixture(t);
+  const task = (id: string, dependencies: string[], kind: "implementation" | "human-review" = "implementation") => ({
+    id, title: id, description: id, dependencies, expectedOutputs: [], validationCommands: [], approvalRequired: false,
+    ...(kind === "implementation" ? { ownerAgent: "worker" } : {}),
+    contract: { version: 1, kind, requirements: ["r"], acceptanceCriteria: ["a"], constraints: [], references: ["docs/PRD.md"], ...(kind === "human-review" ? { reviewFile: "docs/reviews/r.json" } : {}) },
+  });
+  const manifest = {
+    version: "1", generatedAt: new Date().toISOString(), repoRoot: root, harnessRoot: ".github", prdPath: "docs/PRD.md",
+    progressPath: "docs/PROGRESS.md", auditPath: "docs/EXECUTION-AUDIT.jsonl", validationCommands: [],
+    approvalGates: { preflight: false, betweenPhases: false }, warnings: [],
+    phases: [{ id: "P1", title: "P1", description: "P1", ownerAgents: ["worker"], dependencies: [], approvalRequired: false,
+      tasks: [task("API-1", []), task("UI-1", ["API-1"]), task("REVIEW-1", ["UI-1"], "human-review")] }],
+  };
+  fs.writeFileSync(path.join(root, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify(manifest));
+  const record = (taskId: string, validationLimitations?: string[]) => ({ taskId, status: "complete", attempt: 1, outputFiles: [], ...(validationLimitations ? { validationLimitations } : {}) });
+  fs.writeFileSync(path.join(root, "docs", "WORKFLOW-STATE.json"), JSON.stringify({
+    runId: "run", startedAt: "", lastUpdatedAt: "", manifestPath: "", manifestVersion: "1", harness: "stub", status: "running", blockers: [],
+    tasks: { "API-1": record("API-1", ["Not run against the live service"]), "UI-1": record("UI-1"), "REVIEW-1": { taskId: "REVIEW-1", status: "pending", attempt: 0, outputFiles: [] } },
+  }));
+  const rows = new Map(tasks(repoPaths(root)).map((row) => [row.id, row]));
+  assert.deepEqual(rows.get("API-1")!.validationGaps, ["API-1: Not run against the live service"]);
+  assert.deepEqual(rows.get("UI-1")!.validationGaps, []);
+  assert.deepEqual(rows.get("REVIEW-1")!.validationGaps, ["API-1: Not run against the live service"]);
+
+  const phase = manifest.phases[0]!;
+  manifest.phases = [
+    { ...phase, tasks: [task("API-1", [])] },
+    { ...phase, id: "P2", dependencies: ["P1"], tasks: [task("UI-1", [])] },
+    { ...phase, id: "P3", dependencies: ["P2"], tasks: [task("REVIEW-1", [], "human-review")] },
+  ];
+  fs.writeFileSync(path.join(root, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify(manifest));
+  assert.deepEqual(tasks(repoPaths(root)).find((row) => row.id === "REVIEW-1")!.validationGaps,
+    ["API-1: Not run against the live service"], "phase-only prerequisites must expose transitive gaps");
+
+  manifest.phases[2]!.tasks[0]!.dependencies = ["API-1", "UI-1"];
+  fs.writeFileSync(path.join(root, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify(manifest));
+  assert.deepEqual(tasks(repoPaths(root)).find((row) => row.id === "REVIEW-1")!.validationGaps,
+    ["API-1: Not run against the live service"], "overlapping task and phase dependencies must not duplicate gaps");
+});
+
+test("model discovery works before a project exists and filters by runner", async (t) => {
+  fixture(t);
+  let probes = 0;
+  const server = await startConsoleServer({
+    port: port++, open: false,
+    inventoryProbe: async (runner, args) => {
+      probes++;
+      assert.equal(runner, "copilot");
+      assert.deepEqual(args, ["-p", "/model list names only"]);
+      return {
+        code: 0,
+        stdout: "| Model        | Context Window | Multiplier |\n|--------------|----------------|------------|\n| gpt-6-astra  | 128k           | 1x         |\n| gpt-5.6-luna | 128k           | 0.5x       |",
+        stderr: "",
+      };
+    },
+  });
+  t.after(() => server.stop());
+  const endpoint = `${server.url}/api/authoring-inventory`;
+  const before = await fetch(`${endpoint}?runner=copilot`).then((r) => r.json());
+  assert.deepEqual(before.models, []);
+  assert.equal(probes, 0);
+  const response = await fetch(`${endpoint}/refresh`, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Forge-Token": server.token },
+    body: JSON.stringify({ runner: "copilot" }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(probes, 1);
+  const refreshed = await response.json();
+  assert.deepEqual(refreshed.models.map((model: { id: string }) => model.id), ["gpt-6-astra", "gpt-5.6-luna"]);
+  assert.deepEqual((await fetch(`${endpoint}?runner=opencode`).then((r) => r.json())).models, []);
+});
+
+test("claude model discovery probes /model and lists the stable aliases", async (t) => {
+  fixture(t);
+  let probes = 0;
+  const server = await startConsoleServer({
+    port: port++, open: false,
+    inventoryProbe: async (runner, args) => {
+      probes++;
+      assert.equal(runner, "claude");
+      assert.deepEqual(args, ["-p", "/model", "--bare", "--output-format", "json"]);
+      return { code: 0, stdout: JSON.stringify({
+        type: "result",
+        is_error: false,
+        result: "Current model: `Haiku 4.5`\nUsage: /model <name>. Available: sonnet, opus, haiku, fable, best, sonnet[1m], opus[1m], fable[1m], opusplan, default, or a full model ID.",
+      }), stderr: "" };
+    },
+  });
+  t.after(() => server.stop());
+  const response = await fetch(`${server.url}/api/authoring-inventory/refresh`, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Forge-Token": server.token },
+    body: JSON.stringify({ runner: "claude" }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(probes, 1);
+  const refreshed = await response.json();
+  assert.equal(refreshed.runner, "claude");
+  assert.deepEqual(refreshed.models.map((model: { id: string }) => model.id), [
+    "sonnet", "opus", "haiku", "fable", "sonnet[1m]", "opus[1m]", "fable[1m]", "opusplan",
+  ]);
+});
+
+/** A PATH directory holding only the named fake executables, so the runner probe sees exactly these. */
+function fakeBin(t: TestContext, ...commands: string[]): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "forge-bin-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const command of commands) {
+    const file = path.join(dir, command);
+    fs.writeFileSync(file, "#!/bin/sh\nexit 0\n");
+    fs.chmodSync(file, 0o755);
+  }
+  return dir;
+}
+
+test("a .claude repo defaults the authoring runner and engine harness to claude", async (t) => {
+  const root = fixture(t, ".claude");
+  const previous = process.env.FORGE_RUN_WITH;
+  delete process.env.FORGE_RUN_WITH;
+  t.after(() => { if (previous === undefined) delete process.env.FORGE_RUN_WITH; else process.env.FORGE_RUN_WITH = previous; });
+  // Pin PATH to a fake Claude CLI so the inventory endpoint is deterministic.
+  const previousPath = process.env.PATH;
+  process.env.PATH = fakeBin(t, "claude");
+  t.after(() => { process.env.PATH = previousPath; });
+  assert.equal(inferEngineHarness(root), "claude");
+  const server = await startConsoleServer({ repoRoot: root, port: port++, open: false });
+  t.after(() => server.stop());
+  const inventory = await fetch(`${server.url}/api/authoring-inventory`).then((r) => r.json());
+  assert.equal(inventory.runner, "claude");
+});
+
+test("FORGE_RUN_WITH=claude selects the claude authoring runner for a .claude repo", async (t) => {
+  const root = fixture(t, ".claude");
+  const previous = process.env.FORGE_RUN_WITH;
+  process.env.FORGE_RUN_WITH = "claude";
+  t.after(() => { if (previous === undefined) delete process.env.FORGE_RUN_WITH; else process.env.FORGE_RUN_WITH = previous; });
+  const server = await startConsoleServer({ repoRoot: root, port: port++, open: false });
+  t.after(() => server.stop());
+  const inventory = await fetch(`${server.url}/api/authoring-inventory`).then((r) => r.json());
+  assert.equal(inventory.runner, "claude");
+});
+
+test("a saved project runner drives the inventory endpoint and the refresh probe", async (t) => {
+  const root = fixture(t);
+  const previous = process.env.FORGE_RUN_WITH;
+  delete process.env.FORGE_RUN_WITH;
+  t.after(() => { if (previous === undefined) delete process.env.FORGE_RUN_WITH; else process.env.FORGE_RUN_WITH = previous; });
+  saveAuthoringConfig(root, { version: 1, models: {}, runner: "opencode" });
+  let probes = 0;
+  const server = await startConsoleServer({
+    repoRoot: root, port: port++, open: false,
+    inventoryProbe: async (runner) => {
+      probes++;
+      assert.equal(runner, "opencode");
+      return { code: 0, stdout: "Available models:\n- anthropic/claude-4\n", stderr: "" };
+    },
+  });
+  t.after(() => server.stop());
+  const inventory = await fetch(`${server.url}/api/authoring-inventory`).then((r) => r.json());
+  assert.equal(inventory.runner, "opencode");
+  const refreshed = await fetch(`${server.url}/api/authoring-inventory/refresh`, {
+    method: "POST", headers: { "Content-Type": "application/json", "X-Forge-Token": server.token },
+    body: JSON.stringify({}),
+  }).then((r) => r.json());
+  assert.equal(refreshed.runner, "opencode");
+  assert.equal(probes, 1);
+});
+
+test("a .github repo still infers the copilot engine harness", (t) => {
+  assert.equal(inferEngineHarness(fixture(t, ".github")), "copilot");
+});
+
+test("a harness root that is neither .github nor .claude still infers opencode", (t) => {
+  assert.equal(inferEngineHarness(fixture(t, ".opencode")), "opencode");
+});
+
+test("legacy projects remain ready but failed skill authoring blocks native dispatch", (t) => {
+  const root = fixture(t);
+  assert.equal(summary(repoPaths(root)).authoringReady, true);
+  saveAuthoringStage(root, "skills", { status: "failed", inputFingerprint: "input", outputs: [], error: "Skill package is incomplete." });
+  const current = summary(repoPaths(root));
+  assert.equal(current.authoringReady, false);
+  assert.match(current.authoringBlocker ?? "", /skills/i);
+  assert.equal(actions(repoPaths(root)).canRun, false);
+  let spawns = 0;
+  const controller = new RunController(root, { spawner: () => { spawns++; return { pid: 987654 }; } });
+  assert.equal(controller.run().ok, false);
+  assert.equal(controller.compileManifest().ok, false);
+  assert.equal(controller.replay("task-1").ok, false);
+  assert.equal(spawns, 0);
+  const result = controller.draftSkills();
+  assert.equal(result.ok, true);
+  assert.equal(result.job?.type, "draft-skills");
+  assert.equal(spawns, 1);
+  summary(repoPaths(root));
+  assert.equal(currentJobForRepo(root)?.status, "failed");
+  assert.match(currentJobForRepo(root)?.message ?? "", /Skill package is incomplete/);
+});
+
+test("successful PRD validation reconciles a failed authoring stage", async (t) => {
+  const root = fixture(t);
+  saveAuthoringStage(root, "prd", {
+    status: "failed", inputFingerprint: "before-repair", outputs: ["docs/PRD.md"], error: "Repair required.",
+  });
+  const server = await startConsoleServer({ repoRoot: root, port: port++, open: false });
+  t.after(() => server.stop());
+  const response = await fetch(`${server.url}/api/authoring/validate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Forge-Token": server.token },
+    body: "{}",
+  });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).ok, true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(root, "docs", "authoring-state.json"), "utf8")).stages.prd.status, "complete");
+  assert.equal(authoringStageIsCurrent(root, "prd", ".github"), true);
+  assert.equal(authoringReadiness(root, ".github").ready, true);
+});
+
+test("summary identifies the recoverable stage when completed authoring becomes stale", (t) => {
+  const root = fixture(t);
+  for (const stage of ["team", "skills"] as const) {
+    saveAuthoringStage(root, stage, {
+      status: "complete", inputFingerprint: stageInputFingerprint(root, stage, ".github"),
+      outputs: [".github/agents/worker.md"],
+    });
+  }
+  assert.equal(summary(repoPaths(root)).authoringReady, true);
+  fs.appendFileSync(path.join(root, "docs", "PRD.md"), "\nNew requirement.\n");
+  const stale = summary(repoPaths(root));
+  assert.equal(stale.authoringReady, false);
+  assert.equal(stale.authoringNextStage, "team");
+  assert.equal(stale.authoring.stages.team?.status, "complete");
+  saveAuthoringStage(root, "team", {
+    status: "complete", inputFingerprint: stageInputFingerprint(root, "team", ".github"),
+    outputs: [".github/agents/worker.md"],
+  });
+  assert.equal(summary(repoPaths(root)).authoringNextStage, "skills");
+});
+
+test("Console execution-model edits do not invalidate completed authoring", (t) => {
+  const root = fixture(t);
+  fs.mkdirSync(path.join(root, "docs", "research"));
+  fs.writeFileSync(path.join(root, "docs", "research", "model-inventory.json"), JSON.stringify({
+    copilot_cli: { models: [{ id: "gpt-6-astra" }] },
+  }));
+  for (const stage of ["team", "skills"] as const) {
+    const outputs = [".github/agents/worker.md"];
+    saveAuthoringStage(root, stage, {
+      status: "complete", inputFingerprint: stageInputFingerprint(root, stage, ".github"),
+      outputs, outputFingerprint: fingerprintFiles(root, outputs),
+    });
+  }
+  assert.equal(summary(repoPaths(root)).authoringReady, true);
+  assert.equal(setModelOverride(repoPaths(root), "worker", "gpt-6-astra").ok, true);
+  assert.equal(summary(repoPaths(root)).authoringReady, true);
+});
+
+test("new project request passes three distinct model flags without PRD auto-draft setup", (t) => {
+  const root = fixture(t);
+  let captured: { args: string[]; options: SpawnOptions } | undefined;
+  const controller = new RunController(root, { spawner: (_cmd, args, options) => {
+    captured = { args, options };
+    return { pid: 987655 };
+  } });
+  const result = controller.createProject({
+    name: "new-project", parentDir: root, idea: "Build something", harness: "github",
+    authoringConfig: { version: 1, models: { prd: "gpt-6-astra", team: "gpt-5.6-luna", skills: "gpt-6-astra" } },
+  });
+  assert.equal(result.ok, true);
+  assert.ok(captured);
+  const args = captured.args;
+  assert.equal(args[args.indexOf("--prd-model") + 1], "gpt-6-astra");
+  assert.equal(args[args.indexOf("--team-model") + 1], "gpt-5.6-luna");
+  assert.equal(args[args.indexOf("--skills-model") + 1], "gpt-6-astra");
+  assert.equal(result.job?.autoDraft, undefined);
+});
+
+test("new project request forwards an explicit authoring runner to the launcher", (t) => {
+  const root = fixture(t);
+  let captured: { args: string[]; options: SpawnOptions } | undefined;
+  const controller = new RunController(root, { spawner: (_cmd, args, options) => {
+    captured = { args, options };
+    return { pid: 987656 };
+  } });
+  const result = controller.createProject({
+    name: "runner-project", parentDir: root, idea: "Build something", harness: "claude",
+    authoringConfig: { version: 1, models: {}, runner: "claude" },
+  });
+  assert.equal(result.ok, true);
+  assert.ok(captured);
+  assert.equal(captured.args[captured.args.indexOf("--runner") + 1], "claude");
+});
+
+test("synchronous startup failure is an error result, not a running success", (t) => {
+  const root = fixture(t);
+  const controller = new RunController(root, { spawner: (_cmd, _args, options) => {
+    options.onStartupError?.(new Error("runner unavailable"));
+    return {};
+  } });
+  const result = controller.draftSkills();
+  assert.equal(result.ok, false);
+  assert.equal(result.job?.status, "failed");
+  assert.match(result.message, /runner unavailable/);
+});
+
+test("split structured authoring events survive ordinary partial-line log streaming", async (t) => {
+  const root = fixture(t);
+  const log = path.join(root, "docs", "engine-run.log");
+  fs.writeFileSync(log, "");
+  const server = await startConsoleServer({ repoRoot: root, port: port++, open: false });
+  let received = "";
+  const request = get(`${server.url}/api/events`, (response) => {
+    response.setEncoding("utf8");
+    response.on("data", (chunk: string) => { received += chunk; });
+  });
+  t.after(async () => { request.destroy(); await server.stop(); });
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+  await sleep(100);
+  const event = Buffer.from('FORGE_EVENT {"type":"authoring.completed","message":"\u2713"}\n');
+  const split = event.indexOf(Buffer.from("\u2713")) + 1;
+  fs.appendFileSync(log, event.subarray(0, split));
+  await sleep(700);
+  assert.equal(received.includes("event: authoring"), false);
+  fs.appendFileSync(log, event.subarray(split));
+  const deadline = Date.now() + 3000;
+  while (!received.includes("event: authoring") && Date.now() < deadline) await sleep(50);
+  assert.equal(received.split("event: authoring").length - 1, 1);
+  assert.match(received, /"message":"\u2713"/);
+});

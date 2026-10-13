@@ -1,0 +1,181 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { writeFeatureFixture } from "./feature-fixture.ts";
+
+const CLI = fileURLToPath(new URL("./cli.ts", import.meta.url));
+
+const GIT_ENV = {
+  GIT_AUTHOR_NAME: "forge-launcher-test",
+  GIT_AUTHOR_EMAIL: "test@example.com",
+  GIT_COMMITTER_NAME: "forge-launcher-test",
+  GIT_COMMITTER_EMAIL: "test@example.com",
+};
+
+function runCli(args: string[], env: Record<string, string> = {}): Promise<{ code: number; out: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "node",
+      ["--import", "tsx", CLI, ...args],
+      { env: { ...process.env, ...GIT_ENV, ...env } },
+      (err, stdout, stderr) => {
+        if (err) {
+          resolve({ code: (err as { code?: number }).code ?? 1, out: stdout + stderr });
+          return;
+        }
+        resolve({ code: 0, out: stdout + stderr });
+      },
+    );
+  });
+}
+
+/** Bootstraps a bare git repo with a forge harness root + stub skill files. */
+function makeRepo(harnessRoot = ".agents"): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fl-draft-"));
+  execFileSync("git", ["-C", dir, "init", "-q"], { env: { ...process.env, ...GIT_ENV } });
+  fs.mkdirSync(path.join(dir, harnessRoot, "agents"), { recursive: true });
+  for (const skill of ["forge-auto-build-prd", "forge-build-prd", "forge-build-agent-team"]) {
+    const skillDir = path.join(dir, harnessRoot, "skills", skill);
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(path.join(skillDir, "SKILL.md"), `---\nname: ${skill}\ndescription: stub\n---\n# stub\n`);
+  }
+  fs.mkdirSync(path.join(dir, "docs"), { recursive: true });
+  return dir;
+}
+
+function addStubAdapter(repo: string, harnessRoot = ".agents"): void {
+  const skillDir = path.join(repo, harnessRoot, "skills", "forge-execution-adapter");
+  fs.mkdirSync(path.join(skillDir, "scripts"), { recursive: true });
+  fs.writeFileSync(path.join(skillDir, "package.json"), JSON.stringify({
+    name: "forge-execution-adapter",
+    version: "1.0.0",
+    private: true,
+    scripts: {
+      "forge-execution-adapter": "node scripts/adapter.mjs",
+    },
+  }, null, 2));
+  fs.writeFileSync(path.join(skillDir, "scripts", "adapter.mjs"), `#!/usr/bin/env node
+import fs from "node:fs";
+import path from "node:path";
+
+const args = process.argv.slice(2);
+let repo = process.cwd();
+for (let i = 0; i < args.length; i += 1) {
+  if (args[i] === "--repo" && args[i + 1]) repo = path.resolve(args[i + 1]);
+}
+const docs = path.join(repo, "docs");
+fs.mkdirSync(docs, { recursive: true });
+fs.writeFileSync(path.join(docs, "EXECUTION-MANIFEST.json"), JSON.stringify({
+  version: "1.0",
+  generatedAt: new Date().toISOString(),
+  phases: [],
+}, null, 2));
+`);
+}
+
+function write(repo: string, rel: string, content: string): void {
+  if (rel === "docs/PRD.md") { writeFeatureFixture(repo, content); return; }
+  const file = path.join(repo, rel);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, content);
+}
+
+test("draft-prd writes docs/PRD.md via the stub runner", async () => {
+  const repo = makeRepo();
+  write(repo, "docs/IDEA.md", "# Project Idea\n\nA thing.\n");
+  const { code, out } = await runCli(["draft-prd", "--repo", repo], { FORGE_RUN_WITH: "stub" });
+  assert.equal(code, 0, out);
+  assert.ok(fs.existsSync(path.join(repo, "docs", "PRD.md")), "PRD.md should be written");
+  assert.ok(out.includes("PRD generated"), out);
+});
+
+test("draft-prd with no idea still routes to interactive authoring", async () => {
+  const repo = makeRepo();
+  // No IDEA.md and no requirements source: an existing repository needs the
+  // interview about what the code cannot say, so the interactive path is used.
+  const { code, out } = await runCli(["draft-prd", "--repo", repo], { FORGE_RUN_WITH: "stub" });
+  assert.equal(code, 0, out);
+  assert.ok(out.includes("PRD generated"), out);
+  assert.ok(fs.existsSync(path.join(repo, "docs", "PRD.md")), "PRD.md should be written");
+});
+
+test("draft-prd with a real runner hands off instead of authoring", async (t) => {
+  const repo = makeRepo();
+  write(repo, "docs/IDEA.md", "# Project Idea\n\nA thing.\n");
+  // ADR-060: a real runner must never author requirements unattended. A PATH
+  // holding only a fake `claude` keeps node resolvable while making the runner
+  // a real (non-stub) one, so the production guard is what refuses.
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "fl-draft-bin-"));
+  t.after(() => fs.rmSync(bin, { recursive: true, force: true }));
+  const fake = path.join(bin, "claude");
+  fs.writeFileSync(fake, "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(fake, 0o755);
+
+  const { code, out } = await runCli(["draft-prd", "--repo", repo], {
+    FORGE_RUN_WITH: "claude",
+    FORGE_TEST_ALLOW_NONINTERACTIVE: "1",
+    PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+  });
+  assert.equal(code, 1, out);
+  assert.match(out, /interactive/i, out);
+  assert.equal(fs.existsSync(path.join(repo, "docs", "PRD.md")), false, "no PRD should be written");
+});
+
+test("draft-existing-prd uses the project PRD authoring path", async () => {
+  const repo = makeRepo();
+  write(repo, "src/index.ts", "export const product = 'existing';\n");
+  const { code, out } = await runCli(["draft-existing-prd", "--repo", repo], { FORGE_RUN_WITH: "stub" });
+  assert.equal(code, 0, out);
+  assert.ok(out.includes("existing repository"), out);
+  assert.ok(out.includes("Project PRD generated"), out);
+  assert.ok(fs.existsSync(path.join(repo, "docs", "PRD.md")), "PRD.md should be written");
+});
+
+test("draft-team writes an agent file via the stub runner", async () => {
+  const repo = makeRepo();
+  write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
+  const { code, out } = await runCli(["draft-team", "--repo", repo], { FORGE_RUN_WITH: "stub" });
+  assert.equal(code, 0, out);
+  assert.ok(fs.existsSync(path.join(repo, ".agents", "agents", "stub-project-agent.md")), "agent file should be written");
+  assert.ok(out.includes("Agent team generated"), out);
+});
+
+test("draft-team honors the opencode harness root", async () => {
+  const repo = makeRepo(".opencode");
+  write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
+  const { code, out } = await runCli(["draft-team", "--repo", repo], { FORGE_RUN_WITH: "stub" });
+  assert.equal(code, 0, out);
+  assert.ok(fs.existsSync(path.join(repo, ".opencode", "agents", "stub-project-agent.md")), "agent file should be written");
+  assert.ok(!fs.existsSync(path.join(repo, ".agents", "agents", "stub-project-agent.md")), "generic harness path should stay unused");
+});
+
+test("draft-team honors the GitHub harness root", async () => {
+  const repo = makeRepo(".github");
+  write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
+  const { code, out } = await runCli(["draft-team", "--repo", repo], { FORGE_RUN_WITH: "stub" });
+  assert.equal(code, 0, out);
+  assert.ok(fs.existsSync(path.join(repo, ".github", "agents", "stub-project-agent.md")), "agent file should be written");
+  assert.ok(!fs.existsSync(path.join(repo, ".agents", "agents", "stub-project-agent.md")), "generic harness path should stay unused");
+});
+
+test("draft-team with no PRD fails with guidance", async () => {
+  const repo = makeRepo();
+  const { code, out } = await runCli(["draft-team", "--repo", repo], { FORGE_RUN_WITH: "stub" });
+  assert.equal(code, 1, out);
+  assert.ok(out.includes("No PRD"), out);
+});
+
+test("compile-manifest installs the adapter and writes docs/EXECUTION-MANIFEST.json", async () => {
+  const repo = makeRepo();
+  write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
+  write(repo, ".agents/agents/stub-project-agent.md", "---\nname: stub-project-agent\ndescription: stub\n---\n# stub\n");
+  addStubAdapter(repo);
+  const { code, out } = await runCli(["compile-manifest", "--repo", repo]);
+  assert.equal(code, 0, out);
+  assert.ok(fs.existsSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json")), "manifest should be written");
+  assert.ok(out.includes("Execution manifest compiled"), out);
+});

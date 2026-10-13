@@ -1,0 +1,421 @@
+:root {
+  --panel-bg: rgba(10, 14, 28, 0.92);
+  --panel-border: rgba(140, 170, 255, 0.25);
+  --text: #dbe4ff;
+  --text-dim: #8b96b8;
+  --accent: #f5c542;
+  --green: #5ed36a;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #070b16;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  color: var(--text);
+  cursor: default;
+}
+
+#canvas-host {
+  position: fixed;
+  inset: 0;
+}
+
+#canvas-host canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── HUD ─────────────────────────────────────────────── */
+
+#hud-top {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px 18px;
+  pointer-events: none;
+  user-select: none;
+  z-index: 20;
+}
+
+/* The HUD is a pointer-event shield, so controls inside it opt back in. */
+#hud-top button, #mode-switch { pointer-events: auto; }
+
+.mode-btn {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.mode-btn:hover { color: var(--text); }
+.mode-btn.active,
+.mode-btn[aria-selected="true"],
+.mode-btn[aria-pressed="true"] {
+  color: #14171f;
+  background: var(--accent);
+  border-color: transparent;
+  font-weight: 600;
+}
+.mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#mode-switch { display: inline-flex; gap: 4px; margin-top: 8px; }
+#table-toggle { margin-top: 8px; }
+
+/* ── Accessible table view ─────────────────────────────── */
+
+/*
+  Full-bleed and opaque, so the canvas behind it cannot bleed through and read as
+  part of the table. It sits below the HUD (z-index 20) so the mode switch, the
+  progress bar and the Table toggle stay reachable while it is open.
+*/
+#table-view {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+  background: rgba(7, 11, 22, 0.98);
+  backdrop-filter: blur(2px);
+  display: flex;
+  flex-direction: column;
+}
+#table-view.hidden { display: none; }
+#table-caption { padding: 12px 0 10px; }
+#table-scroll { flex: 1; overflow: auto; padding: 96px 18px 82px; }
+
+/*
+  With the table open the canvas is covered, so the HUD keeps only its controls:
+  the title, run counters, clock and legend describe a board nobody is looking
+  at, and they sit on top of the table's first column.
+*/
+body.table-open #title,
+body.table-open #meta,
+body.table-open #done-count,
+body.table-open #done-label,
+body.table-open #progress-bar,
+body.table-open #elapsed,
+body.table-open #legend,
+body.table-open #failed-list { display: none; }
+body.table-open #hud-left,
+body.table-open #hud-right { padding: 8px 12px; }
+body.table-open #mode-switch,
+body.table-open #table-toggle { margin-top: 0; }
+body.table-open #hud-right { min-width: 0; }
+#task-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#task-table caption {
+  caption-side: top;
+  text-align: left;
+  padding: 12px 14px 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+#task-table th, #task-table td {
+  text-align: left;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(140, 170, 255, 0.12);
+  vertical-align: top;
+}
+#task-table thead th {
+  /* Not sticky: the scrollport is the full-bleed overlay, so a sticky header
+     pins against the viewport top and fights the fixed HUD above it. The table
+     is short enough that scrolling past the header is not a problem. */
+  background: rgba(7, 11, 22, 0.98);
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--panel-border);
+}
+#task-table tbody th { font-weight: 600; }
+#task-table .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; color: var(--text-dim); }
+#task-table tbody tr:hover { background: rgba(140, 170, 255, 0.07); }
+
+#hud-left, #hud-right {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  backdrop-filter: blur(4px);
+}
+
+#title {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  font-size: 15px;
+}
+
+#meta {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+#meta.live { color: var(--green); }
+#meta.warn { color: var(--accent); }
+#meta.dead { color: #ff8f8f; }
+
+#hud-right {
+  text-align: right;
+  min-width: 170px;
+}
+
+#done-count {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+#done-label {
+  margin-top: 2px;
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#progress-bar {
+  margin-top: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+#progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #f5c542, #5ed36a);
+  transition: width 0.6s ease;
+}
+
+#elapsed {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+#hud-bottom {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 12px 18px;
+  pointer-events: none;
+  user-select: none;
+  gap: 12px;
+  z-index: 20;
+}
+
+/* The failed list is a control, so it opts back into pointer events. */
+#failed-list {
+  pointer-events: auto;
+  display: grid;
+  gap: 4px;
+  max-width: 46%;
+  background: var(--panel-bg);
+  border: 1px solid rgba(255, 143, 143, 0.4);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+#failed-list.hidden { display: none; }
+#failed-list .failed-title {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ff8f8f;
+}
+#failed-list .failed-row {
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 3px 7px;
+  cursor: pointer;
+}
+#failed-list .failed-row:hover { background: rgba(255, 143, 143, 0.16); }
+#failed-list .failed-row:focus-visible { outline: 2px solid #ff8f8f; outline-offset: 2px; }
+
+/* Tooltip navigation strip: the tooltip is pointer-events:none, so this is the
+   part that makes the board navigable and must opt back in. */
+#tooltip .tt-actions {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--panel-border);
+}
+#tooltip .tt-actions button {
+  font: inherit;
+  font-size: 10px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--panel-border);
+  border-radius: 5px;
+  padding: 2px 7px;
+  cursor: pointer;
+}
+#tooltip .tt-actions button:hover { background: rgba(245, 197, 66, 0.2); }
+#tooltip .tt-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+#legend, #status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 70%;
+}
+
+.chip {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chip .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.chip.stat {
+  color: var(--text-dim);
+}
+
+.chip.stat b { color: var(--text); font-weight: 700; }
+
+/* ── Tooltip ─────────────────────────────────────────── */
+
+#tooltip {
+  position: fixed;
+  z-index: 30;
+  max-width: 260px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 8px 11px;
+  font-size: 12px;
+  line-height: 1.45;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+#tooltip .tt-title { font-weight: 700; }
+#tooltip .tt-sub { color: var(--text-dim); margin-top: 2px; }
+#tooltip .tt-status { margin-top: 4px; }
+
+/* ── Status labels ───────────────────────────────────── */
+
+.status-label {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.status-pending { background: rgba(140, 150, 190, 0.25); color: #aab3d6; }
+.status-running { background: rgba(90, 190, 255, 0.25); color: #6fd0ff; }
+.status-complete { background: rgba(94, 211, 106, 0.25); color: var(--green); }
+.status-failed { background: rgba(255, 90, 90, 0.25); color: #ff8f8f; }
+.status-skipped { background: rgba(140, 150, 190, 0.15); color: #7f88a8; }
+
+/* ── Banner / overlays ───────────────────────────────── */
+
+#banner {
+  position: fixed;
+  z-index: 50;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(0.8);
+  background: linear-gradient(135deg, #1c2b16, #2a4a20);
+  border: 1px solid rgba(150, 220, 140, 0.5);
+  border-radius: 18px;
+  padding: 26px 48px;
+  text-align: center;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: #eaffcf;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.6);
+  animation: banner-in 0.7s cubic-bezier(0.2, 1.4, 0.4, 1) forwards;
+  pointer-events: none;
+}
+
+#banner.paused {
+  background: linear-gradient(135deg, #1d2433, #2a3348);
+  border-color: rgba(150, 180, 255, 0.5);
+  color: #dbe4ff;
+}
+
+#banner.failed {
+  background: linear-gradient(135deg, #33191a, #4a2022);
+  border-color: rgba(255, 130, 130, 0.55);
+  color: #ffd2d2;
+}
+
+#banner .sub {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
+  margin-top: 8px;
+  letter-spacing: 0.02em;
+}
+
+@keyframes banner-in {
+  from { transform: translate(-50%, -50%) scale(0.8); opacity: 0; }
+  to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
+}
+
+#failed-tint {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(120, 20, 25, 0.5) 100%);
+  animation: tint-fade 1.6s ease forwards;
+}
+
+@keyframes tint-fade {
+  0% { opacity: 0; }
+  30% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.hidden { display: none !important; }
+
+/*
+  Reduced motion. The running-card pulse is suppressed in JS because it is a
+  per-frame ticker effect, not a CSS animation; these are the CSS-driven ones.
+  Both the banner pop-in and the failure tint are decorative, so they collapse
+  to a plain static appearance rather than losing the information they convey.
+*/
+@media (prefers-reduced-motion: reduce) {
+  #banner { animation: none; }
+  #failed-tint { animation: none; opacity: 0.35; }
+  #progress-fill { transition: none; }
+}

@@ -1,0 +1,658 @@
+---
+name: forge-workflow-engine
+description: "Dynamic workflow orchestration engine that reads docs/EXECUTION-MANIFEST.json and drives every task to completion through a pluggable harness adapter (OpenCode CLI, GitHub Copilot CLI, Claude Code CLI, OpenAI API, or stub). Maintains docs/WORKFLOW-STATE.json for machine-readable run state and syncs docs/PROGRESS.md after every task. Use this skill after forge-execution-adapter has compiled the manifest."
+---
+
+# Skill: Forge Workflow Engine
+
+You are the **runtime execution layer** for an MyForge repository. Where `project-orchestrator` operates as a prompt-driven orchestrator inside a chat harness, this skill runs **outside** the chat session - it reads the structured execution contract produced by `forge-execution-adapter` and drives every agent task through a real execution backend until the workflow is complete.
+
+This skill is the autonomous execution alternative to the prompt-driven flows. Teams use it when they want **dark orchestration**: a background process that fires agent invocations autonomously, persists state across interruptions, and requires no human intervention between tasks. Start it from the terminal with `forge-launcher engine-run`, or drive it from inside a chat with `@workflow-orchestrator`.
+
+---
+
+## Prerequisites
+
+Structured `forge-task` contracts require explicit output files, passing
+validation commands and a final `forge-result` outcome report. Repository CLI
+tasks read an engine-generated execution file containing mandatory task fields
+and reference paths; supporting documents are read on demand. `human-review` tasks
+pause without model dispatch: an operator must run `approve-task <id> --repo
+<path> --reviewer <name> --evidence <file> --confirm-human-review`, then resume.
+Agents must not invoke this command or fabricate review evidence. `--yes` never
+approves human work. Legacy tasks retain opt-in command validation.
+
+Before running this skill, the following must exist in the repository:
+
+- `docs/EXECUTION-MANIFEST.json` - compiled by `forge-execution-adapter`
+- Agent `.md` files under the harness agents directory. Load `forge-build-agent-team/references/detect-harness.md` to detect the active harness; the conventional paths are:
+  - `.github/agents/` (GitHub Copilot harness)
+  - `.claude/agents/` (Claude Code harness)
+  - `.opencode/agents/` (OpenCode harness)
+  - `.agents/agents/` (generic / default fallback)
+- A configured execution harness (OpenCode CLI in `$PATH`, the `claude` CLI in `$PATH`, or `OPENAI_API_KEY` set)
+
+If the manifest does not exist yet, run the adapter first:
+
+```bash
+cd .agents/skills/forge-execution-adapter
+npm install
+npm run forge-execution-adapter -- compile
+```
+
+---
+
+## Install & Run
+
+### Task execution files
+
+For repository-tool tasks, Copilot/OpenCode receive a short single-line prompt
+pointing to `docs/artifacts/<task-id>.md` (for example, `WALK-1.md`). The
+engine refreshes this same file with the current attempt and retry feedback.
+Read that file before
+working. Follow its validated task scope, requirements, criteria, constraints,
+output files and validation commands; inspect relevant reference sections as
+needed. Do not reinterpret the whole PRD or implement unrelated tasks. Supporting
+documents do not override the explicit task contract.
+
+The file also carries prerequisite context, run/attempt metadata and the fallback
+specialist persona. Native agents are selected with `--agent`. Do not edit or
+commit execution files or treat their creation as task work. They are retained
+local diagnostics, with a path/digest logged by the engine, not authenticated
+evidence. Delete them only after active invocations finish and diagnostics are
+no longer needed. The engine excludes them from work attribution and auto-commit;
+pre-staged execution files must be manually unstaged before an auto-commit can
+proceed. An attached OpenCode server must see the same repository filesystem.
+
+Text-only requests retain inline context and the OpenAI API path is unchanged.
+Do not use large inline text requests through a CLI with argument-length limits.
+Human review still pauses without creating a model execution file.
+
+Load [`references/engine-entry.md`](references/engine-entry.md) when you need
+the complete command matrix or headless entry-point guidance.
+
+> **Runtime requirement:** this skill is a Node package and requires `node >= 18`
+> and `npm` at *build time*. `npm install` (the "node module bootstrap") is not
+> run by `bootstrap.sh` - it is deferred to engine prep time (when you run the
+> engine via `forge-launcher engine-run`, or manually via
+> `scripts/forge-engine-run.sh`). The installed `node_modules/` is
+> gitignored in target repos and must never be committed.
+
+```bash
+cd .agents/skills/forge-workflow-engine
+npm install
+```
+
+### Start or resume a full run
+
+```bash
+npm run workflow-engine -- run
+npm run workflow-engine -- run --harness opencode
+npm run workflow-engine -- run --harness claude
+npm run workflow-engine -- run --harness openai
+npm run workflow-engine -- run --harness stub          # dry-run, no real calls
+npm run workflow-engine -- run --max-retries 3 --retry-delay-ms 10000
+npm run workflow-engine -- run --harness opencode --yes   # skip the pre-run gate
+npm run workflow-engine -- run --heartbeat-ms 5000        # heartbeat every 5s while a task runs
+npm run workflow-engine -- run --harness stub --viz --yes # run with the live Forge Board dashboard
+```
+
+The engine prints a pre-run summary (harness, phases, tasks) and, when run
+interactively, pauses for confirmation before dispatching. The gate is
+interactive-only: pass `--yes` (or set `FORGE_ENGINE_YES=1`) to skip it
+explicitly for headless/CI runs, and it auto-skips when stdin is not a TTY.
+
+### Heartbeat
+
+While a task is executing (e.g. a long `opencode run` / `copilot -p` call), the
+engine prints a `…still working on task <id> (@<agent>, Ns elapsed)` line at a
+fixed interval so a quiet terminal doesn't look hung:
+
+```bash
+npm run workflow-engine -- run --heartbeat-ms 60000        # default: 60s
+npm run workflow-engine -- run --heartbeat-ms 0            # disable
+```
+
+`--heartbeat-ms` overrides the `FORGE_ENGINE_HEARTBEAT_MS` environment variable.
+
+### Harness warm-up (opencode harness)
+
+Cold-starting a fresh `opencode run` re-boots the project instance each time:
+config, AGENTS.md, skills, agent files, and every MCP server (the biggest chunk
+of per-task overhead).
+
+**The engine no longer manages this.** It used to boot one headless
+`opencode serve` for the run and attach every task to it, controlled by
+`--keep-alive` / `--no-keep-alive` / `--attach <url>`. OpenCode v2 removed
+`run --attach` and added mandatory auth to `serve`, so all three flags are
+retired along with `FORGE_ENGINE_ATTACH` and `FORGE_ENGINE_ATTACH_URL` — see
+ADR-058. Passing them is now an error rather than a silent no-op.
+
+Each `opencode run` now connects to OpenCode's own background service, which is
+warm by default: config, AGENTS.md, skills, and MCP servers are already booted
+for the project, and every run still gets a fresh, isolated session. There is
+nothing to start, stop, or poll.
+
+To give one run a private server instead of the shared background service, add
+`--standalone` through the extra-flags env var:
+
+```bash
+OPENCODE_EXTRA_FLAGS=--standalone npm run workflow-engine -- run --harness opencode
+```
+
+### Live visualization (The Forge Board)
+
+Pass `--viz` (or `--viz=<port>`, default `4299`) to run to launch a live PixiJS
+dashboard of the build in your browser. The build renders as a kanban board:
+one band per phase, with tasks as name-tag cards (each carrying the owning
+agent's face and name) flowing left-to-right through To Do / In Progress /
+Done / Failed, connected by dependency and artifact edges. Hover for tooltips,
+click a card to expand it in place with task detail (description, status,
+owner, phase, duration, artifact, inputs, dependencies, outputs, validation,
+errors), drag to pan, scroll to zoom.
+
+```bash
+npm run workflow-engine -- run --harness stub --viz --yes
+npm run workflow-engine -- run --viz=5000 --no-open   # fixed port, no browser auto-open
+```
+
+Attach to an already-running or detached engine run from any terminal:
+
+```bash
+npm run workflow-engine -- viz --repo <repo-dir>
+```
+
+The dashboard is loopback-only and streams events over SSE. See ADR-025.
+
+### Task timeout
+
+Each task runs against the harness with a per-task timeout. If the harness call
+does not finish in time, the child process is killed and the task counts as
+failed (subject to `--max-retries`). The default is **10 minutes**.
+
+Process transport results use `status: null` when the runner initiates timeout,
+cancellation, or output-overflow termination, regardless of cleanup callback
+order. The failure reason and classification remain available; normal process
+exits retain their actual exit codes.
+
+```bash
+npm run workflow-engine -- run --task-timeout-ms 1500000       # 25 minutes
+FORGE_ENGINE_TASK_TIMEOUT_MS=1500000 npm run workflow-engine -- run
+```
+
+Precedence: a task's `timeoutMs` field in the manifest (if present) overrides
+the engine-wide value. Hand-edit `docs/EXECUTION-MANIFEST.json` to give one
+heavy task a longer budget:
+
+```json
+{
+  "id": "1.2",
+  "title": "Migrate the monolith",
+  "timeoutMs": 3600000
+}
+```
+
+The pre-run summary prints the effective timeout. Adapters that shell out
+(`opencode`, `copilot`, `claude`, `openai`, `stub`) enforce it on the child process; the
+`openai` adapter enforces it on the API call via `AbortController`.
+
+### Output verification gate (strict by default)
+
+A harness call that exits 0 is **not** proof that a task did anything — a model
+can reply "Ready for the task." and produce no files. The engine therefore
+verifies a successful call before marking the task complete:
+
+- **Expected outputs.** If a task declares `expectedOutputs`, every one must
+  exist after the harness call. Missing outputs → the attempt is treated as
+  failed, retried up to `--max-retries`, then marked `failed` with the missing
+  list as the error.
+- **No-op detection.** Tasks that declare no `expectedOutputs` must show evidence
+  of work: file changes in the git working tree (diffed before/after the call,
+  engine-owned `docs/` files excluded) **or** a substantive agent response. A
+  task with no changes and only trivial output ("Ready for the task.") is a
+  failed attempt, not a completion.
+- **Relax it** with `--allow-noop` / `FORGE_ENGINE_ALLOW_NOOP=1` to skip the
+  no-op heuristic (the expected-output check stays).
+- **Structured reports.** Tasks with a contract must return a fenced `forge-result`
+  JSON object with only two required fields: `summary` and `unresolved`. Use
+  `{"summary":"Actual outcome and required checks verified.","unresolved":[]}`
+  inside the fence. Summary can be a nonempty string or list of strings.
+  `decisions`, `interfaces`, `tests`, `warnings` and `validationLimitations` are
+  optional string arrays; omit empty or redundant detail. The report is limited
+  to 16000 characters. `unresolved` contains only blocking unmet requirements
+  or acceptance criteria and must be empty to complete. An unverified required
+  check remains a blocker. Optional string arrays `warnings` and
+  `validationLimitations` retain nonblocking observations and non-required checks
+  not run; the engine lists limitations under `## Validation Gaps` in
+  `docs/PROGRESS.md` and the Console shows them to dependent human reviewers.
+  Leaving changes for engine auto-commit is not a blocker. Never relabel
+  an unmet required check as a warning to bypass completion.
+- **Validation commands.** Structured tasks always run their manifest commands
+  after the output and report gates pass. For legacy tasks, pass `--run-validation` /
+  `FORGE_ENGINE_RUN_VALIDATION=1` to execute each task's manifest
+  `validationCommands` (cwd = repo root) and require them all to exit 0 before
+  the task counts as complete. Tasks that declare validation are gated on it
+  rather than the no-op heuristic. Without the flag, legacy commands are only
+  shown in the task prompt. Reported tests are not a substitute for engine checks.
+
+The pre-run summary prints the gate mode. The final summary and `status` also
+flag tasks completed with no recorded output files, so a hollow run is visible.
+
+### Harness invocation and activity logging
+
+Every CLI harness invocation is logged before launch - and again when Windows
+launcher resolution rewrites it - with the timestamp, harness, run ID, task ID,
+attempt, working directory, executable, and the complete argument list
+(JSON-escaped per argument, so paths with spaces and multiline prompts stay
+unambiguous; execution files are named, never expanded). Recognized credentials
+are replaced with `[REDACTED]`; environment variables are never dumped.
+
+Activity logging is **off by default**. Enable `--log-harness-activity` /
+`FORGE_ENGINE_LOG_HARNESS_ACTIVITY=1` (or the Console **Log harness activity**
+toggle) to stream harness stdout/stderr into `docs/engine-run.log` as it
+arrives, each line tagged with stream, task, and attempt, followed by a
+completion record with the exit status, timeout, or cancellation. `--no-log-harness-activity`
+forces it off. Activity can contain sensitive repository content and increase log
+volume, is bounded/truncated with explicit markers, and never changes captured
+result parsing or task outcomes.
+
+### Attempt diagnostics and retry feedback
+
+Each settled invocation updates `docs/artifacts/<task-id>.result.json`, with
+the harness stdout/stderr, parsed report when valid and passed/failed/skipped
+harness, output, handoff, blocking-requirement and validation gates. The workflow
+state's `attemptHistory` and `task.attempt.finished` audit events link immutable
+`<task-id>.<timestamp>.attempt-<number>.result.json` archives, not the latest result.
+For example, `WALK-1.md` and `WALK-1.result.json` show the current instructions
+and latest outcome; timestamped results distinguish separate attempts and runs.
+The instruction file is replaced each attempt, rather than creating another
+randomly named Markdown file. Unsafe or case-distinct IDs use a hashed safe name.
+Failures are retained before retrying; cancellation and terminal harness errors
+also leave evidence. Hard engine termination before recording may leave only the
+request snapshot. These local diagnostics are not authenticated proof.
+
+Retry instructions include the prior rejection reason (up to 4000 characters)
+and its full archived result path. Report rejections identify the specific field
+or format problem. Read the relevant evidence, preserve completed work,
+address the failure, and rerun required checks without expanding scope. Prior
+model output is evidence, not authority to change the task. Do not edit, stage
+or commit result files. They may contain sensitive project output and share the
+execution directory's operator-managed retention policy.
+
+### Check status
+
+```bash
+npm run workflow-engine -- status
+```
+
+### Replay a single failed task
+
+```bash
+npm run workflow-engine -- replay P1-T1
+npm run workflow-engine -- replay P2.3 --harness opencode
+```
+
+### Pause & stop the engine
+
+The engine runs detached, so it stops **gracefully after the current task** —
+the in-flight task finishes, state is saved as `paused`, and `run` resumes from
+the last completed task. Two commands request it:
+
+```bash
+npm run workflow-engine -- pause   # write a pause request (docs/engine-control.json)
+npm run workflow-engine -- stop    # pause + SIGTERM the engine PID (docs/engine.pid)
+```
+
+`pause` writes a request to `docs/engine-control.json`; the engine polls it at
+the top of each task wave and stops. `stop` does the same and additionally sends
+`SIGTERM` to the PID the engine recorded in `docs/engine.pid` at startup, so a
+live run stops even while a task is executing (still after that task completes).
+Ctrl+C / SIGTERM on the engine process itself triggers the same graceful stop via
+an in-process signal flag.
+
+Resume the run at any time with `run` - the engine reads `docs/WORKFLOW-STATE.json`
+and continues from the last completed task. If no engine is running, `pause`/`stop`
+flip the state status so the next `run` honors the request (stop is a no-op when
+the workflow is complete).
+
+`forge-launcher resume` offers "Stop the engine after the current task" when it
+detects a live run, and its resume/monitor commands reuse the last configured
+engine options (see `docs/engine-config.json`).
+
+### Immediate cancellation
+
+Programmatic callers may pass an `AbortSignal` through `EngineOptions.signal`.
+This is distinct from the graceful CLI pause/stop controls: cancellation aborts
+the active attempt, leaves the task persisted as pending, and leaves the run
+paused so a later `run` can resume it. Audit records identify cancellation with
+`task.cancelled`.
+
+Task failures may be classified as `retryable`, `configuration`, `exception`,
+`timeout`, or `cancelled`. Treat configuration and cancelled outcomes as
+explicit operational states; do not convert them into successful skips or
+silent transport fallback.
+
+---
+
+## Harness Adapters
+
+The engine is harness-agnostic. Select the backend with `--harness`:
+
+| Adapter | Flag | How it invokes agents |
+|---|---|---|
+| **OpenCode CLI** (default) | `--harness opencode` | `opencode run --model <m> [--agent <name>] "<short execution-file instruction>"`, spawned with `cwd` set to the repo |
+| **GitHub Copilot CLI** | `--harness copilot` | `copilot -p "<short execution-file instruction>" [--agent <name>] --yolo` |
+| **Claude Code CLI** | `--harness claude` | `claude -p "<short execution-file instruction>" --output-format json [--agent <name>] --permission-mode bypassPermissions` |
+| **OpenAI API** | `--harness openai` | `POST /v1/chat/completions` with agent rawBody as system prompt |
+| **Stub** | `--harness stub` | Returns synthetic success; no real calls (for testing) |
+
+### OpenCode adapter environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENCODE_BIN` | `opencode` | Path to the opencode binary |
+| `OPENCODE_EXTRA_FLAGS` | *(empty)* | Extra flags appended to every `opencode run` call |
+| `FORGE_ENGINE_ATTACH` | *(retired)* | Removed in v3.87 with `--keep-alive` / `--no-keep-alive` (ADR-058); ignored |
+| `FORGE_ENGINE_ATTACH_URL` | *(retired)* | Removed in v3.87 with `--attach` (ADR-058); ignored |
+| `FORGE_ENGINE_NATIVE_AGENT` | *(empty)* | `0` to force the inline-persona fallback instead of `--agent <name>` for `.opencode/` agents |
+
+### Claude Code adapter environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CLAUDE_BIN` | `claude` | Path to the Claude Code CLI binary |
+| `CLAUDE_EXTRA_FLAGS` | *(empty)* | Extra flags appended to every `claude -p` call (e.g. `--model opus`) |
+
+`--permission-mode bypassPermissions` is always passed so tool calls are
+auto-approved in a non-interactive run, and the `--output-format json` result
+envelope is parsed to classify failures as `configuration` or `retryable`.
+
+### Copilot adapter environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COPILOT_BIN` | `copilot` | Path to the GitHub Copilot CLI binary |
+| `COPILOT_EXTRA_FLAGS` | *(empty)* | Extra flags appended to every `copilot -p` call (e.g. `--model gpt-4o`) |
+
+The copilot adapter selects the forge agent **natively** when its file lives
+under the project's `.github/agents/` directory: it passes `--agent <name>` so
+the Copilot CLI loads the persona itself. Use a CLI version supporting this flag;
+`FORGE_ENGINE_NATIVE_AGENT=0` provides a fallback for older installations.
+For other harness roots (`.agents`, `.claude`, `.opencode`), the persona is
+included in the repository task's execution file. Tool permissions are auto-approved
+with `--yolo`, mirroring the opencode adapter's `--auto`.
+
+The opencode adapter selects the forge agent natively when its file lives under
+the project's `.opencode/agents/` directory: it passes `--agent <name>` so
+opencode loads the persona itself (sessions show the forge agent, not the
+default build agent) and does **not** inline it. For other harness roots
+(`.agents`, `.claude`, `.github`) opencode cannot discover the agent files, so it
+includes the fallback persona (`agent.rawBody`) in the repository execution file.
+Tool permissions are auto-approved with `--auto` in both cases.
+
+The claude adapter selects the forge agent natively when its file lives under
+the project's `.claude/agents/` directory: it passes `--agent <name>` so the
+Claude Code CLI loads the persona itself. It is the only transport that is
+native on the forge's canonical Claude root. For other harness roots
+(`.agents`, `.github`, `.opencode`) the CLI cannot discover the agent files, so
+the adapter includes the persona in the repository task's execution file instead.
+The successful envelope's `result` text passes through the engine's structured
+report, output and validation gates, with the same attempt archives and retry
+feedback as Copilot and OpenCode. Text-only tasks retain inline prompts.
+
+Set **`FORGE_ENGINE_NATIVE_AGENT=0`** on any of these harnesses to force the
+persona fallback instead of native agent selection (`--agent`). For repository
+tasks the fallback is in the execution file; for text-only tasks it is inline.
+
+### Task capability and request contract
+
+The engine prepares one read-only `TaskAttemptRequest` per attempt and passes it
+to the selected adapter. It contains the task, agent, effective model,
+projected context, repository, attempt metadata, and execution budget; mutable
+workflow state is never passed to an adapter.
+
+Manifest tasks may declare:
+
+```json
+{
+  "requiredCapabilities": ["text"]
+}
+```
+
+Use `["text"]` for tasks that do not need repository tools and
+`["repository-tools"]` for tasks that edit or inspect the repository. A missing
+or empty declaration is conservatively treated as `["repository-tools"]` for
+legacy manifests. OpenAI is text-only and rejects repository-tool tasks before
+dispatch; there is no silent execution fallback.
+
+Model precedence is `task.model`, then agent model, then the transport default.
+Adapters expose readonly capabilities and optional run-scoped `prepare` and
+`cleanup` hooks; cleanup runs even when an attempt, replay, or server startup
+fails.
+
+### OpenAI adapter environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `OPENAI_API_KEY` | *(required)* | API key |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override for compatible APIs |
+| `OPENAI_MODEL` | `gpt-4o` | Default model (overridden by agent `model:` frontmatter) |
+
+### Stub adapter environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `STUB_FAIL_TASK_IDS` | *(empty)* | Comma-separated task IDs to fail synthetically |
+| `STUB_DELAY_MS` | `0` | Simulated latency per task in milliseconds |
+
+---
+
+## Output Files
+
+Bootstrap ignores `docs/artifacts/`; the engine excludes its generated records
+from task attribution and auto-commit, including already tracked files. Pre-staged
+records block auto-commit without altering the user's index. Existing
+`docs/task-executions/` records and links are preserved and retain these exclusions.
+Updating templates does not untrack, relocate or remove existing diagnostics.
+
+| File | Purpose |
+|---|---|
+| `docs/WORKFLOW-STATE.json` | Machine-readable run state - task statuses, retries, outputs, blockers |
+| `docs/PROGRESS.md` | Human-readable progress (synced after every task, compatible with `forge-orchestrate-build` format) |
+| `docs/EXECUTION-AUDIT.jsonl` | Append-only audit trail for every state transition |
+
+---
+
+## State Model
+
+`docs/WORKFLOW-STATE.json` structure:
+
+```json
+{
+  "runId": "uuid",
+  "startedAt": "ISO-timestamp",
+  "lastUpdatedAt": "ISO-timestamp",
+  "manifestPath": "docs/EXECUTION-MANIFEST.json",
+  "manifestVersion": "1.0",
+  "harness": "opencode",
+  "status": "running | paused | complete | failed",
+  "currentPhase": "1",
+  "tasks": {
+    "1.1": {
+      "taskId": "1.1",
+      "status": "complete | running | pending | failed | skipped",
+      "ownerAgent": "api-engineer",
+      "startedAt": "ISO-timestamp",
+      "completedAt": "ISO-timestamp",
+      "attempt": 1,
+      "outputFiles": ["src/api/routes.ts"],
+      "agentOutput": "..."
+    }
+  },
+  "blockers": [],
+  "auditLog": []
+}
+```
+
+---
+
+## DAG Execution Order
+
+The engine builds a live task graph from `EXECUTION-MANIFEST.json`:
+
+1. Phases execute in dependency order (Phase 2 only starts after all Phase 1 tasks are complete or skipped).
+2. Within a phase, tasks with resolved dependencies run first.
+3. Tasks with no unresolved dependencies within a ready phase run immediately (sequential for safety in MVP mode).
+4. A task whose `ownerAgent` cannot be matched to a discovered `.md` agent file is **skipped** with a warning rather than failing the run. Skipped tasks satisfy dependencies (they are treated as done), so a skipped task never blocks a downstream phase.
+
+---
+
+## Retry Logic
+
+Each task is retried up to `--max-retries` times (default: 2) before being marked failed.
+
+- Delay between retries defaults to 5 000 ms (`--retry-delay-ms`).
+- A failed task blocks all downstream tasks in the same phase.
+- Use `npm run workflow-engine -- replay <task-id>` to re-run a single failed task after fixing the root cause.
+
+---
+
+## Resume Behaviour
+
+- `run` is idempotent: if `docs/WORKFLOW-STATE.json` already exists, the engine continues from the last non-complete task.
+- Tasks marked `complete` or `skipped` are never re-executed.
+- If the run was `paused`, `run` resumes it.
+- If the run was `failed`, `run` resumes by re-trying tasks that are not yet complete (use `replay` to target a specific task).
+
+---
+
+## Integration with forge-launcher (terminal-driven build path)
+
+The launcher is the canonical terminal entry point. Its derivation stages run
+`forge-build-agent-team` headlessly and then offer to start the engine detached.
+Requirements are never authored headlessly: a run with no `docs/PRD.md` stops and
+prints the interactive authoring command (ADR-060).
+`forge-launcher engine-run` compiles the manifest and runs/resumes the engine as
+a foreground or detached process:
+
+```bash
+forge-launcher engine-run --repo <repo> --harness opencode --yes        # run or resume
+forge-launcher engine-run --repo <repo> --harness opencode --yes --viz  # with the Forge Board
+forge-launcher resume --repo <repo>                                      # re-enter at the current stage
+```
+
+This gives the same project two mutually exclusive execution modes for a given run: interactive/prompt-driven (via `@project-orchestrator` in a chat harness) or autonomous/harness-driven (via this engine, from the terminal or `@workflow-orchestrator`).
+
+---
+
+## Gotchas
+
+- **Manifest must exist first.** The engine reads `docs/EXECUTION-MANIFEST.json` - it does not re-parse the PRD. If the PRD changes after a compile, re-run `forge-execution-adapter compile` and then start a fresh run.
+- **State is tied to a run ID.** Compiling a new manifest after a partial run will produce a manifest that no longer matches the in-progress state. Start a new run (`rm docs/WORKFLOW-STATE.json`) rather than mixing them.
+- **OpenCode must be in `$PATH`.** The `opencode` adapter shells out to the binary. If OpenCode is installed at a non-standard path, set `OPENCODE_BIN`.
+- **Per-task cold start is the main harness overhead.** Every fresh `opencode run` re-boots config, skills, and all MCP servers unless a warm server is already serving the project. The engine no longer manages this itself (ADR-058); each run connects to OpenCode's background service, so this cost is avoided whenever that service is up. Set `OPENCODE_EXTRA_FLAGS=--standalone` to give a run a private server.
+- **The warm server is OpenCode's, not the engine's.** Runs share OpenCode's background service, which already has config, skills, and MCP servers booted. The engine cannot health-check or restart it; if it is down, `opencode run` starts it.
+- **Agent file paths must be absolute or resolvable from the repo root.** Discovery reads the agent `.md` file and sets `agent.path`. Native adapters pass `--agent <name>`; other roots use the persona in the execution file for repository tasks, or inline for text-only tasks.
+- **Parallelism is opt-in, harness-gated, and isolated.** The engine executes the ready-task frontier concurrently up to `--concurrency <n>` (default `1` = sequential). Only harness adapters that declare `supportsConcurrency` are parallelized; **same-owner tasks are always serialized** (at most one task per agent per wave). Above concurrency `1` each task runs in its own `git worktree` under `.forge-sandboxes/`, so `outputFiles`, the no-op gate, and `validationCommands` stay exact. Two requirements come with it: **the working tree must be clean** (commit or stash first; the engine refuses and lists the offending paths). Each task's worktree is selected through the spawn `cwd`, with the child's `PWD` corrected to the same path, since OpenCode v2 resolves the project from `process.env.PWD ?? process.cwd()` and a stale inherited `PWD` outranks `cwd` (ADR-058, ADR-059). Cross-owner tasks that change the same file are detected at integration time and the second one fails. See ADR-056 and ADR-021.
+
+---
+
+## Artifact Pattern
+
+The engine implements the **Task → Agent → Artifact → Task** pattern described in the MyForge research. Instead of passing the full workflow state or previous agent output to each agent, the engine:
+
+1. Resolves which artifact types the next task declares as `inputs`
+2. Loads only those artifacts from `docs/artifacts/`
+3. Projects a compact summary (the fields the agent actually needs)
+4. Prepends the projection block to the agent's prompt
+
+This is the primary mechanism for **context-window efficiency** — especially useful with small local models.
+
+### Declaring artifact contracts in the manifest
+
+`forge-execution-adapter compile` **auto-declares** `produces` (and `inputs`)
+for every task it emits, so the artifact layer is on by default — no hand-editing
+required:
+
+```json
+{
+  "id": "1.2",
+  "produces": "work.1.2",
+  "inputs": ["work.1.1"]
+}
+```
+
+- **`inputs`** — list of artifact type strings the engine will load and project before running this task. The compiler wires each task to the previous task's `produces` (the linear dependency chain).
+- **`produces`** — the artifact type the engine records for this task. If the agent does not write one explicitly, the engine synthesises a minimal one from the task's outputs.
+
+You can still hand-edit `docs/EXECUTION-MANIFEST.json` to use semantic types
+(e.g. `solution.architecture`, `implementation.result`, `test.result`) or to
+declare cross-task `inputs` beyond the linear chain — the compiler's defaults are
+just the starting point.
+
+### Artifact storage layout
+
+```
+docs/artifacts/
+  architecture/
+    architecture-001.json
+  implementation/
+    implementation-001.json
+    implementation-002.json
+  review/
+    review-001.json
+```
+
+Each artifact is a small JSON document with a `summary` field, an optional `payload`, and metadata (`taskId`, `producedBy`, `inputs`, `filesChanged`, `nextActions`).
+
+### Audit events
+
+Two new events appear in `docs/EXECUTION-AUDIT.jsonl`:
+
+```jsonc
+// Emitted once per projected context (before task starts)
+{
+  "event": "context.projected",
+  "taskId": "review-api",
+  "sourceTokenEstimate": 12480,
+  "projectedTokenEstimate": 2180,
+  "reductionPercent": 82.5
+}
+
+// Emitted once per artifact created (after task completes)
+{
+  "event": "artifact.created",
+  "taskId": "implement-api",
+  "artifactId": "implementation-001",
+  "artifactType": "implementation.result",
+  "inputArtifacts": ["architecture-001"]
+}
+```
+
+The `reductionPercent` field is the quantitative proof-of-value: it records how much context was *not* sent to the agent.
+
+### Skipping the artifact pattern
+
+Tasks without `inputs` or `produces` are unaffected. The artifact layer is strictly additive — an existing hand-written manifest that omits them continues to work unchanged (the engine simply skips artifact creation and projection for those tasks).
+
+---
+
+## Validation
+
+Before reporting a run complete:
+
+- [ ] `docs/WORKFLOW-STATE.json` exists and `status` is `"complete"`
+- [ ] All tasks in the manifest are `"complete"` or `"skipped"` in the state file
+- [ ] `docs/PROGRESS.md` reflects the completed state
+- [ ] `docs/EXECUTION-AUDIT.jsonl` contains a `run.complete` event
+- [ ] No tasks have `status: "failed"` (if any do, the run status will be `"failed"`, not `"complete"`)
+- [ ] For each task with `produces`, a corresponding artifact file exists in `docs/artifacts/`
+
+---
+
+## References
+
+- Architecture decision: [ADR-017 — Artifact Store and Context Projection](../../../../docs/adr/017-artifact-store-and-context-projection.md)
+- Pattern deep-dive: [docs/artifact-store-deep-dive.md](../../../../docs/artifact-store-deep-dive.md)
+- Implementation: [`scripts/artifacts.ts`](scripts/artifacts.ts)
+- ADR-014: [Dynamic Workflow Orchestration](../../../../docs/adr/014-dynamic-workflow-orchestration.md)

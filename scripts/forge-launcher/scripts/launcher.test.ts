@@ -1,0 +1,695 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  buildTeamPrompt,
+  compareFeatureIncrementFiles,
+  defaultEngineHarness,
+  engineDetachedCommand,
+  featureTaskIds,
+  headlessSkillMsg,
+  runResume,
+  snapshotFeatureIncrementFiles,
+} from "./launcher.ts";
+import { spawnDetached } from "./format.ts";
+import { writeFeatureFixture } from "./feature-fixture.ts";
+
+const CLI = fileURLToPath(new URL("./cli.ts", import.meta.url));
+
+const GIT_ENV = {
+  GIT_AUTHOR_NAME: "forge-launcher-test",
+  GIT_AUTHOR_EMAIL: "test@example.com",
+  GIT_COMMITTER_NAME: "forge-launcher-test",
+  GIT_COMMITTER_EMAIL: "test@example.com",
+};
+
+function tmpDir(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "fl-launcher-"));
+}
+
+/**
+ * Collects everything `body` writes to stdout. The in-process resume wizard
+ * prints its handoff commands with `out()`, which writes straight to
+ * `process.stdout`, so there is no return value to assert on instead.
+ */
+async function captureStdout(body: () => Promise<number>): Promise<{ code: number; out: string }> {
+  const chunks: string[] = [];
+  const write = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    chunks.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    return { code: await body(), out: chunks.join("") };
+  } finally {
+    process.stdout.write = write;
+  }
+}
+
+function runCli(args: string[], env: Record<string, string>): Promise<{ code: number; out: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "node",
+      ["--import", "tsx", CLI, ...args],
+      { env: { ...process.env, ...GIT_ENV, ...env } },
+      (err, stdout, stderr) => {
+        if (err) {
+          resolve({ code: (err as { code?: number }).code ?? 1, out: stdout + stderr });
+          return;
+        }
+        resolve({ code: 0, out: stdout + stderr });
+      },
+    );
+  });
+}
+
+test("feature-increment filesystem guard allows additive manifest refreshes alongside agent updates", () => {
+  const repo = tmpDir();
+  fs.mkdirSync(path.join(repo, ".agents", "agents"), { recursive: true });
+  fs.mkdirSync(path.join(repo, ".agents", "skills", "forge-build-agent-team"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".agents", "agents", "existing.md"), "before\n");
+  fs.writeFileSync(path.join(repo, ".agents", "agents", "project-orchestrator.md"), "template\n");
+  fs.writeFileSync(path.join(repo, ".agents", "skills", "forge-build-agent-team", "SKILL.md"), "before\n");
+  fs.writeFileSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify({
+    phases: [{ id: "1", tasks: [{ id: "1.1", title: "Task 1.1", description: "Existing task", dependencies: [], expectedOutputs: [], validationCommands: [], approvalRequired: false }] }],
+  }), "utf8");
+  fs.writeFileSync(path.join(repo, "docs", "agent-responsibility-matrix.md"), "before\n");
+
+  const before = snapshotFeatureIncrementFiles(repo);
+  fs.writeFileSync(path.join(repo, ".agents", "agents", "existing.md"), "after\n");
+  fs.writeFileSync(path.join(repo, ".agents", "agents", "new-agent.md"), "new\n");
+  fs.writeFileSync(path.join(repo, ".agents", "agents", "project-orchestrator.md"), "updated template\n");
+  fs.writeFileSync(path.join(repo, ".agents", "skills", "forge-build-agent-team", "SKILL.md"), "after\n");
+  fs.writeFileSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify({
+    phases: [
+      { id: "1", tasks: [{ id: "1.1", title: "Task 1.1", description: "Existing task", dependencies: [], expectedOutputs: [], validationCommands: [], approvalRequired: false }] },
+      { id: "FEATURE-1", feature: "feature", tasks: [{ id: "FEATURE-1.1", title: "Task 1.1", description: "New task", dependencies: [], expectedOutputs: [], validationCommands: [], approvalRequired: false }] },
+    ],
+  }), "utf8");
+  fs.writeFileSync(path.join(repo, "docs", "agent-responsibility-matrix.md"), "after\n");
+
+  assert.deepEqual(compareFeatureIncrementFiles(before, repo), {
+    addedAgents: [".agents/agents/new-agent.md"],
+    modifiedAgents: [".agents/agents/existing.md"],
+    deletedAgents: [],
+    updatedOutputs: ["docs/EXECUTION-MANIFEST.json", "docs/agent-responsibility-matrix.md"],
+    unrelatedFiles: [],
+  });
+});
+
+test("feature-increment filesystem guard reports deletions and unrelated changes", () => {
+  const repo = tmpDir();
+  fs.mkdirSync(path.join(repo, ".agents", "agents"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".agents", "agents", "existing.md"), "agent\n");
+  fs.writeFileSync(path.join(repo, "README.md"), "before\n");
+  const before = snapshotFeatureIncrementFiles(repo);
+  fs.rmSync(path.join(repo, ".agents", "agents", "existing.md"));
+  fs.writeFileSync(path.join(repo, "README.md"), "unexpected\n");
+
+  const changes = compareFeatureIncrementFiles(before, repo);
+  assert.deepEqual(changes.deletedAgents, [".agents/agents/existing.md"]);
+  assert.deepEqual(changes.unrelatedFiles, ["README.md"]);
+});
+
+test("feature-increment filesystem guard rejects manifest rewrites that change existing tasks", () => {
+  const repo = tmpDir();
+  fs.mkdirSync(path.join(repo, ".agents", "agents"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".agents", "agents", "existing.md"), "agent\n");
+  fs.writeFileSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify({
+    phases: [{ id: "1", tasks: [{ id: "1.1", title: "Task 1.1", description: "Existing task", dependencies: [], expectedOutputs: [], validationCommands: [], approvalRequired: false }] }],
+  }), "utf8");
+
+  const before = snapshotFeatureIncrementFiles(repo);
+  fs.writeFileSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify({
+    phases: [{ id: "1", tasks: [{ id: "1.1", title: "Task 1.1", description: "Changed task", dependencies: [], expectedOutputs: [], validationCommands: [], approvalRequired: false }] }],
+  }), "utf8");
+
+  const changes = compareFeatureIncrementFiles(before, repo);
+  assert.deepEqual(changes.updatedOutputs, []);
+  assert.deepEqual(changes.unrelatedFiles, ["docs/EXECUTION-MANIFEST.json"]);
+});
+
+test("feature-increment filesystem guard ignores manifest key order when tasks are unchanged", () => {
+  const repo = tmpDir();
+  fs.mkdirSync(path.join(repo, ".agents", "agents"), { recursive: true });
+  fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".agents", "agents", "existing.md"), "agent\n");
+  fs.writeFileSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify({
+    phases: [{ id: "1", tasks: [{ id: "1.1", title: "Task 1.1", description: "Existing task", dependencies: [], expectedOutputs: [], validationCommands: [], approvalRequired: false }] }],
+  }), "utf8");
+
+  const before = snapshotFeatureIncrementFiles(repo);
+  fs.writeFileSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify({
+    phases: [{ id: "1", tasks: [{ approvalRequired: false, validationCommands: [], expectedOutputs: [], dependencies: [], description: "Existing task", title: "Task 1.1", id: "1.1" }] }],
+  }), "utf8");
+
+  const changes = compareFeatureIncrementFiles(before, repo);
+  assert.deepEqual(changes.updatedOutputs, ["docs/EXECUTION-MANIFEST.json"]);
+  assert.deepEqual(changes.unrelatedFiles, []);
+});
+
+test("non-interactive run with no PRD bootstraps and queues forge-auto-build-prd", async () => {
+  const parent = tmpDir();
+  const { code, out } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "no-prd-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A small expense tracker CLI",
+    FORGE_YN_DEFAULT: "n",
+  });
+
+  assert.equal(code, 0, out);
+  const repo = path.join(parent, "no-prd-app");
+  assert.ok(fs.existsSync(path.join(repo, ".agents", "agents", "project-orchestrator.md")));
+  assert.ok(fs.existsSync(path.join(repo, ".agents", "skills", "forge-auto-build", "SKILL.md")));
+  assert.ok(fs.existsSync(path.join(repo, "docs", "IDEA.md")));
+  assert.ok(fs.existsSync(path.join(repo, "IDEA.md")));
+  assert.ok(!fs.existsSync(path.join(repo, "docs", "PRD.md")));
+  const config = JSON.parse(
+    fs.readFileSync(path.join(repo, "docs", "engine-config.json"), "utf8"),
+  ) as { harness: string };
+  assert.equal(config.harness, "opencode");
+  // CR-001 lifecycle: no PRD -> queue forge-auto-build-prd
+  assert.ok(out.includes("/forge-auto-build-prd Use docs/IDEA.md as the project idea"));
+  assert.ok(!out.includes("/forge-auto-build Use docs/PRD.md as the project PRD"));
+});
+
+test("new-project model options persist while inherit clears saved choices and bypasses stage env", async (t) => {
+  const parent = tmpDir();
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const repo = path.join(parent, "saved-authoring-models");
+  fs.mkdirSync(path.join(repo, "docs", "research"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "docs", "authoring-config.json"), JSON.stringify({
+    version: 1, models: { team: "old-team-1" },
+  }));
+  fs.writeFileSync(path.join(repo, "docs", "research", "model-inventory.json"), JSON.stringify({
+    last_verified: new Date().toISOString(), stub: { models: [{ id: "prd-1" }] },
+  }));
+  const { code, out } = await runCli([
+    "--non-interactive", "--no-update-check",
+    "--prd-model", "prd-1", "--team-model", "inherit", "--skills-model", "skills-3",
+  ], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "saved-authoring-models",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_HOME: path.join(parent, "console-home"),
+    FORGE_IDEA: "A thing",
+    FORGE_YN_DEFAULT: "n",
+    FORGE_AUTO_DRAFT: "0",
+    FORGE_RUN_WITH: "stub",
+    FORGE_PRD_MODEL: "unavailable-environment-model",
+    FORGE_TEAM_MODEL: "unavailable-environment-team",
+  });
+  assert.equal(code, 0, out);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(repo, "docs", "authoring-config.json"), "utf8")), {
+    version: 1, models: { prd: "prd-1", skills: "skills-3" },
+  });
+  assert.equal(fs.existsSync(path.join(repo, "docs", "PRD.md")), false);
+});
+
+test("new-project runner option persists as the project authoring runner", async (t) => {
+  const parent = tmpDir();
+  t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
+  const repo = path.join(parent, "saved-authoring-runner");
+  const { code, out } = await runCli([
+    "--non-interactive", "--no-update-check", "--runner", "claude",
+  ], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "saved-authoring-runner",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_HOME: path.join(parent, "console-home"),
+    FORGE_IDEA: "A thing",
+    FORGE_YN_DEFAULT: "n",
+    FORGE_AUTO_DRAFT: "0",
+    FORGE_RUN_WITH: "stub",
+  });
+  assert.equal(code, 0, out);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(repo, "docs", "authoring-config.json"), "utf8")), {
+    version: 1, models: {}, runner: "claude",
+  });
+});
+
+test("GitHub projects default to the copilot engine harness", () => {
+  assert.equal(defaultEngineHarness("github"), "copilot");
+  assert.equal(defaultEngineHarness("opencode"), "opencode");
+  assert.equal(defaultEngineHarness("claude"), "claude");
+  assert.equal(defaultEngineHarness("agents"), "opencode");
+});
+
+test("the PRD authoring message requires an interview and still runs the gap check", () => {
+  const msg = headlessSkillMsg();
+  assert.ok(msg.startsWith("/forge-auto-build-prd "), msg);
+  assert.ok(msg.includes("Interview me to fill the gaps"), msg);
+  assert.ok(msg.includes("acceptance criteria"), msg);
+  assert.ok(msg.includes("security, privacy, accessibility"), msg);
+  assert.ok(msg.includes("including for a one-feature project"), msg);
+  assert.ok(msg.includes("run validate-prd"), msg);
+  assert.ok(msg.includes("docs/PRD.md"), msg);
+  assert.ok(msg.includes("docs/features/*.md"), msg);
+  assert.ok(!msg.includes("otherwise keep"), msg);
+  // ADR-060: the queued message must never authorize a non-interactive draft.
+  assert.ok(!msg.includes("auto-proceed"), msg);
+  assert.ok(!/headless mode/i.test(msg), msg);
+});
+
+test("team-generation prompt targets the selected harness directories", () => {
+  assert.ok(buildTeamPrompt("docs/PRD.md", "opencode").includes(".opencode/agents/"));
+  assert.ok(buildTeamPrompt("docs/PRD.md", "opencode").includes(".opencode/skills/"));
+  assert.ok(buildTeamPrompt("docs/PRD.md", "github").includes(".github/agents/"));
+  assert.ok(buildTeamPrompt("docs/PRD.md", "github").includes(".github/skills/"));
+  assert.match(buildTeamPrompt("docs/PRD.md", "opencode"), /reusable, repeated, or fragile project-specific processes/);
+  assert.match(buildTeamPrompt("docs/PRD.md", "opencode"), /action create when a needed process has no suitable package/);
+  assert.match(buildTeamPrompt("docs/PRD.md", "opencode"), /single-line, double-quoted YAML value/);
+  assert.match(buildTeamPrompt("docs/PRD.md", "opencode"), /description: >, description: \|/);
+});
+
+test("auto-draft engine command carries configured granularity/concurrency/timeout/retries", async () => {
+  const parent = tmpDir();
+  const { code, out } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "engine-opts-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A todo list app",
+    FORGE_YN_DEFAULT: "n",
+    FORGE_AUTO_DRAFT: "1",
+    FORGE_RUN_WITH: "stub",
+    FORGE_ENGINE_HARNESS: "copilot",
+    FORGE_ENGINE_GRANULARITY: "coarse",
+    FORGE_ENGINE_CONCURRENCY: "3",
+    FORGE_ENGINE_TASK_TIMEOUT_MS: "300000",
+    FORGE_ENGINE_MAX_RETRIES: "4",
+  });
+
+  assert.equal(code, 0, out);
+  const repo = path.join(parent, "engine-opts-app");
+  assert.ok(out.includes(`engine-run --repo ${repo}`), out);
+  assert.ok(out.includes("--harness copilot"), out);
+  assert.ok(out.includes("--granularity coarse"), out);
+  assert.ok(out.includes("--concurrency 3"), out);
+  assert.ok(out.includes("--task-timeout-ms 300000"), out);
+  assert.ok(out.includes("--max-retries 4"), out);
+  assert.ok(out.includes("--yes"), out);
+});
+
+test("auto-draft engine command enables the live dashboard from env", async () => {
+  const parent = tmpDir();
+  const { code, out } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "engine-viz-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A todo list app",
+    FORGE_YN_DEFAULT: "n",
+    FORGE_AUTO_DRAFT: "1",
+    FORGE_RUN_WITH: "stub",
+    FORGE_ENGINE_VIZ: "1",
+    FORGE_ENGINE_VIZ_PORT: "5500",
+  });
+
+  assert.equal(code, 0, out);
+  const repo = path.join(parent, "engine-viz-app");
+  assert.ok(out.includes(`engine-run --repo ${repo}`), out);
+  assert.ok(out.includes("--viz"), out);
+  assert.ok(out.includes("--viz-port 5500"), out);
+  assert.ok(out.includes("--yes"), out);
+});
+
+test("auto-draft engine command ignores the retired keep-alive/attach env", async () => {
+  const parent = tmpDir();
+  const { code, out } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "engine-keepalive-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A todo list app",
+    FORGE_YN_DEFAULT: "n",
+    FORGE_AUTO_DRAFT: "1",
+    FORGE_RUN_WITH: "stub",
+    // Retired with OpenCode v2 (ADR-058): setting these must change nothing.
+    FORGE_ENGINE_ATTACH: "1",
+    FORGE_ENGINE_ATTACH_URL: "http://127.0.0.1:4096",
+  });
+
+  assert.equal(code, 0, out);
+  const repo = path.join(parent, "engine-keepalive-app");
+  assert.ok(out.includes(`engine-run --repo ${repo}`), out);
+  assert.ok(!out.includes("--keep-alive"), out);
+  assert.ok(!out.includes("--attach"), out);
+  assert.ok(out.includes("--yes"), out);
+});
+
+test("spawnDetached tees child output to the log even with only logFile", async () => {
+  const dir = tmpDir();
+  const logFile = path.join(dir, "detached.log");
+  spawnDetached(process.execPath, ["-e", 'console.log("viz-stdout"); console.error("viz-stderr");'], {
+    cwd: dir,
+    logFile,
+  });
+
+  const deadline = Date.now() + 5000;
+  let text = "";
+  while (Date.now() < deadline) {
+    try {
+      text = fs.readFileSync(logFile, "utf8");
+      if (text.includes("viz-stdout") && text.includes("viz-stderr")) break;
+    } catch {
+      /* not written yet */
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.ok(text.includes("viz-stdout"), `stdout captured: ${text}`);
+  assert.ok(text.includes("viz-stderr"), `stderr captured: ${text}`);
+});
+
+test("detached engine command resolves a runnable CLI entry", () => {
+  const repo = "/tmp/example-repo";
+  const { cmd, args } = engineDetachedCommand(["engine-run", "--repo", repo, "--harness", "opencode", "--yes"]);
+
+  assert.equal(cmd, process.execPath);
+  // The CLI entry must resolve to a real file: dist/cli.js when compiled, or
+  // scripts/cli.ts when running from source (the detached child would otherwise
+  // fail to start with ENOENT and produce no manifest or logs).
+  const entryIdx = args.findIndex((a) => a.endsWith("cli.js") || a.endsWith("cli.ts"));
+  assert.ok(entryIdx >= 0, args.join(" "));
+  assert.ok(fs.existsSync(args[entryIdx]), `entry exists: ${args[entryIdx]}`);
+
+  const runIdx = args.indexOf("engine-run");
+  assert.ok(runIdx > entryIdx, "engine-run subcommand must follow the CLI entry");
+  assert.ok(args.includes("--repo") && args.includes(repo));
+  assert.ok(args.includes("--harness") && args.includes("opencode"));
+  assert.ok(args.includes("--yes"));
+
+  // Running from source (tsx) preloads the tsx loader so plain `node` can run the .ts entry.
+  if (import.meta.url.endsWith(".ts")) {
+    assert.equal(args[0], "--import");
+  }
+});
+
+test("feature-prd fails when the skill exits without a new feature document", async () => {
+  const repo = tmpDir();
+  execFileSync("git", ["init", "-q", repo]);
+  fs.mkdirSync(path.join(repo, ".agents", "skills", "forge-build-feature-prd"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".agents", "skills", "forge-build-feature-prd", "SKILL.md"), "# feature skill\n");
+
+  const result = await runCli(["feature-prd", "--repo", repo, "--prompt", "safe feature"], {
+    FORGE_RUN_WITH: "stub",
+    FORGE_STUB_NOOP: "1",
+  });
+
+  assert.equal(result.code, 1, result.out);
+  assert.match(result.out, /without creating a new non-empty/);
+});
+
+test("feature-prd accepts a newly created non-empty feature document", async () => {
+  const repo = tmpDir();
+  execFileSync("git", ["init", "-q", repo]);
+  writeFeatureFixture(repo);
+  fs.mkdirSync(path.join(repo, ".agents", "skills", "forge-build-feature-prd"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".agents", "skills", "forge-build-feature-prd", "SKILL.md"), "# feature skill\n");
+
+  const result = await runCli(["feature-prd", "--repo", repo, "--prompt", "safe feature"], {
+    FORGE_RUN_WITH: "stub",
+  });
+
+  assert.equal(result.code, 0, result.out);
+  assert.ok(fs.readFileSync(path.join(repo, "docs", "features", "stub-feature.md"), "utf8").trim());
+  const log = fs.readFileSync(path.join(repo, "docs", "engine-run.log"), "utf8");
+  const event = log.split("\n").find((line) => line.startsWith("FORGE_EVENT "));
+  assert.ok(event, "feature authoring should emit a structured lifecycle event");
+  assert.equal(JSON.parse(event!.slice("FORGE_EVENT ".length)).type, "authoring.started");
+});
+
+test("interactive feature handoff records the pre-session feature fingerprints", async () => {
+  const repo = tmpDir();
+  execFileSync("git", ["init", "-q", repo]);
+  writeFeatureFixture(repo);
+
+  const result = await runCli(["feature-prd", "--repo", repo, "--prompt", "safe feature"], {
+    FORGE_RUN_WITH: "opencode",
+  });
+
+  assert.equal(result.code, 1, result.out);
+  const state = JSON.parse(fs.readFileSync(path.join(repo, "docs", "authoring-state.json"), "utf8"));
+  assert.deepEqual(Object.keys(state.featureIncrementHandoff.featureFingerprints), ["fixture.md"]);
+});
+
+test("feature increment selection excludes unrelated manifest tasks", () => {
+  const selected = featureTaskIds({ phases: [
+    { id: "OLD-1", feature: "Old Feature", tasks: [{ id: "OLD-1.1" }] },
+    { id: "NEW-FEATURE-1", feature: "new-feature", tasks: [{ id: "NEW-FEATURE-1.1" }, { id: "NEW-FEATURE-1.2" }] },
+  ] }, ["new-feature"]);
+  assert.deepEqual(selected, ["NEW-FEATURE-1.1", "NEW-FEATURE-1.2"]);
+});
+
+test("non-interactive resume prints an interactive OpenCode requirements command", async (t) => {
+  const repo = tmpDir();
+  execFileSync("git", ["init", "-q", repo]);
+  fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+  fs.mkdirSync(path.join(repo, ".opencode"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "docs", "IDEA.md"), "# Idea\n\nA thing.\n");
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "fl-opencode-bin-"));
+  t.after(() => fs.rmSync(bin, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(path.join(bin, "opencode"), 0o755);
+  const { code, out } = await runCli(["resume", "--repo", repo, "--non-interactive"], {
+    FORGE_RUN_WITH: "opencode",
+    PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
+  });
+
+  assert.equal(code, 0, out);
+  assert.match(out, /opencode "mini" "--prompt"/);
+  assert.match(out, /\/forge-auto-build-prd/);
+  assert.doesNotMatch(out, /opencode run --auto/);
+  assert.doesNotMatch(out, /--dir/);
+});
+
+test("resume dry-run prints an interactive authoring command", async (t) => {
+  const repo = tmpDir();
+  execFileSync("git", ["init", "-q", repo]);
+  fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+  fs.mkdirSync(path.join(repo, ".opencode"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "docs", "IDEA.md"), "# Idea\n\nA thing.\n");
+  const bin = fs.mkdtempSync(path.join(os.tmpdir(), "fl-opencode-bin-"));
+  t.after(() => fs.rmSync(bin, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\nexit 0\n");
+  fs.chmodSync(path.join(bin, "opencode"), 0o755);
+  const output: string[] = [];
+  const write = process.stdout.write;
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    output.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+    return true;
+  }) as typeof process.stdout.write;
+  let code: number;
+  try {
+    code = await runResume({
+      repo,
+      dryRun: true,
+      env: { ...process.env, FORGE_RUN_WITH: "opencode", PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
+      dependencies: { promptSelect: async () => "cli" },
+    });
+  } finally {
+    process.stdout.write = write;
+  }
+  const out = output.join("");
+  assert.equal(code!, 0, out);
+  assert.match(out, /Dry-run: not opening an interactive session/);
+  assert.match(out, /opencode "mini" "--prompt"/);
+  assert.match(out, /\/forge-auto-build-prd/);
+  assert.doesNotMatch(out, /opencode run --auto/);
+});
+
+test("resume's interactive handoff builds argv each runner can actually parse", async (t) => {
+  // OpenCode's root command has no --model, so `opencode --model <id>` fails
+  // argument parsing before any session starts and the handoff has to route
+  // through `mini`. copilot and claude are asserted here too because their argv
+  // is deliberately left alone: queueing their prompt on this path would newly
+  // auto-approve permissions via --yolo in a step that has always asked.
+  for (const [runner, expected, forbidden] of [
+    ["opencode", /opencode mini --prompt/, /opencode --model|opencode "\/forge/],
+    ["copilot", /copilot --model/, /copilot -i/],
+  ] as const) {
+    const repo = tmpDir();
+    t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+    execFileSync("git", ["init", "-q", repo]);
+    fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "docs", "IDEA.md"), "# Idea\n\nA thing.\n");
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "fl-handoff-bin-"));
+    t.after(() => fs.rmSync(bin, { recursive: true, force: true }));
+    for (const cli of [runner, "opencode", "copilot"]) {
+      fs.writeFileSync(path.join(bin, cli), "#!/bin/sh\nexit 0\n");
+      fs.chmodSync(path.join(bin, cli), 0o755);
+    }
+    const { code, out } = await captureStdout(() => runResume({
+      repo,
+      env: { ...process.env, FORGE_RUN_WITH: runner, FORGE_PRD_MODEL: "anthropic/prd-1", PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}` },
+      dependencies: {
+        promptSelect: async () => "cli",
+        inventoryProbe: async () => ({
+          code: 0,
+          stdout: "anthropic/prd-1\nanthropic/team-2\n",
+          stderr: "",
+        }),
+      },
+    }));
+    assert.equal(code, 0, out);
+    assert.match(out, expected, out);
+    assert.doesNotMatch(out, forbidden, out);
+  }
+});
+
+test("imported requirements remain source material and queue feature authoring", async () => {
+  const parent = tmpDir();
+  const prd = path.join(parent, "prd.md");
+  fs.writeFileSync(prd, "# PRD\n\n## Phase 1: Foundation\n- Build a thing.\n");
+
+  const { code, out } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "with-prd-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A thing",
+    FORGE_PRD_FILE: prd,
+    FORGE_YN_DEFAULT: "n",
+  });
+
+  assert.equal(code, 0, out);
+  const repo = path.join(parent, "with-prd-app");
+  assert.ok(fs.existsSync(path.join(repo, "docs", "requirements-source.md")));
+  assert.ok(!fs.existsSync(path.join(repo, "docs", "PRD.md")));
+  assert.ok(out.includes("/forge-auto-build-prd"), out);
+});
+
+test("non-interactive run with a PRD and a generated team queues /forge-orchestrate-build", async () => {
+  const parent = tmpDir();
+  const prd = path.join(parent, "prd.md");
+  fs.writeFileSync(prd, "# PRD\n\n## Phase 1: Foundation\n- Build a thing.\n");
+
+  const { code, out } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "with-team-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A thing",
+    FORGE_PRD_FILE: prd,
+    FORGE_YN_DEFAULT: "n",
+    FORGE_AUTO_DRAFT: "1",
+    FORGE_RUN_WITH: "stub",
+  });
+
+  assert.equal(code, 0, out);
+  const repo = path.join(parent, "with-team-app");
+  assert.ok(fs.existsSync(path.join(repo, ".agents", "agents", "stub-project-agent.md")), out);
+  // Team exists -> the in-harness entry is the interactive orchestrator.
+  assert.ok(out.includes("/forge-orchestrate-build Use docs/PRD.md and docs/features/*.md as canonical requirements"), out);
+  assert.ok(!out.includes("/forge-auto-build Use docs/PRD.md as the project PRD"), out);
+});
+
+test("commit step created the bootstrap commit", async () => {
+  const parent = tmpDir();
+  const { code } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "commit-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A thing",
+    FORGE_YN_DEFAULT: "n",
+  });
+  assert.equal(code, 0);
+  const out = execFileSync("git", ["-C", path.join(parent, "commit-app"), "log", "--oneline"], { encoding: "utf8" });
+  assert.ok(out.includes("chore: bootstrap MyForge"));
+});
+
+test("openCode harness bootstrap rewrites paths to .opencode", async () => {
+  const parent = tmpDir();
+  const { code } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "2",
+    FORGE_REPO_NAME: "oc-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A thing",
+    FORGE_YN_DEFAULT: "n",
+  });
+  assert.equal(code, 0);
+  const repo = path.join(parent, "oc-app");
+  assert.ok(fs.existsSync(path.join(repo, ".opencode", "skills", "forge-auto-build", "SKILL.md")));
+  assert.ok(!fs.existsSync(path.join(repo, ".agents")));
+  const skill = fs.readFileSync(path.join(repo, ".opencode", "skills", "forge-auto-build", "SKILL.md"), "utf8");
+  assert.ok(skill.includes(".opencode/"));
+  assert.ok(!skill.includes(".agents/"));
+});
+
+test("auto-draft PRD succeeds via the stub skill runner", async () => {
+  const parent = tmpDir();
+  const { code, out } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "draft-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A todo list app",
+    FORGE_YN_DEFAULT: "n",
+    FORGE_AUTO_DRAFT: "1",
+    FORGE_RUN_WITH: "stub",
+  });
+
+  assert.equal(code, 0, out);
+  const repo = path.join(parent, "draft-app");
+  assert.ok(fs.existsSync(path.join(repo, "docs", "PRD.md")), "PRD should exist");
+  assert.ok(out.includes("PRD generated."));
+  assert.ok(out.includes("docs: add auto-drafted PRD"));
+  // the team stage ran too
+  assert.ok(fs.existsSync(path.join(repo, ".agents", "agents", "stub-project-agent.md")));
+  assert.ok(out.includes("Agent team generated."));
+  const log = execFileSync("git", ["-C", repo, "log", "--oneline"], { encoding: "utf8" });
+  assert.ok(log.includes("docs: add auto-drafted PRD"));
+  assert.ok(log.includes("feat: generate auto-drafted agent team"));
+});
+
+test("auto-draft compiles the native manifest after team and skills without authoring engine progress", async () => {
+  const parent = tmpDir();
+  const prd = path.join(parent, "prd.md");
+  fs.writeFileSync(prd, "# PRD\n\n## Phase 1: Foundation\n- Build a thing.\n");
+
+  const { code, out } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "plan-step-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A thing",
+    FORGE_PRD_FILE: prd,
+    FORGE_YN_DEFAULT: "n",
+    FORGE_AUTO_DRAFT: "1",
+    FORGE_RUN_WITH: "stub",
+  });
+
+  assert.equal(code, 0, out);
+  const repo = path.join(parent, "plan-step-app");
+  assert.ok(fs.existsSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json")), "native execution manifest should exist");
+  assert.ok(!fs.existsSync(path.join(repo, "docs", "PROGRESS.md")), "engine progress must not be authored by an LLM");
+  assert.ok(out.includes("Execution manifest compiled"), out);
+  assert.ok(out.includes("engine-run --repo"), out);
+});
+
+test("a stubbed PRD stage that produces nothing fails validation with no commit", async () => {
+  const parent = tmpDir();
+  // The stub runner is the one sanctioned non-interactive requirements path
+  // (ADR-060), so this covers the offline validation gate rather than the
+  // interactive handoff a real runner would take.
+  const { code, out } = await runCli(["--non-interactive"], {
+    FORGE_HARNESS_CHOICE: "4",
+    FORGE_REPO_NAME: "draft-fail-app",
+    FORGE_REPO_PARENT_DIR: parent,
+    FORGE_IDEA: "A todo list app",
+    FORGE_YN_DEFAULT: "n",
+    FORGE_AUTO_DRAFT: "1",
+    FORGE_RUN_WITH: "stub",
+    FORGE_STUB_NOOP: "1",
+  });
+
+  assert.equal(code, 1, out);
+  const repo = path.join(parent, "draft-fail-app");
+  assert.ok(!fs.existsSync(path.join(repo, "docs", "PRD.md")), "no PRD should exist");
+  assert.ok(out.includes("PRD authoring validation failed"), out);
+  assert.ok(out.includes("Missing docs/PRD.md"), out);
+  assert.ok(out.includes("[stub] invoking forge-auto-build-prd"));
+  // nothing was committed beyond the bootstrap commit
+  const log = execFileSync("git", ["-C", repo, "log", "--oneline"], { encoding: "utf8" });
+  assert.ok(!log.includes("docs: add auto-drafted PRD"));
+});

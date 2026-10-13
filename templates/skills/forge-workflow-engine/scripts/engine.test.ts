@@ -1,0 +1,1905 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { allDepsComplete, isComplete, isTaskDone, mapLimit, nextReadyTasks, ownerUniqueReady, replayTask, resolveConcurrency, runEngine, unmetPrerequisites, validateManifestDependencies } from "./engine.ts";
+import { runCommand } from "./harness/run.ts";
+import { OpenAIAdapter } from "./harness/openai-adapter.ts";
+import { compileExecutionManifestDetailed } from "../../forge-execution-adapter/scripts/compiler.ts";
+import { discoverForgeRepo } from "../../forge-execution-adapter/scripts/discovery.ts";
+import { readControl, writeControl } from "./control.ts";
+import { approveHumanTask } from "./task-context.ts";
+import { ArtifactStore } from "./artifacts.ts";
+import { reconcileState, loadState, saveState, initState } from "./state.ts";
+import type { EngineOptions, ExecutionManifest, HarnessAdapter, ManifestTask, TaskResult, TaskStatus, WorkflowState } from "./types.ts";
+
+type ManifestPhase = ExecutionManifest["phases"][number];
+
+function makeTask(id: string, dependencies: string[] = []): ManifestTask {
+  return {
+    id,
+    title: `Task ${id}`,
+    description: `Task ${id} description`,
+    dependencies,
+    expectedOutputs: [],
+    validationCommands: [],
+    approvalRequired: false,
+    sourceLines: [],
+  };
+}
+
+function makePhase(id: string, tasks: ManifestTask[], dependencies: string[] = []): ManifestPhase {
+  return {
+    id,
+    title: `Phase ${id}`,
+    description: "",
+    ownerAgents: [],
+    dependencies,
+    approvalRequired: false,
+    tasks,
+  };
+}
+
+test("validateManifestDependencies reports orphan task and phase dependencies", () => {
+  const manifest = makeManifest([makePhase("one", [makeTask("one.1", ["missing"]),], ["missing-phase"])]);
+  assert.deepEqual(validateManifestDependencies(manifest), [
+    "Phase 'one' depends on orphan phase 'missing-phase'.",
+    "Task 'one.1' depends on orphan task 'missing'.",
+  ]);
+});
+
+test("validateManifestDependencies rejects duplicate global task ids", () => {
+  const manifest = makeManifest([makePhase("one", [makeTask("same")]), makePhase("two", [makeTask("same")])]);
+  assert.throws(() => validateManifestDependencies(manifest), /Duplicate global task id/);
+});
+
+function makeManifest(phases: ManifestPhase[]): ExecutionManifest {
+  return {
+    version: "1.0",
+    sourceLayout: "features",
+    generatedAt: new Date().toISOString(),
+    repoRoot: "/tmp",
+    harnessRoot: ".opencode",
+    prdPath: "/tmp/docs/PRD.md",
+    progressPath: "/tmp/docs/PROGRESS.md",
+    auditPath: "/tmp/docs/EXECUTION-AUDIT.jsonl",
+    validationCommands: [],
+    approvalGates: { preflight: true, betweenPhases: true },
+    phases,
+    warnings: [],
+  };
+}
+
+function makeState(statuses: Record<string, TaskStatus>): WorkflowState {
+  const tasks: WorkflowState["tasks"] = {};
+  for (const [id, status] of Object.entries(statuses)) {
+    tasks[id] = { taskId: id, status, attempt: 0, outputFiles: [] };
+  }
+  return {
+    runId: "test-run",
+    startedAt: new Date().toISOString(),
+    lastUpdatedAt: new Date().toISOString(),
+    manifestPath: "/tmp/docs/EXECUTION-MANIFEST.json",
+    manifestVersion: "1.0",
+    harness: "stub",
+    status: "running",
+    tasks,
+    blockers: [],
+    auditLog: [],
+  };
+}
+
+test("isTaskDone treats complete and skipped as done", () => {
+  assert.equal(isTaskDone("complete"), true);
+  assert.equal(isTaskDone("skipped"), true);
+  assert.equal(isTaskDone("pending"), false);
+  assert.equal(isTaskDone("running"), false);
+  assert.equal(isTaskDone("failed"), false);
+  assert.equal(isTaskDone(undefined), false);
+});
+
+test("reconcileState preserves completed records and adds pending tasks", () => {
+  const old = makeState({ "1.1": "complete" });
+  const manifest = makeManifest([makePhase("1", [makeTask("1.1"), makeTask("1.2", ["1.1"])])]);
+  const next = reconcileState(old, manifest);
+  assert.equal(next.tasks["1.1"]?.status, "complete");
+  assert.equal(next.tasks["1.2"]?.status, "pending");
+});
+
+test("allDepsComplete accepts skipped dependencies", () => {
+  const state = makeState({ "1.1": "complete", "1.2": "skipped" });
+  assert.equal(allDepsComplete("1.3", ["1.1", "1.2"], state), true);
+  assert.equal(allDepsComplete("1.3", ["1.1", "1.3"], state), false); // 1.3 pending
+});
+
+test("nextReadyTasks does not deadlock when a prior phase has a skipped task", () => {
+  const manifest = makeManifest([
+    makePhase("1", [makeTask("1.1"), makeTask("1.2")]),
+    makePhase("2", [makeTask("2.1")], ["1"]),
+  ]);
+  const state = makeState({ "1.1": "complete", "1.2": "skipped", "2.1": "pending" });
+
+  const ready = nextReadyTasks(manifest, state);
+  assert.deepEqual(ready.map((entry) => entry.task.id), ["2.1"]);
+});
+
+test("nextReadyTasks blocks a downstream phase while its dependency is pending", () => {
+  const manifest = makeManifest([
+    makePhase("1", [makeTask("1.1"), makeTask("1.2")]),
+    makePhase("2", [makeTask("2.1")], ["1"]),
+  ]);
+  const state = makeState({ "1.1": "complete", "1.2": "pending", "2.1": "pending" });
+
+  const ready = nextReadyTasks(manifest, state);
+  assert.deepEqual(ready.map((entry) => entry.task.id), ["1.2"]);
+});
+
+test("unmetPrerequisites agrees with nextReadyTasks about what is reviewable", () => {
+  // The Console surfaces this list and both approval surfaces refuse on it, so
+  // it has to be the same gate the dispatcher applies - including for a
+  // skipped prerequisite, which must not hold a review open.
+  const manifest = makeManifest([
+    makePhase("1", [makeTask("1.1"), makeTask("1.2")]),
+    makePhase("2", [{ ...makeTask("2.1"), dependencies: ["1.2"] }], ["1"]),
+  ]);
+
+  for (const statuses of [
+    { "1.1": "complete", "1.2": "pending", "2.1": "pending" },
+    { "1.1": "complete", "1.2": "skipped", "2.1": "pending" },
+    { "1.1": "complete", "1.2": "complete", "2.1": "pending" },
+    { "1.1": "failed", "1.2": "complete", "2.1": "pending" },
+  ] as Array<Record<string, TaskStatus>>) {
+    const state = makeState(statuses);
+    const ready = new Set(nextReadyTasks(manifest, state).map((entry) => entry.task.id));
+    const unmet = unmetPrerequisites(manifest, state, "2.1");
+    assert.equal(unmet.length === 0, ready.has("2.1"),
+      `2.1 ready=${ready.has("2.1")} but unmet=${JSON.stringify(unmet)} for ${JSON.stringify(statuses)}`);
+  }
+  assert.deepEqual(unmetPrerequisites(manifest, makeState({ "1.1": "complete", "1.2": "pending", "2.1": "pending" }), "2.1"), ["1.2"]);
+  assert.deepEqual(unmetPrerequisites(manifest, makeState({ "1.1": "pending", "1.2": "pending", "2.1": "pending" }), "2.1"), ["1.2", "1.1"],
+    "a phase dependency brings in every task of the phase, not only its last one, and is reported after the direct ones");
+  assert.deepEqual(unmetPrerequisites(manifest, makeState({}), "missing"), []);
+});
+
+test("nextReadyTasks filters to the manual selection", () => {
+  const manifest = makeManifest([
+    makePhase("1", [makeTask("1.1"), makeTask("1.2")]),
+  ]);
+  const state = {
+    ...makeState({ "1.1": "pending", "1.2": "pending" }),
+    selection: { mode: "manual" as const, scope: "single" as const, taskIds: ["1.2"] },
+  };
+
+  const ready = nextReadyTasks(manifest, state);
+  assert.deepEqual(ready.map((entry) => entry.task.id), ["1.2"]);
+});
+
+test("ownerUniqueReady keeps one task per owner in manifest order", () => {
+  const withOwner = (id: string, owner: string) => ({ ...makeTask(id), ownerAgent: owner });
+  const ready = [
+    { phaseId: "1", phaseIndex: 0, task: withOwner("1.1", "alice") },
+    { phaseId: "1", phaseIndex: 0, task: withOwner("1.2", "bob") },
+    { phaseId: "1", phaseIndex: 0, task: withOwner("1.3", "alice") },
+    { phaseId: "1", phaseIndex: 0, task: withOwner("1.4", "carol") },
+    { phaseId: "1", phaseIndex: 0, task: withOwner("1.5", "bob") },
+  ] as Parameters<typeof ownerUniqueReady>[0];
+
+  const unique = ownerUniqueReady(ready);
+  assert.deepEqual(unique.map((e) => e.task.id), ["1.1", "1.2", "1.4"], "first task per owner wins, in manifest order");
+});
+
+test("ownerUniqueReady buckets unassigned tasks together (conservative)", () => {
+  const ready = [
+    { phaseId: "1", phaseIndex: 0, task: makeTask("1.1") },
+    { phaseId: "1", phaseIndex: 0, task: { ...makeTask("1.2"), ownerAgent: "bob" } },
+    { phaseId: "1", phaseIndex: 0, task: makeTask("1.3") },
+  ] as Parameters<typeof ownerUniqueReady>[0];
+
+  const unique = ownerUniqueReady(ready);
+  assert.deepEqual(unique.map((e) => e.task.id), ["1.1", "1.2"], "unassigned tasks share one bucket");
+});
+
+test("ownerUniqueReady returns an empty list for an empty frontier", () => {
+  assert.deepEqual(ownerUniqueReady([]), []);
+});
+
+test("isComplete is true when every task is complete or skipped", () => {
+  const manifest = makeManifest([
+    makePhase("1", [makeTask("1.1"), makeTask("1.2")]),
+    makePhase("2", [makeTask("2.1")], ["1"]),
+  ]);
+
+  assert.equal(isComplete(manifest, makeState({ "1.1": "complete", "1.2": "skipped", "2.1": "complete" })), true);
+  assert.equal(isComplete(manifest, makeState({ "1.1": "complete", "1.2": "pending", "2.1": "complete" })), false);
+});
+
+test("mapLimit preserves result order despite varying completion times", async () => {
+  const delays = [30, 5, 10];
+  const results = await mapLimit([0, 1, 2], 3, async (i) => {
+    await new Promise((resolve) => setTimeout(resolve, delays[i]!));
+    return i * 10;
+  });
+  assert.deepEqual(results, [0, 10, 20]);
+});
+
+test("mapLimit never exceeds the concurrency limit but still overlaps", async () => {
+  let active = 0;
+  let peak = 0;
+  const items = Array.from({ length: 8 }, (_, i) => i);
+
+  await mapLimit(items, 3, async (i) => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active -= 1;
+    return i;
+  });
+
+  assert.ok(peak <= 3, `peak concurrency ${peak} exceeded limit 3`);
+  assert.ok(peak >= 2, `expected overlap, saw peak concurrency ${peak}`);
+});
+
+test("mapLimit handles an empty array", async () => {
+  assert.deepEqual(await mapLimit([], 3, async (x) => x), []);
+});
+
+// ─── Configurable task timeout ────────────────────────────────────────────────
+
+class RecordingHarness implements HarnessAdapter {
+  readonly name = "recording";
+  readonly supportsConcurrency = false;
+  readonly capabilities = ["text", "repository-tools"] as const;
+  timeouts: number[] = [];
+  retries: number[] = [];
+  taskIds: string[] = [];
+
+  async invoke({ task, budget, attempt }: Parameters<HarnessAdapter["invoke"]>[0]) {
+    this.taskIds.push(task.id);
+    this.timeouts.push(budget.timeoutMs);
+    this.retries.push(attempt.maxRetries);
+    return {
+      success: true,
+      outputFiles: [],
+      stdout: "[recording] ok",
+      stderr: "",
+      durationMs: 1,
+    };
+  }
+}
+
+/** Harness that calls `onInvoke` when a task starts and blocks until released. */
+class GatedHarness implements HarnessAdapter {
+  readonly name = "gated";
+  readonly supportsConcurrency = false;
+  readonly capabilities = ["text", "repository-tools"] as const;
+  private release: (() => void) | undefined;
+
+  constructor(private readonly onInvoke: () => void) {}
+
+  async invoke(): Promise<TaskResult> {
+    this.onInvoke();
+    await new Promise<void>((resolve) => { this.release = resolve; });
+    return {
+      success: true,
+      outputFiles: [],
+      stdout: "[gated] ok",
+      stderr: "",
+      durationMs: 1,
+    };
+  }
+
+  releaseNow(): void {
+    this.release?.();
+  }
+}
+
+/**
+ * Concurrency-observing harness. Each invoke blocks until the test releases
+ * that task, so the test can control exactly which tasks overlap.
+ */
+class GatedConcurrentHarness implements HarnessAdapter {
+  readonly name = "gated-concurrent";
+  readonly supportsConcurrency = true;
+  readonly capabilities = ["text", "repository-tools"] as const;
+  /** Task IDs currently executing (in-flight). */
+  active = new Set<string>();
+  /** Max number of concurrently executing tasks observed. */
+  maxOverlap = 0;
+  /** Task IDs that have started, in order. */
+  startedOrder: string[] = [];
+  private releases = new Map<string, () => void>();
+  private startedResolvers = new Map<string, () => void>();
+
+  async invoke({ task }: Parameters<HarnessAdapter["invoke"]>[0]): Promise<TaskResult> {
+    this.active.add(task.id);
+    this.startedOrder.push(task.id);
+    this.maxOverlap = Math.max(this.maxOverlap, this.active.size);
+    this.startedResolvers.get(task.id)?.();
+    await new Promise<void>((resolve) => this.releases.set(task.id, resolve));
+    this.active.delete(task.id);
+    return {
+      success: true,
+      outputFiles: [],
+      stdout: "[gated-concurrent] ok",
+      stderr: "",
+      durationMs: 1,
+    };
+  }
+
+  whenStarted(taskId: string): Promise<void> {
+    if (this.startedOrder.includes(taskId)) return Promise.resolve();
+    return new Promise((resolve) => this.startedResolvers.set(taskId, resolve));
+  }
+
+  release(taskId: string): void {
+    this.releases.get(taskId)?.();
+  }
+}
+
+interface EngineFixture {
+  root: string;
+  manifestPath: string;
+}
+
+function makeEngineFixture(taskOverrides: Partial<ManifestTask> = {}): EngineFixture {
+  const root = mkdtempSync(join(tmpdir(), "forge-engine-"));
+  mkdirSync(join(root, ".agents", "agents"), { recursive: true });
+  mkdirSync(join(root, "docs/features"), { recursive: true });
+  writeFileSync(join(root, "docs/PRD.md"), "# Vision\n## 14. Features\n| # | Feature | File | Dependencies |\n| 1 | Foundation | features/foundation.md | None |\n");
+
+  writeFileSync(join(root, ".agents", "agents", "worker.md"), `---
+name: worker
+description: Builds things.
+---
+
+## Expertise
+- building
+`, "utf8");
+  writeFileSync(join(root, "docs/features/foundation.md"), `# Feature: Foundation
+
+## Phase 1: Foundation
+- Task 1.1: Build a thing
+`, "utf8");
+
+  const task: ManifestTask = {
+    id: "1.1",
+    title: "Build a thing",
+    description: "Build a thing",
+    ownerAgent: "worker",
+    dependencies: [],
+    expectedOutputs: [],
+    validationCommands: [],
+    approvalRequired: false,
+    sourceLines: ["- Task 1.1: Build a thing"],
+    ...taskOverrides,
+  };
+
+  const manifest: ExecutionManifest = {
+    version: "1.0",
+    sourceLayout: "features",
+    generatedAt: new Date().toISOString(),
+    repoRoot: root,
+    harnessRoot: ".agents",
+    prdPath: join(root, "docs", "PRD.md"),
+    progressPath: join(root, "docs", "PROGRESS.md"),
+    auditPath: join(root, "docs", "EXECUTION-AUDIT.jsonl"),
+    validationCommands: [],
+    approvalGates: { preflight: false, betweenPhases: false },
+    phases: [{
+      id: "1",
+      title: "Foundation",
+      description: "",
+      ownerAgents: ["worker"],
+      dependencies: [],
+      approvalRequired: false,
+      tasks: [task],
+    }],
+    warnings: [],
+  };
+
+  const manifestPath = join(root, "docs", "EXECUTION-MANIFEST.json");
+  writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+  return { root, manifestPath };
+}
+
+function engineOptionsFor(
+  fixture: EngineFixture,
+  harness: HarnessAdapter,
+  taskTimeoutMs: number,
+  overrides: Partial<EngineOptions> = {},
+) {
+  return {
+    repoRoot: fixture.root,
+    manifestPath: fixture.manifestPath,
+    statePath: join(fixture.root, "docs", "WORKFLOW-STATE.json"),
+    progressPath: join(fixture.root, "docs", "PROGRESS.md"),
+    auditPath: join(fixture.root, "docs", "EXECUTION-AUDIT.jsonl"),
+    artifactsPath: join(fixture.root, "docs", "artifacts"),
+    controlPath: join(fixture.root, "docs", "engine-control.json"),
+    pidPath: join(fixture.root, "docs", "engine.pid"),
+    harness,
+    maxRetries: 0,
+    retryDelayMs: 0,
+    heartbeatMs: 0,
+    maxConcurrency: 1,
+    taskTimeoutMs,
+    // These tests target other behaviour (timeout precedence, crash recovery),
+    // so the output-verification gate is relaxed unless a test opts into it.
+    allowNoop: true,
+    runValidation: false,
+    logHarnessActivity: false,
+    pauseRequested: false,
+    ...overrides,
+  };
+}
+
+test("effective task timeout prefers the per-task manifest timeoutMs over the engine default", async () => {
+  const fixture = makeEngineFixture({ timeoutMs: 25_000 });
+  const harness = new RecordingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000));
+
+  assert.equal(state.status, "complete");
+  assert.deepEqual(harness.timeouts, [25_000]);
+});
+
+test("human review pauses without dispatch and resumes only with task-bound evidence", async () => {
+  const fixture = makeEngineFixture({ ownerAgent: undefined, contract: { version: 1, kind: "human-review", requirements: ["Human checks keyboard flow"], acceptanceCriteria: ["Named reviewer confirms keyboard usability"], constraints: [], references: ["docs/PRD.md"], reviewFile: "docs/reviews/keyboard.json" } });
+  const harness = new RecordingHarness();
+  const options = engineOptionsFor(fixture, harness, 1000, { autoCommit: false });
+  const pending = await runEngine(options);
+  assert.equal(pending.status, "paused");
+  assert.deepEqual(harness.timeouts, []);
+  assert.equal(pending.tasks["1.1"]!.status, "pending");
+  const task = (JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest).phases[0]!.tasks[0]!;
+  writeFileSync(join(fixture.root, "review.md"), "Operator reviewed keyboard flow and recorded evidence.");
+  approveHumanTask(fixture.root, task, "Reviewer", ["review.md"]);
+  const resumed = await runEngine(options);
+  assert.equal(resumed.tasks["1.1"]!.status, "complete");
+  assert.deepEqual(harness.timeouts, []);
+  writeFileSync(join(fixture.root, "review.md"), "Changed evidence requires renewed review.");
+  const stale = await runEngine(options);
+  assert.equal(stale.status, "paused");
+  assert.equal(stale.tasks["1.1"]!.status, "pending");
+});
+
+/** Replace a single-task fixture's manifest with the given tasks in one phase. */
+function withTasks(fixture: EngineFixture, tasks: Partial<ManifestTask>[]): void {
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  const base = manifest.phases[0]!.tasks[0]!;
+  manifest.phases[0]!.tasks = tasks.map((overrides) => ({ ...base, ...overrides }) as ManifestTask);
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest), "utf8");
+}
+
+/** Records task ids and writes each task's declared output, passing the gates. */
+class WritingHarness implements HarnessAdapter {
+  readonly name = "writing";
+  readonly supportsConcurrency = true;
+  readonly capabilities = ["text", "repository-tools"] as const;
+  taskIds: string[] = [];
+
+  async invoke(params: Parameters<HarnessAdapter["invoke"]>[0]) {
+    this.taskIds.push(params.task.id);
+    const outputs = params.task.expectedOutputs;
+    if (outputs.length > 0) writeFileSync(join(params.repoRoot, outputs[0]!), "written\n", "utf8");
+    // A structured task must also report what it did (engine.test.ts:600).
+    return {
+      success: true,
+      outputFiles: [...outputs],
+      stdout: '```forge-result\n{"summary":["Delivered the work","Verified the change"],"unresolved":[]}\n```',
+      stderr: "",
+      durationMs: 1,
+    };
+  }
+}
+
+function implTask(id: string, dependencies: string[] = []): Partial<ManifestTask> {
+  return {
+    id,
+    title: `Build ${id}`,
+    description: `Build ${id}`,
+    ownerAgent: "worker",
+    dependencies,
+    expectedOutputs: [`${id}.txt`],
+    // A structured contract requires a nonempty validation command.
+    validationCommands: ['node -e "process.exit(0)"'],
+    contract: {
+      version: 1,
+      kind: "implementation" as const,
+      requirements: ["Deliver the work"],
+      acceptanceCriteria: ["The work is delivered"],
+      constraints: [],
+      references: ["docs/PRD.md"],
+    },
+  };
+}
+
+const reviewTask: Partial<ManifestTask> = {
+  id: "1.9",
+  title: "Review the thing",
+  description: "Review the thing",
+  ownerAgent: undefined,
+  dependencies: [],
+  expectedOutputs: [],
+  validationCommands: [],
+  contract: {
+    version: 1,
+    kind: "human-review",
+    requirements: ["Human checks the delivered work"],
+    acceptanceCriteria: ["Named reviewer confirms the delivered work"],
+    constraints: [],
+    // Deliberately references an output the tasks below produce, and declares
+    // no dependency on them - the authoring mistake this guards against.
+    references: ["docs/PRD.md"],
+    reviewFile: "docs/reviews/1.9.json",
+  },
+};
+
+test("an unapproved review does not strand the work it was meant to review", async () => {
+  // Regression: the review dispatched immediately because its dependencies were
+  // under-declared, paused the run on the spot, and the run then waited for an
+  // approval of work that had not been done. Holding the review instead lets
+  // everything else finish, so the operator is only interrupted once there is
+  // genuinely something to review.
+  const fixture = makeEngineFixture();
+  withTasks(fixture, [
+    implTask("1.1"),
+    implTask("1.2", ["1.1"]),
+    reviewTask,
+  ]);
+  const harness = new WritingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1000, { autoCommit: false }));
+  assert.equal(state.status, "paused");
+  assert.deepEqual(harness.taskIds.sort(), ["1.1", "1.2"],
+    "the review must not prevent its would-be predecessors from running");
+  assert.equal(state.tasks["1.1"]!.status, "complete");
+  assert.equal(state.tasks["1.2"]!.status, "complete");
+  assert.equal(state.tasks["1.9"]!.status, "pending");
+  assert.match(state.tasks["1.9"]!.errorMessage ?? "", /Human review required/);
+
+  // Approving after the fact completes it: the work it reviews now exists.
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  writeFileSync(join(fixture.root, "review.md"), "Operator reviewed the delivered work and recorded evidence.");
+  approveHumanTask(fixture.root, manifest.phases[0]!.tasks[2]!, "Reviewer", ["review.md"]);
+  const resumed = await runEngine(engineOptionsFor(fixture, harness, 1000, { autoCommit: false }));
+  assert.equal(resumed.status, "complete");
+  assert.equal(resumed.tasks["1.9"]!.status, "complete");
+});
+
+test("an unapproved review does not defer unrelated work sharing its wave", async () => {
+  const fixture = makeEngineFixture();
+  withTasks(fixture, [implTask("1.1"), implTask("1.2"), reviewTask]);
+  // Concurrency above 1 needs a real commit for the task sandboxes to build from.
+  execFileSync("git", ["init", "-q"], { cwd: fixture.root });
+  execFileSync("git", ["config", "user.email", "forge-test@local"], { cwd: fixture.root });
+  execFileSync("git", ["config", "user.name", "Forge Test"], { cwd: fixture.root });
+  execFileSync("git", ["add", "-A"], { cwd: fixture.root });
+  execFileSync("git", ["commit", "-qm", "seed"], { cwd: fixture.root });
+  const harness = new WritingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1000, { autoCommit: false, maxConcurrency: 2 }));
+
+  assert.equal(state.status, "paused");
+  assert.deepEqual(harness.taskIds.sort(), ["1.1", "1.2"]);
+  assert.equal(state.tasks["1.1"]!.status, "complete");
+  assert.equal(state.tasks["1.2"]!.status, "complete");
+  assert.equal(state.tasks["1.9"]!.status, "pending");
+});
+
+test("a run paused for review records the review, not a stop request", async () => {
+  // The post-loop tail writes run.paused for whatever broke the loop. A review
+  // gate that inherited the generic "stop requested" note would send an operator
+  // hunting for a control file or signal that does not exist.
+  const fixture = makeEngineFixture(reviewTask as Partial<ManifestTask>);
+  const harness = new RecordingHarness();
+  await runEngine(engineOptionsFor(fixture, harness, 1000, { autoCommit: false }));
+
+  const paused = readFileSync(join(fixture.root, "docs", "EXECUTION-AUDIT.jsonl"), "utf8")
+    .split("\n").filter(Boolean).map((line) => JSON.parse(line) as { action: string; note?: string })
+    .filter((event) => event.action === "run.paused");
+  assert.equal(paused.length, 1);
+  assert.match(paused[0]!.note ?? "", /Human review required/);
+  assert.doesNotMatch(paused[0]!.note ?? "", /control file or signal/);
+});
+
+test("replaying an unapproved review reports a pause rather than success", async () => {
+  const fixture = makeEngineFixture(reviewTask as Partial<ManifestTask>);
+  const harness = new RecordingHarness();
+  await runEngine(engineOptionsFor(fixture, harness, 1000, { autoCommit: false }));
+
+  const state = await replayTask("1.9", engineOptionsFor(fixture, harness, 1000, { autoCommit: false }) as EngineOptions & { taskId?: string } as never as Parameters<typeof replayTask>[1] & { taskId: string });
+  assert.equal(state.status, "paused");
+  assert.equal(state.tasks["1.9"]!.status, "pending");
+});
+
+test("structured tasks require passing validation even when legacy validation is disabled", async () => {
+  const fixture = makeEngineFixture({ expectedOutputs: ["result.txt"], validationCommands: ['node -e "process.exit(1)"'], contract: { version: 1, kind: "implementation", requirements: ["Build a result"], acceptanceCriteria: ["Result passes the test"], constraints: [], references: ["docs/PRD.md"] } });
+  const harness: HarnessAdapter = {
+    name: "contract-test", supportsConcurrency: true, capabilities: ["repository-tools"],
+    async invoke() {
+      writeFileSync(join(fixture.root, "result.txt"), "result");
+      return { success: true, outputFiles: ["result.txt"], stderr: "", durationMs: 1, stdout: '```forge-result\n{"summary":"Built result","unresolved":[]}\n```' };
+    },
+  };
+  const state = await runEngine(engineOptionsFor(fixture, harness, 10000, { autoCommit: false, runValidation: false }));
+  assert.equal(state.tasks["1.1"]!.status, "failed");
+  assert.match(state.tasks["1.1"]!.errorMessage!, /validation command failed/);
+});
+
+test("structured completion requires a report and projects engine-verified evidence", async () => {
+  for (const reported of [false, true]) {
+    const fixture = makeEngineFixture({ produces: "work.result", expectedOutputs: ["result.txt"], validationCommands: ['node -e "process.exit(0)"'], contract: { version: 1, kind: "implementation", requirements: ["Build a result"], acceptanceCriteria: ["Result passes the test"], constraints: [], references: ["docs/PRD.md"] } });
+    const harness: HarnessAdapter = {
+      name: "contract-test", supportsConcurrency: true, capabilities: ["repository-tools"],
+      async invoke() {
+        writeFileSync(join(fixture.root, "result.txt"), "result");
+        return { success: true, outputFiles: ["result.txt"], stderr: "", durationMs: 1, stdout: reported ? '```forge-result\n{"summary":["Built result","Atomic update"],"unresolved":[]}\n```' : "Done" };
+      },
+    };
+    const options = engineOptionsFor(fixture, harness, 10000, { autoCommit: false });
+    const state = await runEngine(options);
+    assert.equal(state.tasks["1.1"]!.status, reported ? "complete" : "failed");
+    if (reported) {
+      const store = new ArtifactStore({ artifactsPath: options.artifactsPath });
+      const projection = store.renderProjection(store.project({ taskId: "next", inputTypes: ["work.result"] }));
+      assert.match(projection, /Atomic update/);
+      assert.match(projection, /exit 0 \(engine-verified\)/);
+      assert.doesNotMatch(projection, /Agent claim/);
+    } else assert.match(state.tasks["1.1"]!.errorMessage!, /forge-result/);
+  }
+});
+
+test("structured caveats allow completion while blockers retain evidence and reach retry prompts", async () => {
+  const fixture = makeEngineFixture({ produces: "work.result", expectedOutputs: ["result.txt"], validationCommands: ['node -e "process.exit(0)"'], contract: { version: 1, kind: "implementation", requirements: ["Build result"], acceptanceCriteria: ["Required guard verified"], constraints: [], references: ["docs/PRD.md"] } });
+  const instructions: string[] = [];
+  const outputs: string[] = [];
+  const harness: HarnessAdapter = {
+    name: "caveat-test", supportsConcurrency: true, capabilities: ["repository-tools"],
+    async invoke(request) {
+      instructions.push(request.instructions);
+      if (request.attempt.number === 2) {
+        const persisted = JSON.parse(readFileSync(join(fixture.root, "docs/WORKFLOW-STATE.json"), "utf8"));
+        assert.equal(persisted.tasks["1.1"].attemptHistory[0].outcome, "failed");
+        assert.ok(request.instructions.includes(persisted.tasks["1.1"].attemptHistory[0].resultPath));
+      }
+      writeFileSync(join(fixture.root, "result.txt"), "result");
+      const stdout = "```forge-result\n" + JSON.stringify({ summary: "Built scaffold", decisions: [], interfaces: [], tests: ["Observed local tests pass"], unresolved: request.attempt.number === 1 ? ["Required guard not verified"] : [], warnings: ["Changes await engine auto-commit"], validationLimitations: ["Optional hosted CI has not run"] }) + "\n```";
+      outputs.push(stdout);
+      return { success: true, outputFiles: ["result.txt"], stdout, stderr: "retained diagnostic", durationMs: 1 };
+    },
+  };
+  const options = engineOptionsFor(fixture, harness, 10000, { maxRetries: 1, autoCommit: false });
+  const state = await runEngine(options);
+  assert.equal(state.tasks["1.1"]!.status, "complete");
+  assert.ok(!instructions[0]!.includes("Previous attempt was rejected"));
+  assert.ok(instructions[1]!.includes("Unresolved task requirements: Required guard not verified"));
+  const history = state.tasks["1.1"]!.attemptHistory!;
+  assert.deepEqual(history.map((entry) => entry.outcome), ["failed", "passed"]);
+  for (const [index, entry] of history.entries()) {
+    const evidence = JSON.parse(readFileSync(join(fixture.root, entry.resultPath), "utf8"));
+    assert.equal(evidence.result.stdout, outputs[index]);
+    assert.equal(evidence.result.stderr, "retained diagnostic");
+    assert.equal(evidence.taskId, "1.1");
+    assert.equal(evidence.runId, state.runId);
+    assert.equal(evidence.attempt, index + 1);
+    assert.deepEqual(evidence.gates.map((gate: { status: string }) => gate.status), index === 0 ? ["passed", "passed", "passed", "failed", "skipped"] : ["passed", "passed", "passed", "passed", "passed"]);
+    assert.deepEqual(evidence.handoff.warnings, ["Changes await engine auto-commit"]);
+  }
+  const events = readFileSync(options.auditPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(events.filter((event) => event.action === "task.attempt.finished").length, 2);
+  assert.equal(events.find((event) => event.action === "task.retrying").resultPath, history[0]!.resultPath);
+  assert.equal(loadState(options.statePath)!.tasks["1.1"]!.attemptHistory!.length, 2);
+  assert.deepEqual(state.tasks["1.1"]!.validationLimitations, ["Optional hosted CI has not run"]);
+  const progress = readFileSync(options.progressPath, "utf8");
+  assert.match(progress, /\*\*Status\*\*: Complete\n\*\*Validation Gaps\*\*: 1 unverified check/);
+  assert.match(progress, /## Validation Gaps\n- Task 1\.1: Optional hosted CI has not run/);
+});
+
+test("structured blockers remain failed after retries and preserve every report", async () => {
+  const fixture = makeEngineFixture({ expectedOutputs: ["result.txt"], validationCommands: ['node -e "process.exit(0)"'], contract: { version: 1, kind: "implementation", requirements: ["Build result"], acceptanceCriteria: ["Tests verified"], constraints: [], references: ["docs/PRD.md"] } });
+  const stdout = '```forge-result\n{"summary":"Incomplete","decisions":[],"interfaces":[],"tests":["Required check not run"],"unresolved":["Required check not verified"],"warnings":[],"validationLimitations":[]}\n```';
+  const state = await runEngine(engineOptionsFor(fixture, {
+    name: "blocked-test", supportsConcurrency: true, capabilities: ["repository-tools"],
+    async invoke() {
+      writeFileSync(join(fixture.root, "result.txt"), "result");
+      return { success: true, outputFiles: ["result.txt"], stdout, stderr: "", durationMs: 1 };
+    },
+  }, 10000, { maxRetries: 1, autoCommit: false }));
+  assert.equal(state.tasks["1.1"]!.status, "failed");
+  assert.match(state.tasks["1.1"]!.errorMessage!, /Required check not verified/);
+  assert.equal(state.tasks["1.1"]!.attemptHistory!.length, 2);
+  for (const entry of state.tasks["1.1"]!.attemptHistory!) {
+    assert.equal(entry.outcome, "failed");
+    assert.equal(JSON.parse(readFileSync(join(fixture.root, entry.resultPath), "utf8")).result.stdout, stdout);
+  }
+});
+
+test("completion gate failures are retained and supplied to the next attempt", async () => {
+  for (const gate of ["outputs", "handoff", "validation"]) {
+    const fixture = makeEngineFixture({ expectedOutputs: ["result.txt"], validationCommands: ["node validate.cjs"], contract: { version: 1, kind: "implementation", requirements: ["Build result"], acceptanceCriteria: ["Result validates"], constraints: [], references: ["docs/PRD.md"] } });
+    writeFileSync(join(fixture.root, "validate.cjs"), 'process.exit(require("node:fs").readFileSync("result.txt", "utf8") === "valid" ? 0 : 1);');
+    const stdout = '```forge-result\n{"summary":"Built result","decisions":[],"interfaces":[],"tests":["Observed validation"],"unresolved":[]}\n```';
+    const options = engineOptionsFor(fixture, {
+      name: "gate-test", supportsConcurrency: true, capabilities: ["repository-tools"],
+      async invoke(request) {
+        const first = request.attempt.number === 1;
+        if (!first) {
+          const history = loadState(join(fixture.root, "docs/WORKFLOW-STATE.json"))!.tasks["1.1"]!.attemptHistory!;
+          assert.ok(request.instructions.includes(history[0]!.reason!));
+          assert.ok(request.instructions.includes(history[0]!.resultPath));
+        }
+        if (!first || gate !== "outputs") writeFileSync(join(fixture.root, "result.txt"), first && gate === "validation" ? "invalid" : "valid");
+        return { success: true, outputFiles: [], stdout: first && gate === "handoff" ? '```forge-result\n{"summary":42,"unresolved":[]}\n```' : stdout, stderr: "", durationMs: 1 };
+      },
+    }, 10000, { maxRetries: 1, autoCommit: false });
+    const state = await runEngine(options);
+    assert.equal(state.status, "complete", gate);
+    const history = state.tasks["1.1"]!.attemptHistory!;
+    const evidence = JSON.parse(readFileSync(join(fixture.root, history[0]!.resultPath), "utf8"));
+    assert.equal(evidence.gates.find((entry: { gate: string }) => entry.gate === gate).status, "failed");
+    if (gate === "handoff") assert.match(history[0]!.reason!, /forge-result\.summary must be/);
+    assert.equal(history[1]!.outcome, "passed");
+  }
+});
+
+test("serialized completion is durable before B starts and survives B throwing and replay", async () => {
+  const fixture = makeEngineFixture();
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  const first = manifest.phases[0]!.tasks[0]!;
+  writeFileSync(join(fixture.root, ".agents", "agents", "second.md"), "---\nname: second\ndescription: Second worker\n---\nBuild things.");
+  manifest.phases[0]!.tasks.push({ ...first, id: "1.2", ownerAgent: "second" });
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest));
+  const calls: string[] = [];
+  const options = engineOptionsFor(fixture, {
+    name: "interrupting", supportsConcurrency: true, capabilities: ["text", "repository-tools"],
+    async invoke({ task }) {
+      calls.push(task.id);
+      if (task.id === "1.2") {
+        assert.equal(loadState(options.statePath)?.tasks["1.1"]?.status, "complete");
+        assert.match(readFileSync(options.progressPath, "utf8"), /1\.1/);
+        throw new Error("B interrupted");
+      }
+      return { success: true, outputFiles: [], stdout: "done", stderr: "", durationMs: 1 };
+    },
+  }, 1000, { maxRetries: 2, autoCommit: false });
+  const result = await runEngine(options);
+  assert.equal(result.status, "failed");
+  assert.equal(loadState(options.statePath)?.tasks["1.1"]?.status, "complete");
+  assert.equal(loadState(options.statePath)?.tasks["1.2"]?.status, "failed");
+  assert.deepEqual(calls, ["1.1", "1.2"], "unexpected exceptions are terminal, not blindly retried");
+  const resumed = new RecordingHarness();
+  const replayed = await replayTask("1.2", { ...options, harness: resumed });
+  assert.equal(replayed.status, "complete");
+  assert.deepEqual(resumed.taskIds, ["1.2"]);
+  await runEngine({ ...options, harness: resumed });
+  assert.deepEqual(resumed.taskIds, ["1.2"], "completed A is never reinvoked");
+});
+
+test("legacy and untagged manifests reject run and replay before dispatch", async () => {
+  for (const sourceLayout of ["monolithic", undefined]) {
+    const fixture = makeEngineFixture();
+    const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8"));
+    manifest.sourceLayout = sourceLayout;
+    writeFileSync(fixture.manifestPath, JSON.stringify(manifest));
+    const harness = new RecordingHarness();
+    const options = engineOptionsFor(fixture, harness, 1000);
+    await assert.rejects(runEngine(options), /Feature-based manifest required/);
+    await assert.rejects(replayTask("1.1", options), /Feature-based manifest required/);
+    assert.deepEqual(harness.taskIds, []);
+  }
+});
+
+test("owner preflight rejects required missing owners before any dispatch", async () => {
+  const fixture = makeEngineFixture({ ownerAgent: "missing" });
+  const harness = new RecordingHarness();
+  const options = engineOptionsFor(fixture, harness, 1000);
+  await assert.rejects(runEngine(options), /Missing required owners.*1\.1 \(missing\)/);
+  assert.deepEqual(harness.taskIds, []);
+  assert.equal(loadState(options.statePath)?.status, "failed");
+  assert.equal(loadState(options.statePath)?.tasks["1.1"]?.status, "pending");
+});
+
+test("engine discovery honors the manifest harness root in a mixed-root repository", async () => {
+  const fixture = makeEngineFixture({ ownerAgent: "github-worker" });
+  mkdirSync(join(fixture.root, ".github", "agents"), { recursive: true });
+  writeFileSync(join(fixture.root, ".github", "agents", "worker.md"),
+    "---\nname: github-worker\ndescription: GitHub worker\n---\nBuild things.");
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  manifest.harnessRoot = ".github";
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest));
+  const harness = new RecordingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1000));
+  assert.equal(state.status, "complete");
+  assert.deepEqual(harness.taskIds, ["1.1"]);
+});
+
+test("legacy manifests can still explicitly execute with a Forge coordinator owner", async () => {
+  const fixture = makeEngineFixture({ ownerAgent: "forge-team-builder" });
+  writeFileSync(join(fixture.root, ".agents", "agents", "forge-team-builder.md"),
+    "---\nname: forge-team-builder\ndescription: Legacy explicitly selected owner.\n---\n");
+  const harness = new RecordingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1000));
+  assert.equal(state.status, "complete");
+  assert.deepEqual(harness.taskIds, ["1.1"]);
+});
+
+test("invalid or missing explicit manifest roots never silently select another team", async () => {
+  for (const harnessRoot of [".github", ".unsupported"]) {
+    const fixture = makeEngineFixture();
+    const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+    writeFileSync(fixture.manifestPath, JSON.stringify({ ...manifest, harnessRoot }));
+    const harness = new RecordingHarness();
+    const options = engineOptionsFor(fixture, harness, 1000);
+    await assert.rejects(runEngine(options), /Selected harness root does not exist|Unsupported harness root/);
+    assert.deepEqual(harness.taskIds, []);
+    assert.equal(loadState(options.statePath)?.status, "failed");
+  }
+});
+
+test("manual selection ignores unrelated missing owners but includes phase prerequisites", async () => {
+  const fixture = makeEngineFixture();
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  const first = manifest.phases[0]!.tasks[0]!;
+  manifest.phases.push(makePhase("2", [{ ...first, id: "2.1" }], ["1"]));
+  manifest.phases.push(makePhase("3", [{ ...first, id: "3.1", ownerAgent: "missing" }]));
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest));
+  const harness = new RecordingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1000, {
+    executionMode: "manual", selectedTaskIds: ["2.1"],
+  }));
+  assert.equal(state.status, "complete");
+  assert.deepEqual(harness.taskIds, ["1.1", "2.1"]);
+  assert.equal(state.tasks["3.1"]?.status, "pending");
+});
+
+test("compiler declares repository capabilities without invalidating equivalent legacy tasks", () => {
+  const fixture = makeEngineFixture();
+  const repo = discoverForgeRepo(fixture.root, ".agents");
+  const compiled = compileExecutionManifestDetailed(repo).manifest;
+  for (const phase of compiled.phases) {
+    for (const task of phase.tasks) {
+      assert.deepEqual(task.requiredCapabilities, ["repository-tools"]);
+      delete task.requiredCapabilities;
+    }
+  }
+  writeFileSync(fixture.manifestPath, JSON.stringify(compiled));
+  const updated = compileExecutionManifestDetailed(repo).manifest;
+  assert.deepEqual(updated.reconciliation?.changedTaskIds, []);
+});
+
+test("OpenAI rejects legacy/repository work before fetch and verifies explicit text results", async () => {
+  const originalKey = process.env.OPENAI_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.OPENAI_API_KEY = "fixture-key";
+  let calls = 0;
+  let content = "Detailed analysis of the requested design. ".repeat(20);
+  globalThis.fetch = async () => {
+    calls += 1;
+    return new Response(JSON.stringify({ choices: [{ message: { content } }] }));
+  };
+  try {
+    for (const requirements of [undefined, [] as const, ["repository-tools"] as const]) {
+      const fixture = makeEngineFixture({ requiredCapabilities: requirements ? [...requirements] : undefined });
+      await assert.rejects(runEngine(engineOptionsFor(fixture, new OpenAIAdapter(), 1000)), /requires repository-tools/);
+      assert.equal(calls, 0);
+    }
+    const fixture = makeEngineFixture({ requiredCapabilities: ["text"] });
+    const result = await runEngine(engineOptionsFor(fixture, new OpenAIAdapter(), 1000, { allowNoop: false }));
+    assert.equal(result.status, "complete");
+    assert.equal(calls, 1);
+    content = "Ready for the task.";
+    const hollow = makeEngineFixture({ requiredCapabilities: ["text"] });
+    const rejected = await runEngine(engineOptionsFor(hollow, new OpenAIAdapter(), 1000, { allowNoop: false }));
+    assert.equal(rejected.status, "failed");
+    assert.match(rejected.tasks["1.1"]?.errorMessage ?? "", /no substantive output/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = originalKey;
+  }
+});
+
+test("lifecycle cleanup runs after success, invocation exceptions, and partial prepare failures", async () => {
+  for (const failure of ["none", "invoke", "prepare", "cleanup"] as const) {
+    const fixture = makeEngineFixture();
+    const events: string[] = [];
+    const harness: HarnessAdapter = {
+      name: "lifecycle", capabilities: ["repository-tools"], supportsConcurrency: true,
+      async prepare() { events.push("prepare"); if (failure === "prepare") throw new Error("prepare failed"); },
+      async cleanup() { events.push("cleanup"); if (failure === "cleanup") throw new Error("cleanup failed"); },
+      async invoke() {
+        events.push("invoke");
+        if (failure === "invoke") throw new Error("invoke failed");
+        return { success: true, outputFiles: [], stdout: "done", stderr: "", durationMs: 1 };
+      },
+    };
+    const options = engineOptionsFor(fixture, harness, 1000, { autoCommit: false });
+    if (failure === "prepare" || failure === "cleanup") {
+      await assert.rejects(runEngine(options), new RegExp(`${failure} failed`));
+      assert.equal(loadState(options.statePath)?.status, "failed");
+    } else {
+      const result = await runEngine(options);
+      assert.equal(result.status, failure === "invoke" ? "failed" : "complete");
+    }
+    assert.deepEqual(events, failure === "prepare" ? ["prepare", "cleanup"] : ["prepare", "invoke", "cleanup"]);
+  }
+});
+
+test("failure classification controls retries and persists actual attempt counts", async () => {
+  for (const kind of ["configuration", "exception", "cancelled", "timeout", "retryable"] as const) {
+    const fixture = makeEngineFixture();
+    let attempts = 0;
+    const options = engineOptionsFor(fixture, {
+      name: "classified", capabilities: ["repository-tools"], supportsConcurrency: false,
+      async invoke(request) {
+        attempts += 1;
+        assert.equal(request.attempt.number, attempts);
+        if (attempts > 1) assert.ok(request.instructions.includes(`\"reason\":\"${kind}\"`));
+        return { success: false, outputFiles: [], stdout: "", stderr: "", errorMessage: kind, failureKind: kind, durationMs: 1 };
+      },
+    }, 1000, { maxRetries: 2, autoCommit: false });
+    const state = await runEngine(options);
+    assert.equal(state.status, "failed");
+    assert.equal(attempts, kind === "timeout" || kind === "retryable" ? 3 : 1);
+    assert.equal(state.tasks["1.1"]?.attempt, attempts);
+    assert.equal(state.tasks["1.1"]!.attemptHistory!.length, attempts);
+    for (const entry of state.tasks["1.1"]!.attemptHistory!) {
+      const evidence = JSON.parse(readFileSync(join(fixture.root, entry.resultPath), "utf8"));
+      assert.equal(evidence.result.failureKind, kind);
+      assert.equal(evidence.gates[0].status, "failed");
+      assert.ok(evidence.gates.slice(1).every((gate: { status: string }) => gate.status === "skipped"));
+    }
+  }
+});
+
+test("immediate cancellation leaves a durable pending attempt that can resume", async () => {
+  const fixture = makeEngineFixture();
+  const controller = new AbortController();
+  let cleaned = false;
+  const options = engineOptionsFor(fixture, {
+    name: "cancellable", capabilities: ["repository-tools"], supportsConcurrency: false,
+    async invoke(request) {
+      assert.equal(request.signal, controller.signal);
+      controller.abort();
+      throw new Error("operation aborted");
+    },
+    async cleanup() { cleaned = true; },
+  }, 1000, { signal: controller.signal, maxRetries: 2 });
+  const state = await runEngine(options);
+  assert.equal(state.status, "paused");
+  assert.equal(state.tasks["1.1"]?.status, "pending");
+  assert.equal(state.tasks["1.1"]?.failureKind, "cancelled");
+  const cancelled = state.tasks["1.1"]!.attemptHistory![0]!;
+  assert.equal(cancelled.outcome, "cancelled");
+  assert.equal(JSON.parse(readFileSync(join(fixture.root, cancelled.resultPath), "utf8")).result.failureKind, "cancelled");
+  assert.equal(loadState(options.statePath)?.status, "paused");
+  assert.equal(cleaned, true);
+  const resumed = new RecordingHarness();
+  const complete = await runEngine({ ...options, harness: resumed, signal: undefined });
+  assert.equal(complete.status, "complete");
+  assert.equal(complete.tasks["1.1"]?.failureKind, undefined);
+  assert.deepEqual(complete.tasks["1.1"]!.attemptHistory!.map((entry) => entry.outcome), ["cancelled", "passed"]);
+  assert.deepEqual(resumed.taskIds, ["1.1"]);
+});
+
+test("aborted replay persists paused status, pending task, progress and pause audit", async () => {
+  const fixture = makeEngineFixture();
+  const initialOptions = engineOptionsFor(fixture, new RecordingHarness(), 1000, { autoCommit: false });
+  await runEngine(initialOptions);
+  const controller = new AbortController();
+  let cleaned = false;
+  const replayOptions = {
+    ...initialOptions, signal: controller.signal,
+    harness: {
+      name: "cancel-replay", capabilities: ["repository-tools"] as const, supportsConcurrency: false,
+      async invoke() {
+        controller.abort();
+        throw new Error("replay interrupted");
+      },
+      async cleanup() { cleaned = true; },
+    },
+  };
+  const replayed = await replayTask("1.1", replayOptions);
+  assert.equal(replayed.status, "paused");
+  assert.equal(replayed.tasks["1.1"]?.status, "pending");
+  assert.equal(replayed.tasks["1.1"]?.failureKind, "cancelled");
+  assert.equal(loadState(initialOptions.statePath)?.status, "paused");
+  assert.match(readFileSync(initialOptions.progressPath, "utf8"), /Paused/);
+  const events = readFileSync(initialOptions.auditPath, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  assert.equal(events.at(-1)?.action, "run.paused");
+  assert.match(events.at(-1)?.note, /Replay cancelled/);
+  assert.equal(cleaned, true);
+  const resumed = new RecordingHarness();
+  const complete = await runEngine({ ...initialOptions, harness: resumed });
+  assert.equal(complete.status, "complete");
+  assert.deepEqual(resumed.taskIds, ["1.1"]);
+});
+
+test("already-aborted replay does not prepare or dispatch an adapter", async () => {
+  const fixture = makeEngineFixture();
+  const options = engineOptionsFor(fixture, new RecordingHarness(), 1000, { autoCommit: false });
+  await runEngine(options);
+  const controller = new AbortController();
+  controller.abort();
+  const state = await replayTask("1.1", {
+    ...options, signal: controller.signal,
+    harness: {
+      name: "never-dispatch", capabilities: ["repository-tools"], supportsConcurrency: false,
+      async prepare() { assert.fail("aborted replay must not prepare"); },
+      async invoke() { throw new Error("aborted replay must not invoke"); },
+    },
+  });
+  assert.equal(state.status, "paused");
+  assert.equal(state.tasks["1.1"]?.status, "pending");
+  assert.equal(loadState(options.statePath)?.status, "paused");
+});
+
+test("cancellation during replay preparation preserves the pending replay intent", async () => {
+  const fixture = makeEngineFixture();
+  const options = engineOptionsFor(fixture, new RecordingHarness(), 1000, { autoCommit: false });
+  await runEngine(options);
+  const controller = new AbortController();
+  let cleaned = false;
+  await assert.rejects(replayTask("1.1", {
+    ...options, signal: controller.signal,
+    harness: {
+      name: "cancel-prepare", capabilities: ["repository-tools"], supportsConcurrency: false,
+      async prepare() {
+        controller.abort();
+        throw new Error("replay preparation cancelled");
+      },
+      async invoke() { throw new Error("must not dispatch"); },
+      async cleanup() { cleaned = true; },
+    },
+  }), /replay preparation cancelled/);
+  const persisted = loadState(options.statePath);
+  assert.equal(persisted?.status, "paused");
+  assert.equal(persisted?.tasks["1.1"]?.status, "pending");
+  assert.equal(persisted?.tasks["1.1"]?.completedAt, undefined);
+  assert.equal(cleaned, true);
+  assert.match(readFileSync(options.progressPath, "utf8"), /Paused/);
+});
+
+test("discovery errors are persisted and propagated rather than treated as skips", async () => {
+  const fixture = makeEngineFixture();
+  unlinkSync(join(fixture.root, "docs", "PRD.md"));
+  const options = engineOptionsFor(fixture, new RecordingHarness(), 1000);
+  await assert.rejects(runEngine(options), /Owner preflight failed:.*PRD\.md.*features/);
+  assert.equal(loadState(options.statePath)?.status, "failed");
+});
+
+test("intentional persisted skips do not require an owner or block dependents", async () => {
+  const fixture = makeEngineFixture();
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  const first = manifest.phases[0]!.tasks[0]!;
+  manifest.phases[0]!.tasks.push({ ...first, id: "1.2", dependencies: ["1.1"] });
+  first.ownerAgent = "intentionally-excluded";
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest));
+  const harness = new RecordingHarness();
+  const options = engineOptionsFor(fixture, harness, 1000);
+  const state = initState(manifest, fixture.manifestPath, harness.name);
+  state.tasks["1.1"] = { ...state.tasks["1.1"]!, status: "skipped", errorMessage: "Explicitly excluded by operator" };
+  saveState(options.statePath, state);
+  const result = await runEngine(options);
+  assert.equal(result.status, "complete");
+  assert.deepEqual(harness.taskIds, ["1.2"]);
+  assert.equal(result.tasks["1.1"]?.errorMessage, "Explicitly excluded by operator");
+});
+
+test("effective task timeout falls back to the engine taskTimeoutMs when a task declares none", async () => {
+  const fixture = makeEngineFixture();
+  const harness = new RecordingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 9_999));
+
+  assert.equal(state.status, "complete");
+  assert.deepEqual(harness.timeouts, [9_999]);
+});
+
+test("engine forwards maxRetries to the harness invoke call", async () => {
+  const fixture = makeEngineFixture();
+  const harness = new RecordingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { maxRetries: 3 }));
+
+  assert.equal(state.status, "complete");
+  assert.deepEqual(harness.retries, [3]);
+});
+
+test("manual execution expands dependencies and runs only the selected slice", async () => {
+  const fixture = makeEngineFixture();
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  manifest.phases[0]!.tasks.push({
+    id: "1.2",
+    title: "Follow-up",
+    description: "Depends on 1.1",
+    ownerAgent: "worker",
+    dependencies: ["1.1"],
+    expectedOutputs: [],
+    validationCommands: [],
+    approvalRequired: false,
+    sourceLines: ["- Task 1.2: Follow-up"],
+  });
+  manifest.phases[0]!.tasks.push({
+    id: "1.3",
+    title: "Unselected",
+    description: "Should stay pending",
+    ownerAgent: "worker",
+    dependencies: [],
+    expectedOutputs: [],
+    validationCommands: [],
+    approvalRequired: false,
+    sourceLines: ["- Task 1.3: Unselected"],
+  });
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest), "utf8");
+
+  const harness = new RecordingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, {
+    executionMode: "manual",
+    selectionScope: "single",
+    selectedTaskIds: ["1.2"],
+  }));
+
+  assert.equal(state.status, "complete");
+  assert.deepEqual(harness.taskIds, ["1.1", "1.2"]);
+  assert.deepEqual(state.selection?.taskIds, ["1.1", "1.2"]);
+  assert.equal(state.tasks["1.3"]?.status, "pending");
+});
+
+test("manual run can continue with a new selection after a previous selected run completed", async () => {
+  const fixture = makeEngineFixture();
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  manifest.phases[0]!.tasks.push({
+    id: "1.2",
+    title: "Second manual task",
+    description: "Should run on the second manual run",
+    ownerAgent: "worker",
+    dependencies: [],
+    expectedOutputs: [],
+    validationCommands: [],
+    approvalRequired: false,
+    sourceLines: ["- Task 1.2: Second manual task"],
+  });
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest), "utf8");
+
+  const firstHarness = new RecordingHarness();
+  const first = await runEngine(engineOptionsFor(fixture, firstHarness, 1_000, {
+    executionMode: "manual",
+    selectionScope: "single",
+    selectedTaskIds: ["1.1"],
+  }));
+  assert.equal(first.status, "complete");
+  assert.deepEqual(firstHarness.taskIds, ["1.1"]);
+  assert.equal(first.tasks["1.2"]?.status, "pending");
+
+  const secondHarness = new RecordingHarness();
+  const second = await runEngine(engineOptionsFor(fixture, secondHarness, 1_000, {
+    executionMode: "manual",
+    selectionScope: "single",
+    selectedTaskIds: ["1.2"],
+  }));
+  assert.equal(second.status, "complete");
+  assert.deepEqual(secondHarness.taskIds, ["1.2"]);
+  assert.equal(second.tasks["1.1"]?.status, "complete");
+  assert.equal(second.tasks["1.2"]?.status, "complete");
+});
+
+test("runEngine recovers a leftover 'running' task as pending (crash recovery)", async () => {
+  const fixture = makeEngineFixture();
+  const statePath = join(fixture.root, "docs", "WORKFLOW-STATE.json");
+  // Simulate a run that died mid-task: task 1.1 was persisted as "running".
+  const stale: WorkflowState = {
+    runId: "crashed-run",
+    startedAt: new Date().toISOString(),
+    lastUpdatedAt: new Date().toISOString(),
+    manifestPath: fixture.manifestPath,
+    manifestVersion: "1.0",
+    harness: "recording",
+    status: "running",
+    tasks: {
+      "1.1": {
+        taskId: "1.1", status: "running", attempt: 1, outputFiles: [],
+        startedAt: new Date().toISOString(),
+      },
+    },
+    blockers: [],
+    auditLog: [],
+  };
+  writeFileSync(statePath, JSON.stringify(stale), "utf8");
+
+  const harness = new RecordingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000));
+
+  assert.equal(state.status, "complete");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+  assert.equal(harness.timeouts.length, 1, "the recovered task should actually run, not deadlock");
+});
+
+test("a fresh run clears a stale stop request left by a killed engine", async () => {
+  const fixture = makeEngineFixture();
+  const controlPath = join(fixture.root, "docs", "engine-control.json");
+  // Simulate an engine that was SIGKILLed mid-run leaving a stop request behind.
+  writeControl(controlPath, "stop");
+
+  const harness = new RecordingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000));
+
+  assert.equal(state.status, "complete", "the stale stop must not halt a fresh run");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+  assert.equal(harness.timeouts.length, 1, "the task should actually run");
+  assert.equal(readControl(controlPath), null, "the stale control file should be cleared");
+});
+
+test("a stop request written mid-run pauses after the current task wave", async () => {
+  const fixture = makeEngineFixture({
+    dependencies: [],
+  });
+  // Two sequential tasks so the stop lands between waves.
+  const manifestPath = fixture.manifestPath;
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as ExecutionManifest;
+  manifest.phases[0]!.tasks.push({
+    id: "1.2",
+    title: "Build a second thing",
+    description: "Build another thing",
+    ownerAgent: "worker",
+    dependencies: ["1.1"],
+    expectedOutputs: [],
+    validationCommands: [],
+    approvalRequired: false,
+    sourceLines: ["- Task 1.2: Build a second thing"],
+  });
+  writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+
+  const controlPath = join(fixture.root, "docs", "engine-control.json");
+  // Block the first task until the control file has been written, so the stop
+  // arrives mid-run (while task 1.1 is executing) rather than before any task.
+  let release: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const harness = new GatedHarness(() => {
+    if (!readControl(controlPath)) writeControl(controlPath, "stop");
+    release();
+  });
+
+  const runPromise = runEngine(engineOptionsFor(fixture, harness, 1_000));
+  await gate;
+  writeControl(controlPath, "stop");
+  harness.releaseNow();
+  const state = await runPromise;
+
+  assert.equal(state.status, "paused");
+  assert.equal(state.tasks["1.1"]?.status, "complete", "the in-flight task finishes before pausing");
+  assert.equal(state.tasks["1.2"]?.status, "pending", "the second task must not start after the stop");
+  assert.equal(readControl(controlPath), null);
+});
+
+test("the in-process stopRequested flag pauses the run (SIGINT/SIGTERM path)", async () => {
+  const fixture = makeEngineFixture();
+  const harness = new RecordingHarness();
+  const opts = engineOptionsFor(fixture, harness, 1_000);
+  opts.stopRequested = () => true;
+
+  const state = await runEngine(opts);
+
+  assert.equal(state.status, "paused");
+  assert.equal(state.tasks["1.1"]?.status, "pending");
+  assert.equal(harness.timeouts.length, 0);
+});
+
+test("a stop during a wave leaves same-wave siblings pending (per-task check)", async () => {
+  const fixture = makeEngineFixture({
+    dependencies: [],
+  });
+  // Two independent tasks: both are ready in the SAME wave. The stop arrives
+  // while 1.1 runs; 1.2 must not start, even though it shares the wave.
+  const manifestPath = fixture.manifestPath;
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as ExecutionManifest;
+  manifest.phases[0]!.tasks.push({
+    id: "1.2",
+    title: "Build a second thing",
+    description: "Build another thing",
+    ownerAgent: "worker",
+    dependencies: [],
+    expectedOutputs: [],
+    validationCommands: [],
+    approvalRequired: false,
+    sourceLines: ["- Task 1.2: Build a second thing"],
+  });
+  writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+
+  const controlPath = join(fixture.root, "docs", "engine-control.json");
+  let release: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const harness = new GatedHarness(() => {
+    if (!readControl(controlPath)) writeControl(controlPath, "stop");
+    release();
+  });
+
+  const runPromise = runEngine(engineOptionsFor(fixture, harness, 1_000, { maxConcurrency: 1 }));
+  await gate;
+  harness.releaseNow();
+  const state = await runPromise;
+
+  assert.equal(state.status, "paused");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+  assert.equal(state.tasks["1.2"]?.status, "pending", "the same-wave sibling must not start after the stop");
+  assert.equal(readControl(controlPath), null);
+});
+
+test("runCommand kills a child that exceeds a custom timeout and reports it", async () => {
+  const start = Date.now();
+  const result = await runCommand(
+    process.execPath,
+    ["-e", "setTimeout(() => {}, 10_000)"],
+    { cwd: tmpdir(), timeoutMs: 150, maxBufferBytes: 1024 },
+  );
+
+  assert.equal(result.status, null);
+  assert.match(result.error ?? "", /timed out after 150ms/);
+  assert.ok(Date.now() - start < 5_000, "runCommand should not wait for the child's own sleep");
+});
+
+// ─── Output verification gate ────────────────────────────────────────────────
+
+/** A harness that always "succeeds" without producing files or real output. */
+class HollowHarness implements HarnessAdapter {
+  readonly name = "hollow";
+  readonly supportsConcurrency = false;
+  readonly capabilities = ["text", "repository-tools"] as const;
+  readonly stdout: string;
+
+  constructor(stdout = "Ready for the task.") {
+    this.stdout = stdout;
+  }
+
+  async invoke() {
+    return {
+      success: true,
+      outputFiles: [],
+      stdout: this.stdout,
+      stderr: "",
+      durationMs: 1,
+    };
+  }
+}
+
+/** A harness that writes a file into the repo, so a git diff detects the work. */
+class FileWritingHarness implements HarnessAdapter {
+  readonly name = "file-writing";
+  readonly supportsConcurrency = false;
+  readonly capabilities = ["text", "repository-tools"] as const;
+
+  async invoke({ repoRoot }: Parameters<HarnessAdapter["invoke"]>[0]) {
+    mkdirSync(join(repoRoot, "src"), { recursive: true });
+    writeFileSync(join(repoRoot, "src", "thing.ts"), "export const thing = 1;\n", "utf8");
+    return {
+      success: true,
+      outputFiles: ["src/thing.ts"],
+      stdout: "[file-writing] wrote src/thing.ts",
+      stderr: "",
+      durationMs: 1,
+    };
+  }
+}
+
+/** A harness that edits an already tracked file without reporting outputFiles. */
+class TrackedFileEditingHarness implements HarnessAdapter {
+  readonly name = "tracked-file-editing";
+  readonly supportsConcurrency = false;
+  readonly capabilities = ["text", "repository-tools"] as const;
+
+  async invoke({ repoRoot }: Parameters<HarnessAdapter["invoke"]>[0]) {
+    writeFileSync(join(repoRoot, "src", "thing.ts"), "export const thing = 2;\n", "utf8");
+    return {
+      success: true,
+      outputFiles: [],
+      stdout: "Ready for the task.",
+      stderr: "",
+      durationMs: 1,
+    };
+  }
+}
+
+function initGit(root: string): void {
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "forge-test@local"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Forge Test"], { cwd: root });
+}
+
+test("output gate: a task whose expectedOutputs are missing is marked failed, not complete", async () => {
+  const fixture = makeEngineFixture({ expectedOutputs: ["src/out.ts"] });
+  const harness = new HollowHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { allowNoop: false }));
+
+  assert.equal(state.status, "failed");
+  assert.equal(state.tasks["1.1"]?.status, "failed");
+  assert.match(state.tasks["1.1"]?.errorMessage ?? "", /expected outputs missing: src\/out\.ts/);
+});
+
+test("output gate: a no-op task (no changes, trivial output) is marked failed", async () => {
+  const fixture = makeEngineFixture();
+  const harness = new HollowHarness("Ready for the task.");
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { allowNoop: false }));
+
+  assert.equal(state.status, "failed");
+  assert.equal(state.tasks["1.1"]?.status, "failed");
+  assert.match(state.tasks["1.1"]?.errorMessage ?? "", /produced no changes and no substantive output/);
+});
+
+test("output gate: --allow-noop relaxes the no-op heuristic", async () => {
+  const fixture = makeEngineFixture();
+  const harness = new HollowHarness("Ready for the task.");
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { allowNoop: true }));
+
+  assert.equal(state.status, "complete");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+});
+
+test("output gate: --allow-noop still records tracked files changed during the task", async () => {
+  const fixture = makeEngineFixture();
+  initGit(fixture.root);
+  mkdirSync(join(fixture.root, "src"), { recursive: true });
+  writeFileSync(join(fixture.root, "src", "thing.ts"), "export const thing = 1;\n", "utf8");
+  execFileSync("git", ["add", "src/thing.ts"], { cwd: fixture.root });
+  execFileSync("git", ["commit", "-qm", "seed tracked file"], { cwd: fixture.root });
+
+  const harness = new TrackedFileEditingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { allowNoop: true, autoCommit: false }));
+
+  assert.equal(state.status, "complete");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+  assert.deepEqual(state.tasks["1.1"]?.outputFiles, ["src/thing.ts"]);
+});
+
+test("output gate: a substantive agent response passes the no-op heuristic", async () => {
+  const fixture = makeEngineFixture();
+  const substantive = [
+    "Implemented the task end to end.",
+    "src/foo.ts: added the scanner; test/foo.test.ts: added unit coverage;",
+    "typecheck passes, all 42 tests green. This is a long response.",
+  ].join("\n");
+  const harness = new HollowHarness(substantive);
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { allowNoop: false }));
+
+  assert.equal(state.status, "complete");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+});
+
+test("output gate: a file change detected via git diff passes, even with trivial output", async () => {
+  const fixture = makeEngineFixture();
+  initGit(fixture.root);
+  const harness = new FileWritingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { allowNoop: false }));
+
+  assert.equal(state.status, "complete");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+});
+
+test("auto-commit (default on) commits one commit per completed task and records task.committed", async () => {
+  const fixture = makeEngineFixture();
+  initGit(fixture.root);
+  const manifestPath = fixture.manifestPath;
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as ExecutionManifest;
+  manifest.phases[0]!.tasks.push({
+    id: "1.2",
+    title: "Build a second thing",
+    description: "Build another thing",
+    ownerAgent: "worker",
+    dependencies: ["1.1"],
+    expectedOutputs: [],
+    validationCommands: [],
+    approvalRequired: false,
+    sourceLines: ["- Task 1.2: Build a second thing"],
+  });
+  writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+
+  const harness = new FileWritingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000));
+
+  assert.equal(state.status, "complete");
+  const log = execFileSync("git", ["log", "--oneline"], { cwd: fixture.root, encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  assert.equal(log.length, 2, "one commit per completed task");
+  assert.match(log[0]!, /complete task 1\.2/);
+  assert.match(log[1]!, /complete task 1\.1/);
+
+  const audit = readFileSync(join(fixture.root, "docs", "EXECUTION-AUDIT.jsonl"), "utf8");
+  assert.match(audit, /"action":"task\.committed"/);
+  assert.match(audit, /"commitSha":"[0-9a-f]{40}"/);
+});
+
+test("auto-commit disabled (autoCommit: false) leaves the working tree uncommitted", async () => {
+  const fixture = makeEngineFixture();
+  initGit(fixture.root);
+  const harness = new FileWritingHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { autoCommit: false }));
+
+  assert.equal(state.status, "complete");
+  const status = execFileSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: fixture.root, encoding: "utf8" });
+  assert.match(status, /src\/thing\.ts/, "task work should remain uncommitted");
+  const audit = readFileSync(join(fixture.root, "docs", "EXECUTION-AUDIT.jsonl"), "utf8");
+  assert.doesNotMatch(audit, /"action":"task\.committed"/);
+});
+
+test("replayTask auto-commits a replayed task's work by default", async () => {
+  const fixture = makeEngineFixture({ expectedOutputs: ["src/thing.ts"] });
+  initGit(fixture.root);
+  const hollow = new HollowHarness();
+  const failed = await runEngine(engineOptionsFor(fixture, hollow, 1_000, { allowNoop: false }));
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.tasks["1.1"]?.status, "failed");
+
+  const writing = new FileWritingHarness();
+  const state = await replayTask("1.1", engineOptionsFor(fixture, writing, 1_000, { allowNoop: false }));
+
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+  const log = execFileSync("git", ["log", "--oneline"], { cwd: fixture.root, encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .filter(Boolean);
+  assert.equal(log.length, 1, "the replayed task should produce one commit");
+  assert.match(log[0]!, /complete task 1\.1/);
+});
+
+test("output gate: a failing manifest validation command marks the task failed", async () => {
+  const fixture = makeEngineFixture({ validationCommands: ["exit 1"] });
+  const harness = new HollowHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { allowNoop: false, runValidation: true }));
+
+  assert.equal(state.status, "failed");
+  assert.equal(state.tasks["1.1"]?.status, "failed");
+  assert.match(state.tasks["1.1"]?.errorMessage ?? "", /validation command failed/);
+});
+
+test("output gate: a passing manifest validation command allows completion", async () => {
+  const fixture = makeEngineFixture({ validationCommands: ['node -e "process.exit(0)"'] });
+  const harness = new HollowHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { allowNoop: false, runValidation: true }));
+
+  assert.equal(state.status, "complete");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+});
+
+// ─── Parallel execution: per-task git worktree sandboxes ──────────────────────
+
+/**
+ * A two-owner fixture with a committed baseline, which sandbox mode requires.
+ * Both tasks are ready at once, own different agents, and declare their own
+ * output path.
+ */
+function makeParallelFixture(): EngineFixture {
+  const fixture = makeEngineFixture();
+  writeFileSync(join(fixture.root, ".agents", "agents", "designer.md"), `---
+name: designer
+description: Designs things.
+---
+
+## Expertise
+- designing
+`, "utf8");
+
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  manifest.phases[0]!.ownerAgents = ["worker", "designer"];
+  manifest.phases[0]!.tasks = [
+    { ...manifest.phases[0]!.tasks[0]!, id: "1.1", ownerAgent: "worker", expectedOutputs: ["src/alpha.ts"] },
+    {
+      id: "1.2", title: "Build a second thing", description: "Build another thing",
+      ownerAgent: "designer", dependencies: [], expectedOutputs: ["src/beta.ts"],
+      validationCommands: [], approvalRequired: false, sourceLines: ["- Task 1.2: Build a second thing"],
+    },
+  ];
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest), "utf8");
+
+  // Sandbox mode requires a clean tree, so the baseline commit is the last
+  // thing the fixture writes.
+  initGit(fixture.root);
+  execFileSync("git", ["add", "-A"], { cwd: fixture.root });
+  execFileSync("git", ["commit", "-qm", "seed"], { cwd: fixture.root });
+  return fixture;
+}
+
+/**
+ * Writes one file per task into whichever root the engine handed the harness
+ * (the engine root, or that task's sandbox) and blocks until the test releases
+ * it, so the test controls exactly which tasks overlap.
+ */
+class SandboxedWriterHarness implements HarnessAdapter {
+  readonly name = "sandboxed-writer";
+  readonly supportsConcurrency = true;
+  readonly capabilities = ["text", "repository-tools"] as const;
+  active = new Set<string>();
+  maxOverlap = 0;
+  startedOrder: string[] = [];
+  roots = new Map<string, string>();
+  /** When true a task blocks until the test releases it, to pin the overlap. */
+  gate = false;
+  private releases = new Map<string, () => void>();
+  private started = new Map<string, () => void>();
+  private extra: (request: Parameters<HarnessAdapter["invoke"]>[0]) => void = () => {};
+
+  onInvoke(extra: (request: Parameters<HarnessAdapter["invoke"]>[0]) => void): void {
+    this.extra = extra;
+  }
+
+  async invoke(request: Parameters<HarnessAdapter["invoke"]>[0]): Promise<TaskResult> {
+    const { task, repoRoot } = request;
+    this.active.add(task.id);
+    this.startedOrder.push(task.id);
+    this.roots.set(task.id, repoRoot);
+    this.maxOverlap = Math.max(this.maxOverlap, this.active.size);
+    this.started.get(task.id)?.();
+    if (this.gate) await new Promise<void>((resolve) => this.releases.set(task.id, resolve));
+    this.extra(request);
+    this.active.delete(task.id);
+    const file = `src/${task.id === "1.1" ? "alpha" : "beta"}.ts`;
+    mkdirSync(join(repoRoot, "src"), { recursive: true });
+    writeFileSync(join(repoRoot, file), `export const ${task.id} = 1;\n`, "utf8");
+    return {
+      success: true, outputFiles: [], stdout: `[sandboxed] wrote ${file}`,
+      stderr: "", durationMs: 1,
+    };
+  }
+
+  whenStarted(taskId: string): Promise<void> {
+    if (this.startedOrder.includes(taskId)) return Promise.resolve();
+    return new Promise((resolve) => this.started.set(taskId, resolve));
+  }
+
+  release(taskId: string): void {
+    this.releases.get(taskId)?.();
+  }
+}
+
+test("same-owner ready tasks run in separate waves (serialized) even with concurrency 2", async () => {
+  const fixture = makeEngineFixture();
+  const manifestPath = fixture.manifestPath;
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as ExecutionManifest;
+  manifest.phases[0]!.ownerAgents = ["worker"];
+  manifest.phases[0]!.tasks.push({
+    id: "1.2",
+    title: "Build a second thing",
+    description: "Build another thing",
+    ownerAgent: "worker",
+    dependencies: [],
+    expectedOutputs: [],
+    validationCommands: [],
+    approvalRequired: false,
+    sourceLines: ["- Task 1.2: Build a second thing"],
+  });
+  writeFileSync(manifestPath, JSON.stringify(manifest), "utf8");
+  initGit(fixture.root);
+  execFileSync("git", ["add", "-A"], { cwd: fixture.root });
+  execFileSync("git", ["commit", "-qm", "seed"], { cwd: fixture.root });
+
+  const harness = new GatedConcurrentHarness();
+  const runPromise = runEngine(engineOptionsFor(fixture, harness, 1_000, { maxConcurrency: 2 }));
+
+  // Task 1.1 starts; its same-owner sibling must NOT start in the same wave.
+  await harness.whenStarted("1.1");
+  assert.deepEqual(harness.startedOrder, ["1.1"], "only 1.1 should start in wave 1");
+  harness.release("1.1");
+
+  // After 1.1 drains, 1.2 runs in a later wave.
+  await harness.whenStarted("1.2");
+  assert.deepEqual(harness.startedOrder, ["1.1", "1.2"]);
+  harness.release("1.2");
+
+  const state = await runPromise;
+  assert.equal(state.status, "complete");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+  assert.equal(state.tasks["1.2"]?.status, "complete");
+  assert.ok(harness.maxOverlap <= 1, `same-owner tasks must never overlap (saw max ${harness.maxOverlap})`);
+});
+
+test("concurrent tasks run in their own worktrees and overlap for real", async () => {
+  const fixture = makeParallelFixture();
+  const harness = new SandboxedWriterHarness();
+  harness.gate = true;
+  const runPromise = runEngine(engineOptionsFor(fixture, harness, 1_000, { maxConcurrency: 2 }));
+
+  await harness.whenStarted("1.1");
+  await harness.whenStarted("1.2");
+  assert.equal(harness.maxOverlap, 2, "disjoint-owner tasks must genuinely overlap");
+  harness.release("1.1");
+  harness.release("1.2");
+
+  const state = await runPromise;
+  assert.equal(state.status, "complete");
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+  assert.equal(state.tasks["1.2"]?.status, "complete");
+
+  // Each task saw a different root, and neither root was the engine root.
+  const root = fixture.root;
+  assert.notEqual(harness.roots.get("1.1"), harness.roots.get("1.2"));
+  for (const id of ["1.1", "1.2"]) assert.notEqual(harness.roots.get(id), root, `${id} must not run in the engine root`);
+  for (const id of ["1.1", "1.2"]) assert.ok(String(harness.roots.get(id)).startsWith(join(root, ".forge-sandboxes")), `${id} runs in a sandbox`);
+
+  // Attribution is exact: neither task claims the sibling's file.
+  assert.deepEqual(state.tasks["1.1"]?.outputFiles, ["src/alpha.ts"]);
+  assert.deepEqual(state.tasks["1.2"]?.outputFiles, ["src/beta.ts"]);
+
+  // Both files landed in the engine root and no sandbox survives the run.
+  assert.ok(existsSync(join(root, "src", "alpha.ts")));
+  assert.ok(existsSync(join(root, "src", "beta.ts")));
+  assert.ok(!existsSync(join(root, ".forge-sandboxes")), "sandboxes are removed when the run finishes");
+  const worktrees = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: root, encoding: "utf8" });
+  assert.equal(worktrees.match(/^worktree /gm)?.length, 1, "only the main worktree is registered");
+});
+
+test("each task's auto-commit contains only that task's work", async () => {
+  const fixture = makeParallelFixture();
+  const harness = new SandboxedWriterHarness();
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { maxConcurrency: 2 }));
+  assert.equal(state.status, "complete");
+
+  const commits = execFileSync("git", ["log", "--format=%H%x09%s"], { cwd: fixture.root, encoding: "utf8" })
+    .trim().split("\n").map((line) => line.split("\t") as [string, string])
+    .filter(([, subject]) => subject.startsWith("feat(forge-engine)"));
+  assert.equal(commits.length, 2, "one commit per completed task");
+
+  const expectedBySubject: Record<string, string[]> = {
+    "complete task 1.1 - Build a thing": ["src/alpha.ts"],
+    "complete task 1.2 - Build a second thing": ["src/beta.ts"],
+  };
+  for (const [sha, subject] of commits) {
+    const expected = Object.entries(expectedBySubject).find(([fragment]) => subject.includes(fragment))?.[1];
+    assert.ok(expected, `unexpected commit subject: ${subject}`);
+    const files = execFileSync("git", ["show", "--name-only", "--format=", sha], { cwd: fixture.root, encoding: "utf8" })
+      .trim().split("\n").filter(Boolean);
+    assert.deepEqual(files.filter((file) => !file.startsWith("docs/")), expected, `${subject} commits only its own work`);
+  }
+});
+
+test("a concurrent write to an already-integrated path fails the second task", async () => {
+  const fixture = makeParallelFixture();
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  for (const task of manifest.phases[0]!.tasks) task.produces = "work.result";
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest), "utf8");
+  execFileSync("git", ["add", "-A"], { cwd: fixture.root });
+  execFileSync("git", ["commit", "-qm", "declare outputs"], { cwd: fixture.root });
+
+  const harness = new SandboxedWriterHarness();
+  // Both tasks write src/alpha.ts even though only 1.1 declares it: the DAG has
+  // no dependency between them, so nothing stops them colliding.
+  harness.onInvoke(({ repoRoot }) => {
+    mkdirSync(join(repoRoot, "src"), { recursive: true });
+    writeFileSync(join(repoRoot, "src", "alpha.ts"), `export const clash = ${repoRoot.length};\n`, "utf8");
+  });
+
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { maxConcurrency: 2 }));
+
+  const failed = Object.values(state.tasks).filter((task) => task.status === "failed");
+  assert.equal(failed.length, 1, "exactly one task loses the overlap and fails");
+  assert.match(failed[0]?.errorMessage ?? "", /Concurrent write overlap on src\/alpha\.ts/);
+  assert.equal(state.status, "failed");
+
+  // The losing task's artifact must not advertise output that was never merged.
+  const store = new ArtifactStore({ artifactsPath: join(fixture.root, "docs", "artifacts") });
+  const artifacts = failed.map((record) => (record.artifactId ? store.read(record.artifactId) : null));
+  assert.ok(artifacts.some(Boolean), "the failed task synthesised an artifact before integration");
+  for (const artifact of artifacts.filter(Boolean)) {
+    assert.equal(artifact!.status, "failed");
+    assert.deepEqual(artifact!.filesChanged, []);
+    assert.match(artifact!.summary, /not integrated/);
+  }
+});
+
+test("sandbox mode refuses a dirty working tree with the exact paths", async () => {
+  const fixture = makeParallelFixture();
+  mkdirSync(join(fixture.root, "src"), { recursive: true });
+  writeFileSync(join(fixture.root, "src", "wip.ts"), "uncommitted work\n", "utf8");
+
+  const state = await runEngine(engineOptionsFor(fixture, new SandboxedWriterHarness(), 1_000, { maxConcurrency: 2 }));
+
+  assert.equal(state.status, "failed");
+  assert.match(state.blockers.join(" "), /clean working tree/);
+  assert.match(state.blockers.join(" "), /src\/wip\.ts/);
+  assert.equal(state.tasks["1.1"]?.status, "pending", "no task is dispatched");
+  assert.equal(state.tasks["1.2"]?.status, "pending");
+});
+
+test("sandbox preflight blockers clear after the working tree is fixed", async () => {
+  const fixture = makeParallelFixture();
+  mkdirSync(join(fixture.root, "src"), { recursive: true });
+  writeFileSync(join(fixture.root, "src", "wip.ts"), "uncommitted work\n", "utf8");
+
+  const firstRun = await runEngine(engineOptionsFor(fixture, new SandboxedWriterHarness(), 1_000, { maxConcurrency: 2 }));
+  assert.equal(firstRun.status, "failed");
+  assert.match(firstRun.blockers.join(" "), /src\/wip\.ts/);
+
+  execFileSync("git", ["add", "src/wip.ts"], { cwd: fixture.root });
+  execFileSync("git", ["commit", "-qm", "resolve sandbox preflight"], { cwd: fixture.root });
+
+  const resumed = await runEngine(engineOptionsFor(fixture, new SandboxedWriterHarness(), 1_000, { maxConcurrency: 2 }));
+  assert.equal(resumed.status, "complete");
+  assert.deepEqual(resumed.blockers, []);
+  assert.match(readFileSync(join(fixture.root, "docs", "PROGRESS.md"), "utf8"), /## Blockers\n- None/);
+});
+
+test("a new run clears stale blockers but keeps its manifest reconciliation notices", async () => {
+  const fixture = makeEngineFixture();
+  const options = engineOptionsFor(fixture, new RecordingHarness(), 1_000);
+  const initial = await runEngine(options);
+  const statePath = join(fixture.root, "docs", "WORKFLOW-STATE.json");
+  saveState(statePath, { ...initial, status: "failed", blockers: ["stale blocker"] });
+
+  const manifest = JSON.parse(readFileSync(fixture.manifestPath, "utf8")) as ExecutionManifest;
+  manifest.phases[0]!.tasks.push({
+    ...manifest.phases[0]!.tasks[0]!,
+    id: "1.2",
+    title: "Build another thing",
+    description: "Build another thing",
+    sourceLines: ["- Task 1.2: Build another thing"],
+  });
+  writeFileSync(fixture.manifestPath, JSON.stringify(manifest), "utf8");
+
+  const resumed = await runEngine(options);
+  assert.deepEqual(resumed.blockers, ["Manifest reconciliation added 1 pending task(s): 1.2"]);
+  assert.match(readFileSync(join(fixture.root, "docs", "PROGRESS.md"), "utf8"), /Manifest reconciliation added 1 pending task\(s\): 1\.2/);
+});
+
+test("sandbox mode refuses a repository with no commits", async () => {
+  const fixture = makeEngineFixture();
+  execFileSync("git", ["init", "-q"], { cwd: fixture.root });
+
+  const state = await runEngine(engineOptionsFor(fixture, new SandboxedWriterHarness(), 1_000, { maxConcurrency: 2 }));
+
+  assert.equal(state.status, "failed");
+  assert.match(state.blockers.join(" "), /at least one commit/);
+  assert.equal(state.tasks["1.1"]?.status, "pending");
+});
+
+test("a completed task survives a sibling failure and is never re-run", async () => {
+  const fixture = makeParallelFixture();
+  const harness = new SandboxedWriterHarness();
+  harness.onInvoke(({ task }) => {
+    if (task.id === "1.2") throw new Error("sibling exploded");
+  });
+
+  const failed = await runEngine(engineOptionsFor(fixture, harness, 1_000, { maxConcurrency: 2 }));
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.tasks["1.1"]?.status, "complete", "the healthy task still completed and was committed");
+  assert.equal(failed.tasks["1.2"]?.status, "failed");
+  assert.equal(loadState(join(fixture.root, "docs", "WORKFLOW-STATE.json"))?.tasks["1.1"]?.status, "complete",
+    "completion is durable on disk, not just in the returned state");
+
+  // A fresh run must not repeat completed work.
+  const rerun = new SandboxedWriterHarness();
+  await runEngine(engineOptionsFor(fixture, rerun, 1_000, { maxConcurrency: 2 }));
+  assert.ok(!rerun.startedOrder.includes("1.1"), "a completed task is never re-run");
+
+  // Replaying the failed task leaves the completed one alone.
+  const replayed = new SandboxedWriterHarness();
+  const state = await replayTask("1.2", engineOptionsFor(fixture, replayed, 1_000, { maxConcurrency: 2 }));
+  assert.deepEqual(replayed.startedOrder, ["1.2"]);
+  assert.equal(state.tasks["1.1"]?.status, "complete");
+  assert.equal(state.tasks["1.2"]?.status, "complete");
+  assert.equal(state.status, "complete");
+});
+
+test("concurrency above 1 falls back to 1 when the harness cannot run tasks concurrently", () => {
+  assert.deepEqual(resolveConcurrency({ maxConcurrency: 1, supportsConcurrency: false }), {
+    requested: 1, effective: 1, sandboxMode: false,
+  });
+  assert.deepEqual(resolveConcurrency({ maxConcurrency: 4, supportsConcurrency: false }), {
+    requested: 4, effective: 1, sandboxMode: false,
+    notice: "Harness does not support concurrent task execution; --concurrency 4 falls back to 1.",
+  });
+  assert.deepEqual(resolveConcurrency({ maxConcurrency: 4, supportsConcurrency: true }), {
+    requested: 4, effective: 4, sandboxMode: true,
+  });
+  assert.deepEqual(resolveConcurrency({ maxConcurrency: Number.NaN, supportsConcurrency: true }), {
+    requested: 1, effective: 1, sandboxMode: false,
+  });
+});
+
+test("a harness without supportsConcurrency keeps the engine sequential", async () => {
+  const fixture = makeParallelFixture();
+  const harness = new SandboxedWriterHarness();
+  (harness as { supportsConcurrency: boolean }).supportsConcurrency = false;
+
+  const state = await runEngine(engineOptionsFor(fixture, harness, 1_000, { maxConcurrency: 2 }));
+
+  assert.equal(state.status, "complete");
+  assert.equal(harness.maxOverlap, 1, "the engine must not dispatch concurrently");
+  assert.equal(harness.roots.get("1.1"), fixture.root, "sequential runs stay in the engine root");
+});

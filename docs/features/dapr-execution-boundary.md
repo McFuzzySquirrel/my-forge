@@ -106,16 +106,16 @@ matrix are in the [versioned contract](../contracts/dapr-execution-v1.md).
 {
   "id":"P2-03",
   "title":"Separate reusable execution utilities",
-  "description":"Extract existing harness adapters, request construction, task context, output/no-op checks, structured results, validation, artifact projection, and workspace utilities into the planned narrow execution boundary. Preserve the legacy engine as its caller during this phase, avoid Dapr imports in the reusable interfaces, and retain existing utility tests and behavior.",
+  "description":"Extract existing harness adapters, request construction, task context, output/no-op checks, structured results, validation, artifact projection, and workspace utilities into the planned narrow execution boundary. Preserve the legacy engine as its caller by having launcher bootstrap stage the canonical utility library into the skill, without installing the Dapr scheduler. Avoid Dapr imports in the reusable interfaces and retain existing utility tests and behavior.",
   "ownerAgent":"forge-runtime-engineer",
   "dependencies":["P2-01","P2-06"],
-  "expectedOutputs":["tools/dapr-engine/execution/index.ts"],
-  "validationCommands":["npm test --prefix templates/skills/forge-workflow-engine","npm run typecheck --prefix templates/skills/forge-workflow-engine"],
+  "expectedOutputs":["tools/dapr-engine/execution/index.ts","tools/dapr-engine/package.json"],
+  "validationCommands":["npm test --prefix templates/skills/forge-workflow-engine","npm run typecheck --prefix templates/skills/forge-workflow-engine","npm run typecheck --prefix tools/dapr-engine","npm test --prefix scripts/forge-launcher","npm run typecheck --prefix scripts/forge-launcher"],
   "contract":{
     "version":2,"kind":"implementation",
     "requirements":[],
     "requirementRefs":["docs/features/dapr-execution-boundary.md#DAPR-EXEC-03"],
-    "acceptanceCriteria":["Reusable execution APIs have no dependency on the old scheduler state machine or Dapr SDK.","All preserved legacy call paths use the extracted modules without semantic changes.","The existing engine test suite and typecheck pass."],
+    "acceptanceCriteria":["Reusable execution APIs have no dependency on the old scheduler state machine or Dapr SDK.","All preserved legacy call paths use the extracted modules without semantic changes.","Launcher bootstrap stages the canonical execution library into the legacy skill and does not install a second scheduler.","The existing engine test suite and typecheck pass."],
     "constraints":[],
     "constraintRefs":["docs/PRD.md#DAPR-C-01","docs/PRD.md#DAPR-C-02"],
     "references":["templates/skills/forge-workflow-engine/scripts/request.ts","templates/skills/forge-workflow-engine/scripts/task-context.ts","templates/skills/forge-workflow-engine/scripts/task-execution.ts","templates/skills/forge-workflow-engine/scripts/verify.ts","templates/skills/forge-workflow-engine/scripts/artifacts.ts","templates/skills/forge-workflow-engine/scripts/sandbox.ts","templates/skills/forge-workflow-engine/scripts/harness/run.ts"]

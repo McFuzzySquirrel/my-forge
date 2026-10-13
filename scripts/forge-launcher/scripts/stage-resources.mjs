@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Stages the live forge templates/docs into resources/ so the published
- * package bootstraps standalone. Runs as part of `npm pack` (prepack).
+ * Stages forge templates, docs, and execution utilities into resources/ so the
+ * published package bootstraps standalone. Runs as part of `npm pack` (prepack).
  * Excludes node_modules/dist, matching bootstrap's copy behaviour.
  * Clears only the paths it manages, preserving tracked files (resources/.gitkeep).
  */
@@ -10,8 +10,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const pkgDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(pkgDir, "..", "..", "..");
-const resourcesDir = path.join(pkgDir, "..", "resources");
+const repoRoot = process.argv[2] ? path.resolve(process.argv[2]) : path.resolve(pkgDir, "..", "..", "..");
+const resourcesDir = process.argv[3] ? path.resolve(process.argv[3]) : path.join(pkgDir, "..", "resources");
 
 function copyTree(srcDir, destDir) {
   mkdirSync(destDir, { recursive: true });
@@ -29,11 +29,16 @@ mkdirSync(resourcesDir, { recursive: true });
 // Clear only the generated paths; leave .gitkeep (and anything else tracked) alone.
 rmSync(path.join(resourcesDir, "templates"), { recursive: true, force: true });
 rmSync(path.join(resourcesDir, "prompt-playbook.md"), { force: true });
+rmSync(path.join(resourcesDir, "tools", "dapr-engine", "execution"), { recursive: true, force: true });
 
 copyTree(path.join(repoRoot, "templates"), path.join(resourcesDir, "templates"));
+copyTree(
+  path.join(repoRoot, "tools", "dapr-engine", "execution"),
+  path.join(resourcesDir, "tools", "dapr-engine", "execution"),
+);
 copyFileSync(
   path.join(repoRoot, "docs", "prompt-playbook.md"),
   path.join(resourcesDir, "prompt-playbook.md"),
 );
 
-console.log(`Staged templates/ (no node_modules) + prompt-playbook.md into ${resourcesDir}`);
+console.log(`Staged templates/, execution utilities, and prompt-playbook.md into ${resourcesDir}`);

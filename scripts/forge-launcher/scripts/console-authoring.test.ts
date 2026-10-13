@@ -69,6 +69,11 @@ test("human-review Console action records evidence and rejects non-review tasks"
     path.join(engineScriptsDir, "..", "..", "forge-execution-adapter", "scripts"),
     { recursive: true },
   );
+  fs.cpSync(
+    resolveResources().executionDir,
+    path.resolve(engineScriptsDir, "../../../../tools/dapr-engine/execution"),
+    { recursive: true },
+  );
   fs.writeFileSync(path.join(root, "node_modules", "forge-test", "package.json"), '{"type":"module"}\n');
   const manifestPath = path.join(root, "docs", "EXECUTION-MANIFEST.json");
   const implementation = {

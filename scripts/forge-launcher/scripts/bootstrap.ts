@@ -94,6 +94,24 @@ function ensureGitignore(targetDir: string): void {
   }
 }
 
+function rewriteExecutionImports(engineDir: string): void {
+  const files = fs.readdirSync(engineDir, { withFileTypes: true });
+  for (const entry of files) {
+    const file = path.join(engineDir, entry.name);
+    if (entry.isDirectory()) {
+      rewriteExecutionImports(file);
+      continue;
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
+    let text = fs.readFileSync(file, "utf8");
+    text = text
+      .replaceAll("../../../../tools/dapr-engine/execution/", "./execution/")
+      .replaceAll("../../../../../tools/dapr-engine/execution/", "../execution/")
+      .replaceAll("../../../templates/skills/forge-execution-adapter/", "../../../forge-execution-adapter/");
+    fs.writeFileSync(file, text);
+  }
+}
+
 export async function bootstrap(opts: BootstrapOptions): Promise<number> {
   const harness = opts.harness ?? "agents";
   const root = HARNESS_ROOTS[harness];
@@ -109,7 +127,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<number> {
     if (result.code !== 0) throw new Error(`Error: git init failed: ${result.stderr || result.stdout}`);
   }
 
-  const { templatesDir, docsDir, usingBundled } = resolveResources();
+  const { templatesDir, docsDir, executionDir, usingBundled } = resolveResources();
   // Keep bootstrap output beside the artifacts it is preparing. This also makes
   // it visible to the Console's existing docs/engine-run.log poller.
   const log = makeLogger(opts.logFile ?? repositoryLogFile(targetDir));
@@ -167,6 +185,12 @@ export async function bootstrap(opts: BootstrapOptions): Promise<number> {
       }
       fs.rmSync(destDir, { recursive: true, force: true });
       copyTree(srcDir, destDir, rewrite);
+      if (skillName === "forge-workflow-engine") {
+        const packagedExecutionDir = path.join(destDir, "scripts", "execution");
+        fs.rmSync(packagedExecutionDir, { recursive: true, force: true });
+        copyTree(executionDir, packagedExecutionDir);
+        rewriteExecutionImports(destDir);
+      }
       log.ok(`Copied:  ${skillName}/`);
     }
 

@@ -1,9 +1,27 @@
 import type { AgentDescriptor, ExecutionManifest, ManifestTask, TaskCapability } from "../../forge-execution-adapter/scripts/types.ts";
+import type {
+  HarnessAdapter,
+  HarnessRunContext,
+  TaskAttemptRequest,
+  TaskAttemptSummary,
+  TaskFailureKind,
+  TaskGateResult,
+  TaskResult,
+  DeepReadonly,
+} from "../../../../tools/dapr-engine/execution/types.ts";
 
 export type { AgentDescriptor, ExecutionManifest, ManifestTask, TaskCapability };
-
-/** Default per-task timeout (10 minutes), matching the previous hardcoded value. */
-export const DEFAULT_TASK_TIMEOUT_MS = 10 * 60 * 1000;
+export type {
+  HarnessAdapter,
+  HarnessRunContext,
+  TaskAttemptRequest,
+  TaskAttemptSummary,
+  TaskFailureKind,
+  TaskGateResult,
+  TaskResult,
+  DeepReadonly,
+};
+export { DEFAULT_TASK_TIMEOUT_MS } from "../../../../tools/dapr-engine/execution/types.ts";
 
 /** Default heartbeat interval (60s) while a task is executing; 0 disables. */
 export const DEFAULT_HEARTBEAT_MS = 60 * 1000;
@@ -41,20 +59,6 @@ export interface TaskRecord {
   validationLimitations?: string[];
 }
 
-export interface TaskAttemptSummary {
-  attempt: number;
-  outcome: "passed" | "failed" | "cancelled";
-  resultPath: string;
-  reason?: string;
-}
-
-export interface TaskGateResult {
-  gate: "harness" | "outputs" | "handoff" | "requirements" | "validation";
-  status: "passed" | "failed" | "skipped";
-  reason?: string;
-  evidence?: string[];
-}
-
 // ─── Workflow run state ───────────────────────────────────────────────────────
 
 export type RunStatus = "running" | "paused" | "complete" | "failed";
@@ -72,67 +76,6 @@ export interface WorkflowState {
   blockers: string[];
   auditLog: AuditEvent[];
   selection?: TaskSelection;
-}
-
-// ─── Harness adapter interface ────────────────────────────────────────────────
-
-export interface TaskResult {
-  success: boolean;
-  outputFiles: string[];
-  stdout: string;
-  stderr: string;
-  durationMs: number;
-  errorMessage?: string;
-  failureKind?: TaskFailureKind;
-}
-
-export type TaskFailureKind = "retryable" | "configuration" | "exception" | "timeout" | "cancelled";
-export type DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> };
-
-export interface TaskAttemptRequest {
-  readonly agent: DeepReadonly<AgentDescriptor>;
-  readonly task: DeepReadonly<ManifestTask>;
-  readonly effectiveModel?: string;
-  /**
-   * Root the task's harness, output verification, and validation commands run
-   * in. Equal to the engine's `repoRoot` for a sequential run, and to a
-   * per-task `git worktree` sandbox when tasks run concurrently, so
-   * `expectedOutputs` and `outputFiles` always resolve against the tree the
-   * agent actually edited. See ADR-056.
-   */
-  readonly repoRoot: string;
-  readonly contextBlock: string;
-  readonly requiredCapabilities: readonly TaskCapability[];
-  readonly attempt: Readonly<{ number: number; maxRetries: number; runId: string }>;
-  readonly budget: Readonly<{ timeoutMs: number }>;
-  readonly instructions: string;
-  readonly signal?: AbortSignal;
-  /**
-   * When true, CLI harness adapters stream stdout/stderr activity into the
-   * engine log as it arrives. Command invocation logging is always on.
-   */
-  readonly logHarnessActivity?: boolean;
-}
-
-export interface HarnessRunContext {
-  readonly repoRoot: string;
-  readonly runId: string;
-  readonly signal?: AbortSignal;
-}
-
-export interface HarnessAdapter {
-  readonly name: string;
-  /**
-   * Whether the transport tolerates concurrent invocations. Required, but not
-   * sufficient: the engine additionally isolates every concurrent task in its
-   * own git worktree, so repository-level isolation never rests on the adapter.
-   */
-  readonly supportsConcurrency: boolean;
-  readonly capabilities: readonly TaskCapability[];
-  readonly defaultModel?: string;
-  prepare?(context: HarnessRunContext): Promise<void>;
-  cleanup?(): Promise<void>;
-  invoke(request: TaskAttemptRequest): Promise<TaskResult>;
 }
 
 // ─── Engine options ───────────────────────────────────────────────────────────

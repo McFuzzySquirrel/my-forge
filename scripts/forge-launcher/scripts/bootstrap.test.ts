@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,8 +41,19 @@ test("bootstrap copies agents, skills, prompt-playbook, and excludes artifacts",
   assert.ok(fs.existsSync(path.join(target, ".agents", "agents", "project-orchestrator.md")));
   assert.ok(fs.existsSync(path.join(target, ".agents", "skills", "forge-auto-build", "SKILL.md")));
   assert.ok(fs.existsSync(path.join(target, "docs", "prompt-playbook.md")));
-  assert.ok(!fs.existsSync(path.join(target, ".agents", "skills", "forge-workflow-engine", "node_modules")));
-  assert.ok(!fs.existsSync(path.join(target, ".agents", "skills", "forge-workflow-engine", "dist")));
+  const engineDir = path.join(target, ".agents", "skills", "forge-workflow-engine");
+  const executionDir = path.join(engineDir, "scripts", "execution");
+  assert.ok(fs.existsSync(path.join(executionDir, "index.ts")));
+  assert.ok(fs.existsSync(path.join(executionDir, "harness", "run.ts")));
+  assert.ok(!fs.readFileSync(path.join(engineDir, "scripts", "request.ts"), "utf8").includes("../../../../tools/"));
+  assert.ok(fs.readFileSync(path.join(engineDir, "scripts", "request.ts"), "utf8").includes("./execution/request.ts"));
+  const stagedContext = await import(pathToFileURL(path.join(executionDir, "task-context.ts")).href) as {
+    taskReferenceContext?: unknown;
+  };
+  assert.equal(typeof stagedContext.taskReferenceContext, "function");
+  assert.ok(!fs.existsSync(path.join(executionDir, "workflow.ts")));
+  assert.ok(!fs.existsSync(path.join(engineDir, "node_modules")));
+  assert.ok(!fs.existsSync(path.join(engineDir, "dist")));
 });
 
 test("bootstrap rewrites .agents/ paths for a non-default harness", async () => {

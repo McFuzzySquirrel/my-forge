@@ -11,6 +11,10 @@ Guidance for AI coding agents working in this repository (MyForge).
   forge agent personas.
 - `scripts/` — the `forge-launcher` npm package (`scripts/forge-launcher/`) plus
   thin bash/PowerShell wrapper scripts that delegate to it.
+- `tools/dapr-engine/` — the Dapr replacement source package. Its
+  `execution/` library is Dapr-independent and is staged inside the legacy
+  workflow-engine skill by launcher bootstrap; the service runtime is not
+  scaffolded yet.
 - `docs/` — human documentation: `updates.md` (the versioned changelog),
   `adr/` (architecture decision records), deep-dive guides, `research/`, and
   `documentation-map.md`. Generated artifacts (`EXECUTION-MANIFEST.json`,
@@ -61,6 +65,9 @@ Package test globs: the workflow engine runs `scripts/**/*.test.ts`; the
 execution adapter and launcher run `scripts/*.test.ts`.
 Each package also exposes its own entry script (e.g.
 `npm run workflow-engine -- run`).
+Install `tools/dapr-engine/` dependencies separately; its typecheck covers the
+canonical execution library, while the workflow-engine suite verifies legacy
+behavior through the library.
 
 The dev-only `tools/console-screenshots` package regenerates the Forge Console
 screenshots and visual tour (`npm --prefix tools/console-screenshots run capture`;

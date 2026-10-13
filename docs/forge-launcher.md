@@ -752,8 +752,10 @@ Remote URL (e.g. https://github.com/user/repo.git): https://github.com/user/my-c
 ### Step 4 -Bootstrap MyForge
 
 Runs the bundled bootstrap with `--force` into the new repository, copying all
-agent and skill templates into the harness directory (shown here with a
-spinner in a terminal; output is also tee'd to a per-run log).
+agent and skill templates into the harness directory. It also stages the
+Dapr-independent execution utility library inside the workflow-engine skill;
+it does not install the Dapr service or scheduler (shown here with a spinner in
+a terminal; output is also tee'd to a per-run log).
 
 Bootstrap also ensures the target `.gitignore` includes `node_modules/`,
 `docs/engine-run.log`, and `docs/artifacts/`. Existing rules are

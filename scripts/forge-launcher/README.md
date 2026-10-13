@@ -39,6 +39,10 @@ the queued command it prints.
 | `forge-launcher draft-prd \| draft-existing-prd [--repo <path>]` | Report the interactive requirements handoff. The PRD is never authored headlessly — see [ADR-060](../../docs/adr/060-interactive-requirements-authoring.md). |
 | `forge-launcher compile-manifest [--repo <path>]` | Headless build-prep stage: install the adapter if needed and write `docs/EXECUTION-MANIFEST.json` without starting the engine. |
 
+Bootstrap includes the workflow engine's Dapr-independent execution utility
+library so the existing engine remains runnable. It does not install the
+future Dapr workflow service or a second scheduler.
+
 In the Console's **Projects** view, use **Remove from Forge** for one project or
 **Remove selected (N)** for several. Confirmation is required. Only Forge
 registration, Console job history, and verified external job-result files are

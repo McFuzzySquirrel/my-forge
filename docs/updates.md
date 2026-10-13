@@ -4,6 +4,15 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.103
+
+### Extract reusable execution utilities
+
+- Move harness, task-context, verification, artifact, and workspace utilities
+  behind the Dapr-independent `tools/dapr-engine/execution/` boundary.
+- Keep the legacy workflow engine behavior unchanged by staging the canonical
+  library into its bootstrapped skill; bootstrap does not install a scheduler.
+
 ## October 2026 - v3.102
 
 ### Dapr replacement decision and P2 execution contracts

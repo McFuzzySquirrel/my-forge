@@ -169,12 +169,14 @@ for this repository fence.
   entry points. The launcher release stages the service runtime/resources into
   its own managed distribution after the build/bootstrap responsibilities are
   implemented.
-- Ordinary skill bootstrap continues to install authoring resources only. It
-  must not copy or install a second scheduler in every target repository.
+- Launcher bootstrap stages the canonical Dapr-independent execution library
+  inside the `forge-workflow-engine` skill so its preserved legacy call paths
+  remain runnable. It must not copy or install the Dapr workflow service or a
+  second scheduler in every target repository.
 
-These are source ownership decisions, not a claim that those production
-packages or commands already exist. No package is scaffolded by this contract
-alone.
+These are source ownership decisions, not a claim that production service
+entry points or deployment commands already exist. The P2-03 utility library
+is the only implementation staged by the legacy skill bootstrap.
 
 ## 5. Conformance matrix
 

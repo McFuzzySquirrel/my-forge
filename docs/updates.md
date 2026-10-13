@@ -4,6 +4,20 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.100
+
+### Dapr replacement foundation and isolated runtime spike
+
+- Record P0 execution/caller inventories, compatibility proposals, measurable
+  draft budgets, and baseline results in `plan.md`.
+- Add canonical foundation requirements and explicit operator review gates for
+  the baseline and released-SDK/local-runtime spike.
+- Add an isolated `tools/dapr-spike` experiment for stub Workflow execution on
+  rootless Podman; it does not replace the current engine or execute manifests.
+- Full baseline qualification remains blocked by the launcher's pre-existing
+  missing local dependency tarball. Operator budget/architecture acceptance and
+  production replacement are not claimed by this increment.
+
 ## October 2026 - v3.99
 
 ### Workflow blockers describe the current run

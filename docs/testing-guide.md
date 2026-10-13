@@ -15,6 +15,30 @@ npm run typecheck
 
 These commands cover the current launcher implementation, including bootstrap, draft flow, resume flow, engine-run forwarding, and the console path.
 
+### Isolated Dapr foundation experiment
+
+`tools/dapr-spike` is a development-only P1 experiment, not a replacement engine.
+It exercises stub activities, durable timers, and an external approval event;
+it does not execute manifests, invoke harnesses, or modify target repositories.
+The [implementation tracker](../plan.md) records evidence and open acceptance
+gates; the [canonical foundation contracts](features/dapr-foundation.md) keep
+operator approval separate from automated checks.
+
+From the repository root, install and check the isolated package:
+
+```bash
+npm ci --prefix tools/dapr-spike
+npm run typecheck --prefix tools/dapr-spike
+npm test --prefix tools/dapr-spike
+```
+
+Unit/type checks alone do not prove Workflow recovery. Live checks require the
+package's explicit rootless Linux Podman setup and persistent volumes; missing
+prerequisites must fail rather than silently skip. Use the live commands and
+limitations recorded in `plan.md` before collecting qualification evidence.
+Do not treat a stub restart test as proof of Git fencing, provider idempotency,
+backup/restore, cancellation, or hosted failover.
+
 ## 2. What the automated suite covers
 
 The current package-level test suite exercises the main launcher behaviors:

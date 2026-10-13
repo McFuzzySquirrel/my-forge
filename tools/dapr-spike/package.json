@@ -1,0 +1,25 @@
+{
+  "name": "dapr-spike",
+  "version": "1.0.0",
+  "description": "Isolated released Dapr Workflow and rootless Podman durability spike",
+  "private": true,
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test spike.test.js",
+    "typecheck": "tsc --project tsconfig.json",
+    "spike": "node cli.js",
+    "test:stack": "node cli.js verify"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@dapr/dapr": "3.18.0"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

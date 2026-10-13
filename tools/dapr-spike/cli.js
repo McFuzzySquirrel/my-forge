@@ -49,6 +49,14 @@ async function stateAt(client, runId, phase, seconds = 120) {
   return state;
 }
 
+function workerReadiness() {
+  const result = podman(['exec', `${pod}-worker`, 'node', '-e',
+    "fetch('http://127.0.0.1:8083',{signal:AbortSignal.timeout(12000)}).then(async r=>{if(!r.ok)process.exit(1);console.log(await r.text())}).catch(()=>process.exit(1))"]);
+  const probe = JSON.parse(result.stdout.trim());
+  assert.equal(probe.ready, true);
+  return probe;
+}
+
 export async function verify() {
   const started = Date.now();
   const host = prerequisites();
@@ -56,6 +64,9 @@ export async function verify() {
   const infraId = podman(['pod', 'inspect', pod, '--format', '{{.InfraContainerID}}']).stdout.trim();
   const networkMode = podman(['inspect', infraId, '--format', '{{.HostConfig.NetworkMode}}']).stdout.trim();
   assert.equal(networkMode, 'none', 'Offline stub proof requires a network-isolated pod');
+  const portBindings = JSON.parse(podman(['pod', 'inspect', pod, '--format', '{{json .InfraConfig.PortBindings}}']).stdout.trim()) ?? {};
+  assert.equal(Object.keys(portBindings).length, 0, 'No sidecar or infrastructure port may be published');
+  const initialReadiness = workerReadiness();
   const runId = `spike-${randomUUID()}`;
   const phases = [];
   await withClient(async client => {
@@ -69,7 +80,8 @@ export async function verify() {
     assert.equal(afterWorker.instanceId, runId);
     assert.equal(afterWorker.createdAt.toISOString(), timer.createdAt.toISOString());
     assert.equal(afterWorker.customStatus, 'timer', 'Restart must finish while timer is still waiting');
-    phases.push({ phase: 'timer-after-worker-restart', status: afterWorker.customStatus, elapsedMs: Date.now() - workerStart });
+    phases.push({ phase: 'timer-after-worker-restart', status: afterWorker.customStatus, elapsedMs: Date.now() - workerStart,
+      readiness: workerReadiness() });
     const approval = await stateAt(client, runId, 'approval');
     phases.push({ phase: 'approval-before-stack-restart', status: approval.customStatus });
     const stackStart = Date.now();
@@ -79,7 +91,8 @@ export async function verify() {
     await up();
     const afterStack = await stateAt(client, runId, 'approval');
     assert.equal(afterStack.createdAt.toISOString(), timer.createdAt.toISOString());
-    phases.push({ phase: 'approval-after-stack-restart', status: afterStack.customStatus, elapsedMs: Date.now() - stackStart, stopExitCodes });
+    phases.push({ phase: 'approval-after-stack-restart', status: afterStack.customStatus, elapsedMs: Date.now() - stackStart, stopExitCodes,
+      readiness: workerReadiness() });
     await client.raiseEvent(runId, 'approval', true);
     const completed = await client.waitForWorkflowCompletion(runId, true, 60);
     assert.equal(String(completed?.runtimeStatus), 'COMPLETED');
@@ -114,6 +127,7 @@ export async function verify() {
         'https://docs.dapr.io/reference/components-reference/supported-state-stores/setup-postgresql-v2/'
       ],
       phases, sameInstance: true, sameCreationTime: true, artifactDigestVerified: true,
+      workerReadiness: { strategy: 'A fresh SDK canary workflow must complete and be purged on each health request', initial: initialReadiness },
       outputBytes: Buffer.byteLength(completed.serializedOutput), artifactBytes: output.artifact.bytes,
       sdkCapabilities: {
         registration: 'executed', activity: 'executed', durableTimer: 'executed', externalEvent: 'executed',

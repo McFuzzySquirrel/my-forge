@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "measuredAt": "2026-10-13T11:43:33.389Z",
+  "measuredAt": "2026-10-13T11:50:13.669Z",
   "result": "passed",
   "qualification": "experimental-preparation-only",
   "phaseGateAccepted": false,
@@ -59,7 +59,12 @@
     {
       "phase": "timer-after-worker-restart",
       "status": "timer",
-      "elapsedMs": 3433
+      "elapsedMs": 6346,
+      "readiness": {
+        "ready": true,
+        "startupAdmissionMs": 2112,
+        "latestAdmissionMs": 12
+      }
     },
     {
       "phase": "approval-before-stack-restart",
@@ -68,19 +73,32 @@
     {
       "phase": "approval-after-stack-restart",
       "status": "approval",
-      "elapsedMs": 35861,
+      "elapsedMs": 39376,
       "stopExitCodes": {
         "worker": 0,
         "daprd": 0,
         "postgres": 0,
         "placement": 0,
         "scheduler": 0
+      },
+      "readiness": {
+        "ready": true,
+        "startupAdmissionMs": 2042,
+        "latestAdmissionMs": 12
       }
     }
   ],
   "sameInstance": true,
   "sameCreationTime": true,
   "artifactDigestVerified": true,
+  "workerReadiness": {
+    "strategy": "A fresh SDK canary workflow must complete and be purged on each health request",
+    "initial": {
+      "ready": true,
+      "startupAdmissionMs": 2043,
+      "latestAdmissionMs": 13
+    }
+  },
   "outputBytes": 195,
   "artifactBytes": 92,
   "sdkCapabilities": {
@@ -94,7 +112,7 @@
     "shutdown": "SIGTERM worker stop and stack stop exit codes measured"
   },
   "volumesPreserved": 3,
-  "elapsedMs": 105971,
+  "elapsedMs": 116533,
   "infrastructurePortsPublished": false,
   "hostPortsPublished": 0,
   "controlAccess": "podman exec; SDK API on pod loopback only",

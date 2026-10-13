@@ -4,9 +4,12 @@ import { mkdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { waitForHttpHealth } from './readiness.js';
 import { approvalWorkflow, persistArtifact, validateInput } from './workflow.js';
 import { compactState, main } from './cli.js';
-import { clean, images, directory } from './stack.js';
+import { clean, images, directory, waitUntil } from './stack.js';
 
 test('validates input and rejects traversal or unbounded timers', () => {
   assert.equal(validateInput({ runId: 'ok-1', timerSeconds: 1 }).runId, 'ok-1');
@@ -76,4 +79,22 @@ test('workflow rejects non-approval event payload', async () => {
   await workflow.next({});
   await workflow.next();
   await assert.rejects(workflow.next(false), /Approval must be true/);
+});
+
+test('readiness deadline fails on a real HTTP server that never responds', async () => {
+  const server = createServer(() => {});
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const address = /** @type {import('node:net').AddressInfo} */ (server.address());
+    await assert.rejects(waitForHttpHealth(`http://127.0.0.1:${address.port}`, 80, 20), /deadline exceeded/);
+  } finally {
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test('bounded readiness polling propagates deadline and probe failure', async () => {
+  await assert.rejects(waitUntil(async () => false, 0.01), /Readiness timed out/);
+  await assert.rejects(waitUntil(async () => { throw new Error('probe failed'); }, 1), /probe failed/);
 });

@@ -141,7 +141,7 @@ export async function up() {
   await waitUntil(async () => {
     try {
       return podman(['exec', `${pod}-worker`, 'node', '-e',
-          "Promise.all([fetch('http://127.0.0.1:8083',{signal:AbortSignal.timeout(2000)}),fetch('http://127.0.0.1:3500/v1.0/healthz',{signal:AbortSignal.timeout(2000)})]).then(rs=>process.exit(rs.every(r=>r.ok)?0:1)).catch(()=>process.exit(1))"],
+          "Promise.all([fetch('http://127.0.0.1:8083',{signal:AbortSignal.timeout(12000)}),fetch('http://127.0.0.1:3500/v1.0/healthz',{signal:AbortSignal.timeout(2000)})]).then(rs=>process.exit(rs.every(r=>r.ok)?0:1)).catch(()=>process.exit(1))"],
         { allowFailure: true }).status === 0;
     } catch { return false; }
   });

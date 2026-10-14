@@ -8,6 +8,7 @@ import {
   type PlannedTaskV1,
 } from "../../orchestration/planner.ts";
 import { registerOrchestrationWorkflows } from "../../orchestration/index.ts";
+import { createTaskCompletionEvidence } from "../../orchestration/outcome.ts";
 import {
   RESUME_TASK_ACTIVITY_NAME,
   RUN_ORCHESTRATION_WORKFLOW_NAME,
@@ -35,6 +36,34 @@ function acceptedSubmission(overrides: Partial<RunSubmissionV1> = {}): AcceptedR
     ...draft,
     selection: { ...draft.selection, effectiveTaskIds: validation.effectiveTaskIds },
   };
+}
+
+function completeOutcome(input: {
+  runId: string;
+  taskId: string;
+  manifestDigest: string;
+  logicalAttempt: number;
+  operationId: string;
+}) {
+  return {
+    status: "complete" as const,
+    evidence: createTaskCompletionEvidence({
+      ...input,
+      manifestDigest: input.manifestDigest as `sha256:${string}`,
+      outputFiles: [],
+      handoffDigest: SHA256,
+      artifactRefs: [],
+      validationCommands: [],
+    }),
+  };
+}
+
+function childCompleteOutcome(input: { runId: string; taskId: string; manifestDigest: string }) {
+  return completeOutcome({
+    ...input,
+    logicalAttempt: 1,
+    operationId: taskOperationId(input.runId, input.taskId, 1),
+  });
 }
 
 function mockContext() {
@@ -84,8 +113,8 @@ test("plan expands selection using task and phase prerequisites in manifest orde
   assert.deepEqual(plan.tasks.map((task) => task.taskId), ["T1", "T2", "T3"]);
   assert.deepEqual(plan.tasks.find((task) => task.taskId === "T3")?.prerequisites, ["T1", "T2"]);
   assert.deepEqual(
-    { concurrency: plan.maxConcurrency, retries: plan.maxRetries, retryDelayMs: plan.retryDelayMs },
-    { concurrency: 1, retries: 2, retryDelayMs: 5_000 },
+    { concurrency: plan.maxConcurrency, retries: plan.maxRetries, retryDelayMs: plan.retryDelayMs, allowNoop: plan.allowNoop },
+    { concurrency: 1, retries: 2, retryDelayMs: 5_000, allowNoop: false },
   );
 });
 
@@ -143,20 +172,22 @@ test("workflow waits for a wave, then dispatches tasks whose prerequisites compl
   assert.equal(new Set(childCalls.map((call) => call.instanceId)).size, 2);
   assert.deepEqual(
     childCalls.map((call) => {
-      const input = call.input as { maxRetries: number; retryDelayMs: number };
-      return { maxRetries: input.maxRetries, retryDelayMs: input.retryDelayMs };
+      const input = call.input as { maxRetries: number; retryDelayMs: number; allowNoop: boolean };
+      return { maxRetries: input.maxRetries, retryDelayMs: input.retryDelayMs, allowNoop: input.allowNoop };
     }),
-    [{ maxRetries: 0, retryDelayMs: 5_000 }, { maxRetries: 0, retryDelayMs: 5_000 }],
+    [{ maxRetries: 0, retryDelayMs: 5_000, allowNoop: false }, { maxRetries: 0, retryDelayMs: 5_000, allowNoop: false }],
   );
 
   const secondWave = await workflow.next([
-    { status: "complete" },
+    childCompleteOutcome(childCalls[0]!.input as { runId: string; taskId: string; manifestDigest: string }),
     { status: "skipped" },
   ]);
   assert.equal(secondWave.done, false);
   assert.equal(childCalls.at(-1)?.input && (childCalls.at(-1)!.input as { taskId: string }).taskId, "third");
 
-  const complete = await workflow.next([{ status: "complete" }]);
+  const complete = await workflow.next([childCompleteOutcome(childCalls.at(-1)!.input as {
+    runId: string; taskId: string; manifestDigest: string;
+  })]);
   assert.deepEqual(complete.value, {
     status: "complete",
     taskStatuses: { first: "complete", second: "skipped", third: "complete" },
@@ -179,7 +210,7 @@ test("workflow stops dispatch after a terminal task failure", async () => {
   await workflow.next();
   const result = await workflow.next([
     { status: "failed", retryable: false, failureCode: "invalid-task" },
-    { status: "complete" },
+    childCompleteOutcome(childCalls[1]!.input as { runId: string; taskId: string; manifestDigest: string }),
   ]);
   assert.deepEqual(result.value, {
     status: "failed",
@@ -196,6 +227,7 @@ test("task retries use durable time and stable per-attempt operation identities"
     manifestDigest: SHA256,
     maxRetries: 2,
     retryDelayMs: 5_000,
+    allowNoop: false,
   };
   const workflow = taskAttemptWorkflow(context, input);
 
@@ -216,8 +248,11 @@ test("task retries use durable time and stable per-attempt operation identities"
   assert.equal(secondActivity.logicalAttempt, 2);
   assert.notEqual(secondActivity.operationId, firstActivity.operationId);
 
-  const complete = await workflow.next({ status: "complete" });
-  assert.deepEqual(complete.value, { status: "complete" });
+  const outcome = completeOutcome(activityCalls[1]!.input as {
+    runId: string; taskId: string; manifestDigest: string; logicalAttempt: number; operationId: string;
+  });
+  const complete = await workflow.next(outcome);
+  assert.deepEqual(complete.value, outcome);
 });
 
 test("task control events durably wake a task but only resumeTask can accept them", async () => {
@@ -228,6 +263,7 @@ test("task control events durably wake a task but only resumeTask can accept the
     manifestDigest: SHA256,
     maxRetries: 0,
     retryDelayMs: 0,
+    allowNoop: false,
   };
   const workflow = taskAttemptWorkflow(context, input);
 
@@ -270,14 +306,31 @@ test("task control events durably wake a task but only resumeTask can accept the
     taskOperationId(input.runId, input.taskId, 1, "resume:approval-1"),
   );
 
-  const complete = await workflow.next({ status: "complete" });
-  assert.deepEqual(complete.value, { status: "complete" });
+  const outcome = completeOutcome(resumeCall.input as {
+    runId: string; taskId: string; manifestDigest: string; logicalAttempt: number; operationId: string;
+  });
+  const complete = await workflow.next(outcome);
+  assert.deepEqual(complete.value, outcome);
 
   const invalidContext = mockContext();
   const invalidWorkflow = taskAttemptWorkflow(invalidContext.context, input);
   await invalidWorkflow.next();
   await invalidWorkflow.next({ status: "waiting", waitId: "approval-1" });
   await assert.rejects(invalidWorkflow.next({ controlId: "not-a-control-id" }), /UUID controlId/);
+});
+
+test("task workflow rejects a bare successful activity outcome", async () => {
+  const { context } = mockContext();
+  const workflow = taskAttemptWorkflow(context, {
+    runId: "run-no-proof",
+    taskId: "task",
+    manifestDigest: SHA256,
+    maxRetries: 0,
+    retryDelayMs: 0,
+    allowNoop: false,
+  });
+  await workflow.next();
+  await assert.rejects(workflow.next({ status: "complete" }), /invalid outcome/);
 });
 
 test("task retries stop at the configured limit and do not retry unclassified activity failures", async () => {
@@ -288,6 +341,7 @@ test("task retries stop at the configured limit and do not retry unclassified ac
     manifestDigest: SHA256,
     maxRetries: 1,
     retryDelayMs: 0,
+    allowNoop: false,
   });
 
   await workflow.next();
@@ -305,6 +359,7 @@ test("task retries stop at the configured limit and do not retry unclassified ac
     manifestDigest: SHA256,
     maxRetries: 3,
     retryDelayMs: 10,
+    allowNoop: false,
   });
   await failedWorkflow.next();
   const activityFailure = await failedWorkflow.throw(new Error("activity failed"));
@@ -335,6 +390,11 @@ test("planner rejects cycles, mismatched frozen selections, and invalid limits",
     configuration: { settings: { concurrency: 0 }, secretRefs: {} },
   });
   assert.throws(() => buildOrchestrationPlan(invalidLimits), /configuration.settings.concurrency/);
+
+  const invalidNoopPolicy = acceptedSubmission({
+    configuration: { settings: { allowNoop: "true" }, secretRefs: {} },
+  });
+  assert.throws(() => buildOrchestrationPlan(invalidNoopPolicy), /configuration.settings.allowNoop must be a boolean/);
 });
 
 test("registers stable workflow names for the run and task-attempt orchestrators", () => {

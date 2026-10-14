@@ -13,6 +13,7 @@ import {
   EXECUTE_TASK_ACTIVITY_NAME,
   RESUME_TASK_ACTIVITY_NAME,
 } from "./dapr-engine/orchestration/workflow.ts";
+import { createTaskCompletionEvidence } from "./dapr-engine/orchestration/outcome.ts";
 
 const runtime = new WorkflowRuntime({ daprHost: "127.0.0.1", daprPort: "50001" });
 runtime.registerWorkflowWithName("approvalWorkflow", approvalWorkflow);
@@ -59,7 +60,18 @@ async function resumeTask(_context, input) {
     || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.controlId)) {
     throw new Error("Invalid P4-01 integration wake event");
   }
-  return record(input, "resume", { status: "complete" }, input.controlId);
+  const evidence = createTaskCompletionEvidence({
+    runId: input.runId,
+    taskId: input.taskId,
+    manifestDigest: input.manifestDigest,
+    logicalAttempt: input.logicalAttempt,
+    operationId: input.operationId,
+    outputFiles: [],
+    handoffDigest: `sha256:${"a".repeat(64)}`,
+    artifactRefs: [],
+    validationCommands: [],
+  });
+  return record(input, "resume", { status: "complete", evidence }, input.controlId);
 }
 
 async function proveAdmission() {

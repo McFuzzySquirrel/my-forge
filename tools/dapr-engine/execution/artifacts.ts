@@ -54,6 +54,18 @@ function subdirFromType(type: string): string {
   return type.replace(/\./g, "-") || "other";
 }
 
+function selectArtifactFields(artifact: Artifact, fields: readonly string[]): Record<string, unknown> {
+  const selectedFields: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (field in artifact) {
+      selectedFields[field] = (artifact as unknown as Record<string, unknown>)[field];
+    } else if (field in artifact.payload) {
+      selectedFields[field] = artifact.payload[field];
+    }
+  }
+  return selectedFields;
+}
+
 // ─── ArtifactStore ────────────────────────────────────────────────────────────
 
 export interface ArtifactStoreOptions {
@@ -207,26 +219,68 @@ export class ArtifactStore {
       const artifact = all.sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]!;
       sourceTokenEstimate += estimateTokens(artifact);
 
-      const selectedFields: Record<string, unknown> = {};
-      for (const field of fieldSet) {
-        if (field in artifact) {
-          selectedFields[field] = (artifact as unknown as Record<string, unknown>)[field];
-        } else if (field in artifact.payload) {
-          selectedFields[field] = artifact.payload[field];
-        }
-      }
-
       projected.push({
         artifactId: artifact.artifactId,
         type: artifact.type,
         summary: artifact.summary,
         confidence: artifact.confidence,
-        selectedFields,
+        selectedFields: selectArtifactFields(artifact, fieldSet),
       });
     }
 
     const projectedTokenEstimate = estimateTokens(projected);
 
+    return {
+      taskId: opts.taskId,
+      projectedAt: new Date().toISOString(),
+      artifacts: projected,
+      sourceTokenEstimate,
+      projectedTokenEstimate,
+    };
+  }
+
+  /**
+   * Project only declared input types produced by this task's predecessors.
+   * Keeps one latest successful artifact per predecessor and type, and copies
+   * only the selected summary fields into the handoff.
+   */
+  projectPredecessors(opts: {
+    taskId: string;
+    predecessorTaskIds: readonly string[];
+    inputTypes: readonly string[];
+    fields?: readonly string[];
+  }): ArtifactProjection {
+    const defaultFields = ["summary", "confidence", "filesChanged", "decisions", "interfaces", "tests", "unresolved", "warnings", "validationLimitations"];
+    const fieldSet = opts.fields ?? defaultFields;
+    const projected: ArtifactProjection["artifacts"] = [];
+    let sourceTokenEstimate = 0;
+
+    for (const type of [...new Set(opts.inputTypes)]) {
+      const artifacts = this.readByType(type).filter((artifact) =>
+        artifact.status === "complete" && opts.predecessorTaskIds.includes(artifact.taskId),
+      );
+      let foundInput = false;
+      for (const predecessorTaskId of opts.predecessorTaskIds) {
+        const artifact = artifacts
+          .filter((candidate) => candidate.taskId === predecessorTaskId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.artifactId.localeCompare(a.artifactId))[0];
+        if (!artifact) continue;
+        foundInput = true;
+        sourceTokenEstimate += estimateTokens(artifact);
+        projected.push({
+          artifactId: artifact.artifactId,
+          type: artifact.type,
+          summary: artifact.summary,
+          confidence: artifact.confidence,
+          selectedFields: selectArtifactFields(artifact, fieldSet),
+        });
+      }
+      if (!foundInput) {
+        throw new Error(`Task '${opts.taskId}' requires predecessor artifact type '${type}', but none is available.`);
+      }
+    }
+
+    const projectedTokenEstimate = estimateTokens(projected);
     return {
       taskId: opts.taskId,
       projectedAt: new Date().toISOString(),

@@ -18,10 +18,12 @@ conformance fixtures, and migration notes. P3-GATE was accepted in
 complete and tracked in
 [issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); local Dapr
 timer/event recovery is recorded in the [roadmap](../../plan.md#p4-01-live-recovery-evidence).
-The fixture proves workflow replay with test activities only; verification,
-authorization, harness execution, and production service integration remain
-later P4 work. This P2 feature remains a contract and reusable-boundary
-definition, not a production service.
+The fixture proves workflow replay with test activities only. P4-02 is in
+progress under [issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9),
+integrating verification and compact handoffs; authenticated control
+authorization, representative harness execution, and production service
+integration remain later P4 work. This P2 feature remains a contract and
+reusable-boundary definition, not a production service.
 
 **Scope:** P2 run/task identities, immutable submission snapshots, service/control
 models, reusable execution boundaries, application-owned storage contracts,

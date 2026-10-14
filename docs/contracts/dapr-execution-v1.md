@@ -1,7 +1,9 @@
 # Dapr Execution Contract v1
 
 **Status:** P2-GATE and P3-GATE accepted; P4-01 deterministic orchestration and
-local timer/event recovery are complete using test-only activities. P4-02 onward
+local timer/event recovery are complete using test-only activities. P4-02
+verification and handoff integration is in progress under
+[issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9). P4-03 onward
 and production service qualification remain pending.
 **Owner:** [Dapr execution boundary feature](../features/dapr-execution-boundary.md).  
 **Architecture:** [ADR-066](../adr/066-dapr-workflow-full-replacement-architecture.md).
@@ -63,6 +65,12 @@ version where the provider supports it. Host-specific values such as `PATH`,
 `PWD`, absolute binary paths, and the raw repository URL are not portable run
 identity and must be resolved by the approved worker environment.
 
+The manifest snapshot includes the resolved task contracts, expected output
+paths, validation commands, artifact input/output types, and task/phase
+dependencies. `configuration.settings.allowNoop` is a snapshotted boolean that
+defaults to `false`; it bypasses only the no-op heuristic when no expected
+outputs are declared.
+
 ### Stable identities
 
 | Identity | Contract |
@@ -121,6 +129,53 @@ control queries are the source for later application.
   behavior, not mutation of accepted submission data.
 
 ## 3. Receipts, artifacts, checkpoints, and fencing
+
+### Task result admission and handoffs
+
+A settled harness exit is not task completion. The Dapr-independent activity
+adapter uses `admitTaskResult` from `tools/dapr-engine/execution/` to apply all
+completion gates before returning `status: "complete"`:
+
+1. The harness must exit successfully.
+2. Every declared expected output must resolve to a repository-local regular
+   file. `allowNoop` never bypasses this check.
+3. The harness must return one valid fenced `forge-result` report. Its
+   `unresolved` list must be empty; a nonempty list is a blocking requirement
+   failure.
+4. When no expected outputs are declared, the no-op policy requires either
+   changed files or a substantive structured summary unless the snapshotted
+   `allowNoop` setting is true.
+5. Every validation command in the immutable task manifest is executed from the
+   task repository root, and every command must exit zero. Agent-reported test
+   names are not execution evidence.
+
+Verification failures are returned as classified task failures and follow the
+configured bounded retry policy. An activity exception remains terminal because
+an external effect may be ambiguous; it is not converted into a successful
+verification result. Failed admission outcomes retain their gate statuses and
+bounded reason in the activity result; validation diagnostics are capped at
+4,000 characters before they enter workflow history.
+
+For a task with declared `inputs`, the activity projects only complete artifacts
+of those types that were produced by its dependency-ready predecessor tasks.
+It selects the latest artifact per predecessor/type and copies only the
+configured compact fields; it does not forward an entire artifact payload,
+conversation, or artifact from an unrelated task. If a declared input type has
+no successful predecessor artifact, task preparation fails rather than silently
+running without required context. Projection is built by
+`ArtifactStore.projectPredecessors`; reference/integrity verification remains
+the responsibility of the artifact store that resolves those references.
+
+Every successful activity returns `TaskCompletionEvidenceV1`, bound to the run,
+task, manifest digest, logical attempt, and operation ID. It carries a canonical
+completion digest, the structured handoff digest, output-file list, published
+artifact references, and passed evidence for the harness, outputs, handoff,
+requirements, and validation gates. A task workflow rejects a `complete`
+outcome without this evidence or with a mismatched identity/digest; the parent
+orchestrator repeats the run/task/manifest binding check before scheduling
+dependents. The digest detects malformed or inconsistent evidence, but is not an
+authentication mechanism and does not prove that an activity implemented the
+checks correctly.
 
 ### Operation receipts
 

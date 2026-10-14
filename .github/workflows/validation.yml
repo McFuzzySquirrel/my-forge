@@ -32,6 +32,9 @@ jobs:
       - name: Install package dependencies
         if: matrix.package != 'templates/skills/forge-execution-adapter'
         run: npm ci --prefix ${{ matrix.package }}
+      - name: Install shared execution engine dependencies
+        if: matrix.package == 'templates/skills/forge-workflow-engine'
+        run: npm ci --prefix tools/dapr-engine
       - name: Typecheck
         run: npm run typecheck --prefix ${{ matrix.package }}
       - name: Test

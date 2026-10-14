@@ -231,7 +231,7 @@ local task chain running through the same contracts as the old engine.
 - [x] **P4-02 — Integrate verification and handoffs** ([issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10)). A successful harness exit
   is insufficient: require expected outputs, no-op policy, structured outcomes,
   mandatory validation, and compact predecessor artifacts before accepting work.
-- [ ] **P4-03 — Implement durable controls and approvals.** Deduplicate requests,
+- [x] **P4-03 — Implement durable controls and approvals.** Deduplicate requests,
   authorize operators, bind approvals to run/task and manifest/evidence digests,
   and reject stale attestations. Honor the agreed pause/stop/cancel distinctions.
 - [ ] **P4-04 — Expose status and audit.** Provide authoritative run/task/attempt
@@ -415,6 +415,13 @@ recorded below. [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/iss
 is complete. **P4-02 — Integrate verification and handoffs** is complete under
 [issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9) and
 [PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10).
+P4-03 is complete at the reusable engine boundary: control requests are
+durable and idempotent, approval wake events are validated and applied through
+the registered resume activity, and run workflows handle pause/resume,
+graceful stop, cancellation, and replay at safe boundaries. Hosts must provide
+an authenticated trusted-principal adapter, authoritative run context, and
+idempotent process/control effects; this repository does not yet contain a
+network identity provider or production service host. P4-GATE remains open.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed

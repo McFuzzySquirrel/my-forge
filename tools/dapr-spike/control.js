@@ -38,7 +38,7 @@ export async function control(method, args) {
         submission.selection.effectiveTaskIds = validation.effectiveTaskIds;
         return await client.scheduleNewWorkflow(
           RUN_ORCHESTRATION_WORKFLOW_NAME,
-          { runId, submission },
+          { runId, submission, controlsEnabled: false },
           runId,
         );
       }

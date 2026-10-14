@@ -17,6 +17,8 @@ export type { TaskExecutionOutcomeV1 } from "./outcome.ts";
 export interface RunWorkflowInputV1 {
   readonly runId: string;
   readonly submission: AcceptedRunSubmissionV1;
+  /** Required: true only when the host registers durable control activities. */
+  readonly controlsEnabled: boolean;
 }
 
 export interface TaskAttemptWorkflowInputV1 {
@@ -26,6 +28,7 @@ export interface TaskAttemptWorkflowInputV1 {
   readonly maxRetries: number;
   readonly retryDelayMs: number;
   readonly allowNoop: boolean;
+  readonly initialLogicalAttempt?: number;
 }
 
 export interface ExecuteTaskActivityInputV1 {
@@ -40,6 +43,7 @@ export interface ExecuteTaskActivityInputV1 {
 export interface ResumeTaskActivityInputV1 extends ExecuteTaskActivityInputV1 {
   readonly waitId: string;
   readonly controlId: string;
+  readonly taskWorkflowInstanceId: string;
 }
 
 export interface TaskWaitRequestV1 {
@@ -51,11 +55,24 @@ export interface TaskControlWakeEventV1 {
   readonly controlId: string;
 }
 
-type TaskActivityOutcomeV1 = TaskExecutionOutcomeV1 | TaskWaitRequestV1;
+export type TaskActivityOutcomeV1 = TaskExecutionOutcomeV1 | TaskWaitRequestV1;
 
 export interface RunWorkflowResultV1 {
-  readonly status: "complete" | "failed";
+  readonly status: "complete" | "failed" | "cancelled";
   readonly taskStatuses: Readonly<Record<string, TaskStatusV1>>;
+}
+
+export interface RunControlRecordSummaryV1 {
+  readonly controlId: string;
+  readonly runId: string;
+  readonly action: "pause" | "resume" | "stop" | "cancel" | "replay-task";
+  readonly state: "accepted" | "applied";
+  readonly payload: Readonly<Record<string, unknown>>;
+}
+
+export interface AppliedRunControlV1 extends RunControlRecordSummaryV1 {
+  readonly state: "applied";
+  readonly replayLogicalAttempt?: number;
 }
 
 const UUID_NAMESPACE = Buffer.from("8bb1c6bb6d754bd49fc10f645ffb8b0c", "hex");
@@ -65,6 +82,13 @@ export const TASK_ATTEMPT_WORKFLOW_NAME = "taskAttemptWorkflow";
 export const EXECUTE_TASK_ACTIVITY_NAME = "executeTask";
 export const RESUME_TASK_ACTIVITY_NAME = "resumeTask";
 export const TASK_CONTROL_EVENT_NAME = "task-control";
+export const RUN_CONTROL_EVENT_NAME = "run-control";
+export const GET_RUN_CONTROL_ACTIVITY_NAME = "getRunControl";
+export const APPLY_RUN_CONTROL_ACTIVITY_NAME = "applyRunControl";
+
+export function runOrchestrationWorkflowId(runId: string): string {
+  return `forge-run-${taskOperationId(runId, "_run", 1, "orchestration")}`;
+}
 
 /** UUIDv5 identity makes a task operation stable across workflow replay. */
 export function taskOperationId(
@@ -134,8 +158,42 @@ function validateTaskAttemptInput(input: TaskAttemptWorkflowInputV1): void {
     || !/^sha256:[0-9a-f]{64}$/.test(input.manifestDigest)
     || !Number.isSafeInteger(input.maxRetries) || input.maxRetries < 0
     || !Number.isSafeInteger(input.retryDelayMs) || input.retryDelayMs < 0
-    || typeof input.allowNoop !== "boolean") {
+    || typeof input.allowNoop !== "boolean"
+    || (input.initialLogicalAttempt !== undefined &&
+      (!Number.isSafeInteger(input.initialLogicalAttempt) || input.initialLogicalAttempt < 1))) {
     throw new Error("Invalid task attempt workflow input");
+  }
+}
+
+function isRunControlWakeEvent(value: unknown): value is TaskControlWakeEventV1 {
+  return isTaskControlWakeEvent(value);
+}
+
+function isRunControlRecord(
+  value: unknown,
+  runId: string,
+): value is RunControlRecordSummaryV1 {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Partial<RunControlRecordSummaryV1>;
+  return record.runId === runId
+    && typeof record.controlId === "string"
+    && (record.action === "pause" || record.action === "resume" || record.action === "stop"
+      || record.action === "cancel" || record.action === "replay-task")
+    && (record.state === "accepted" || record.state === "applied")
+    && !!record.payload && typeof record.payload === "object";
+}
+
+function isAppliedRunControl(value: unknown): value is AppliedRunControlV1 {
+  return isRunControlRecord(value, (value as Partial<RunControlRecordSummaryV1> | null)?.runId ?? "")
+    && (value as Partial<AppliedRunControlV1>).state === "applied";
+}
+
+function cancelUnfinishedTasks(statuses: Record<string, TaskStatusV1>): void {
+  for (const [taskId, status] of Object.entries(statuses)) {
+    if (status === "pending" || status === "ready" || status === "running"
+      || status === "waiting-for-approval") {
+      statuses[taskId] = "cancelled";
+    }
   }
 }
 
@@ -146,7 +204,7 @@ export async function* taskAttemptWorkflow(
 ): AsyncGenerator<Task<unknown>, TaskExecutionOutcomeV1, unknown> {
   validateTaskAttemptInput(input);
   for (let retry = 0; retry <= input.maxRetries; retry += 1) {
-    const logicalAttempt = retry + 1;
+    const logicalAttempt = (input.initialLogicalAttempt ?? 1) + retry;
     const activityInput: ExecuteTaskActivityInputV1 = {
       runId: input.runId,
       taskId: input.taskId,
@@ -176,6 +234,11 @@ export async function* taskAttemptWorkflow(
         waitId: outcome.waitId,
         controlId: wakeEvent.controlId,
         operationId: taskOperationId(input.runId, input.taskId, logicalAttempt, `resume:${outcome.waitId}`),
+        taskWorkflowInstanceId: taskAttemptWorkflowIdForAttempt(
+          input.runId,
+          input.taskId,
+          input.initialLogicalAttempt ?? 1,
+        ),
       };
       let resumedOutcome: unknown;
       try {
@@ -199,55 +262,222 @@ export async function* taskAttemptWorkflow(
 }
 
 export function taskAttemptWorkflowId(runId: string, taskId: string): string {
-  return `forge-task-${taskOperationId(runId, taskId, 1)}`;
+  return taskAttemptWorkflowIdForAttempt(runId, taskId, 1);
+}
+
+export function taskAttemptWorkflowIdForAttempt(
+  runId: string,
+  taskId: string,
+  logicalAttempt: number,
+): string {
+  return `forge-task-${taskOperationId(runId, taskId, logicalAttempt)}`;
 }
 
 /** Runs manifest-ordered task waves and only dispatches dependency-ready work. */
 export async function* runOrchestrationWorkflow(
   context: WorkflowContext,
   input: RunWorkflowInputV1,
-): AsyncGenerator<Task<unknown>, RunWorkflowResultV1, TaskExecutionOutcomeV1[]> {
+): AsyncGenerator<Task<unknown>, RunWorkflowResultV1, unknown> {
   if (!input.runId) throw new Error("runId is required");
+  if (typeof input.controlsEnabled !== "boolean") throw new Error("controlsEnabled must be explicit");
   const plan = buildOrchestrationPlan(input.submission);
   const statuses: Record<string, TaskStatusV1> = Object.fromEntries(
     plan.tasks.map(({ taskId }) => [taskId, "pending"]),
   );
+  const nextLogicalAttempt: Record<string, number> = Object.fromEntries(
+    plan.tasks.map(({ taskId }) => [taskId, 1]),
+  );
 
-  while (Object.values(statuses).some((status) => status === "pending")) {
-    const wave = nextDispatchWave(plan.tasks, statuses, plan.maxConcurrency);
-    if (wave.length === 0) {
-      const failed = Object.values(statuses).some((status) => status === "failed");
-      if (failed) return { status: "failed", taskStatuses: statuses };
-      throw new Error("No task is ready while pending tasks remain");
+  let pendingControlEvent: Task<unknown> | undefined = input.controlsEnabled
+    ? context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME)
+    : undefined;
+  while (true) {
+    while (Object.values(statuses).some((status) => status === "pending")) {
+      const wave = nextDispatchWave(plan.tasks, statuses, plan.maxConcurrency);
+      if (wave.length === 0) {
+        if (Object.values(statuses).some((status) => status === "failed")) break;
+        throw new Error("No task is ready while pending tasks remain");
+      }
+
+      const children = wave.map(({ taskId }) => {
+        const logicalAttempt = nextLogicalAttempt[taskId]!;
+        return context.callChildWorkflow<TaskAttemptWorkflowInputV1, TaskExecutionOutcomeV1>(
+          TASK_ATTEMPT_WORKFLOW_NAME,
+          {
+            runId: input.runId,
+            taskId,
+            manifestDigest: input.submission.manifestDigest,
+            maxRetries: plan.maxRetries,
+            retryDelayMs: plan.retryDelayMs,
+            allowNoop: plan.allowNoop,
+            initialLogicalAttempt: logicalAttempt,
+          },
+          taskAttemptWorkflowIdForAttempt(input.runId, taskId, logicalAttempt),
+        );
+      });
+      const waveTask = context.whenAll(children);
+      let outcomes: TaskExecutionOutcomeV1[];
+      const boundaryControls: RunControlRecordSummaryV1[] = [];
+
+      if (pendingControlEvent) {
+        const winner = yield context.whenAny([waveTask, pendingControlEvent]);
+        if (!winner || typeof winner !== "object" || !("getResult" in winner)) {
+          throw new Error("Run workflow whenAny returned an invalid task");
+        }
+        const completedTask = winner as Task<unknown>;
+        if (completedTask === pendingControlEvent) {
+          const wake = completedTask.getResult();
+          if (!isRunControlWakeEvent(wake)) {
+            throw new Error("run-control event must contain a UUID controlId");
+          }
+          const record: unknown = yield context.callActivity(GET_RUN_CONTROL_ACTIVITY_NAME, {
+            controlId: wake.controlId,
+          });
+          if (!isRunControlRecord(record, input.runId) || record.controlId !== wake.controlId) {
+            throw new Error("getRunControl returned a mismatched control record");
+          }
+          if (record.state === "applied" && record.action !== "cancel") {
+            pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+            outcomes = (yield waveTask) as TaskExecutionOutcomeV1[];
+          } else {
+            pendingControlEvent = undefined;
+
+            if (record.action === "cancel") {
+              const applied: unknown = yield context.callActivity(APPLY_RUN_CONTROL_ACTIVITY_NAME, {
+                controlId: record.controlId,
+              });
+              if (!isAppliedRunControl(applied) || applied.controlId !== record.controlId) {
+                throw new Error("applyRunControl returned an invalid cancellation result");
+              }
+              cancelUnfinishedTasks(statuses);
+              return { status: "cancelled", taskStatuses: statuses };
+            }
+
+            if (record.action === "pause" || record.action === "stop") {
+              const applied: unknown = yield context.callActivity(APPLY_RUN_CONTROL_ACTIVITY_NAME, {
+                controlId: record.controlId,
+              });
+              if (!isAppliedRunControl(applied) || applied.controlId !== record.controlId) {
+                throw new Error("applyRunControl returned an invalid pause/stop result");
+              }
+              context.setCustomStatus("paused");
+              while (true) {
+                const resumeWake: unknown = yield context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+                if (!isRunControlWakeEvent(resumeWake)) {
+                  throw new Error("run-control event must contain a UUID controlId");
+                }
+                const resumeRecord: unknown = yield context.callActivity(GET_RUN_CONTROL_ACTIVITY_NAME, {
+                  controlId: resumeWake.controlId,
+                });
+                if (!isRunControlRecord(resumeRecord, input.runId)
+                  || resumeRecord.controlId !== resumeWake.controlId) {
+                  throw new Error("getRunControl returned a mismatched control record");
+                }
+                if (resumeRecord.state === "applied") continue;
+                const resumeResult: unknown = yield context.callActivity(APPLY_RUN_CONTROL_ACTIVITY_NAME, {
+                  controlId: resumeRecord.controlId,
+                });
+                if (!isAppliedRunControl(resumeResult) || resumeResult.controlId !== resumeRecord.controlId) {
+                  throw new Error("applyRunControl returned an invalid result");
+                }
+                if (resumeRecord.action === "resume") break;
+                if (resumeRecord.action === "cancel") {
+                  cancelUnfinishedTasks(statuses);
+                  return { status: "cancelled", taskStatuses: statuses };
+                }
+                if (resumeRecord.action === "replay-task") boundaryControls.push(resumeRecord);
+                else throw new Error("Only resume, cancel, or replay-task is valid while paused");
+              }
+              context.setCustomStatus("running");
+              outcomes = (yield waveTask) as TaskExecutionOutcomeV1[];
+            } else {
+              boundaryControls.push(record);
+              outcomes = (yield waveTask) as TaskExecutionOutcomeV1[];
+            }
+          }
+        } else if (completedTask === waveTask) {
+          outcomes = completedTask.getResult() as TaskExecutionOutcomeV1[];
+        } else {
+          throw new Error("Run workflow whenAny returned an unrelated task");
+        }
+      } else {
+        outcomes = (yield waveTask) as TaskExecutionOutcomeV1[];
+      }
+
+      if (!Array.isArray(outcomes) || outcomes.length !== wave.length) {
+        throw new Error("Task workflow wave returned an invalid outcome set");
+      }
+      outcomes.forEach((outcome, index) => {
+        if (!isTaskExecutionOutcome(outcome, {
+          runId: input.runId,
+          taskId: wave[index]!.taskId,
+          manifestDigest: input.submission.manifestDigest,
+        })) throw new Error(`Task '${wave[index]!.taskId}' returned an invalid outcome`);
+        statuses[wave[index]!.taskId] = outcome.status;
+      });
+
+      if (boundaryControls.length > 0) {
+        for (const boundaryControl of boundaryControls) {
+          const applied: unknown = yield context.callActivity(APPLY_RUN_CONTROL_ACTIVITY_NAME, {
+            controlId: boundaryControl.controlId,
+          });
+          if (!isAppliedRunControl(applied) || applied.controlId !== boundaryControl.controlId) {
+            throw new Error("applyRunControl returned an invalid result");
+          }
+          if (boundaryControl.action !== "replay-task") {
+            throw new Error("Only replay-task may be deferred to the task boundary");
+          }
+          const taskId = boundaryControl.payload.taskId;
+          if (typeof taskId !== "string" || !(taskId in statuses)) {
+            throw new Error("replay-task control has no valid taskId");
+          }
+          if (!Number.isSafeInteger(applied.replayLogicalAttempt) || applied.replayLogicalAttempt! < 1) {
+            throw new Error("replay-task result has no valid logicalAttempt");
+          }
+          statuses[taskId] = "pending";
+          nextLogicalAttempt[taskId] = applied.replayLogicalAttempt!;
+        }
+        pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+      } else if (input.controlsEnabled && !pendingControlEvent) {
+        pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+      } else if (outcomes.some((outcome) => outcome.status === "failed")) {
+        break;
+      }
     }
 
-    const children = wave.map(({ taskId }) => context.callChildWorkflow<
-      TaskAttemptWorkflowInputV1,
-      TaskExecutionOutcomeV1
-    >(TASK_ATTEMPT_WORKFLOW_NAME, {
-      runId: input.runId,
-      taskId,
-      manifestDigest: input.submission.manifestDigest,
-      maxRetries: plan.maxRetries,
-      retryDelayMs: plan.retryDelayMs,
-      allowNoop: plan.allowNoop,
-    }, taskAttemptWorkflowId(input.runId, taskId)));
-    const outcomes = yield context.whenAll(children);
-    if (!Array.isArray(outcomes) || outcomes.length !== wave.length) {
-      throw new Error("Task workflow wave returned an invalid outcome set");
+    const failed = Object.values(statuses).some((status) => status === "failed");
+    if (!input.controlsEnabled) {
+      return { status: failed ? "failed" : "complete", taskStatuses: statuses };
     }
-    outcomes.forEach((outcome, index) => {
-      if (!isTaskExecutionOutcome(outcome, {
-        runId: input.runId,
-        taskId: wave[index]!.taskId,
-        manifestDigest: input.submission.manifestDigest,
-      })) throw new Error(`Task '${wave[index]!.taskId}' returned an invalid outcome`);
-      statuses[wave[index]!.taskId] = outcome.status;
+    context.setCustomStatus(failed ? "failed" : "complete");
+    const terminalControlEvent = pendingControlEvent ?? context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+    const wake: unknown = yield terminalControlEvent;
+    if (!isRunControlWakeEvent(wake)) throw new Error("run-control event must contain a UUID controlId");
+    const record: unknown = yield context.callActivity(GET_RUN_CONTROL_ACTIVITY_NAME, {
+      controlId: wake.controlId,
     });
-    if (outcomes.some((outcome) => outcome.status === "failed")) {
-      return { status: "failed", taskStatuses: statuses };
+    if (!isRunControlRecord(record, input.runId) || record.controlId !== wake.controlId
+      || record.action !== "replay-task") {
+      throw new Error("Only a valid replay-task control can reopen a terminal run");
     }
+    if (record.state === "applied") {
+      pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+      continue;
+    }
+    const applied: unknown = yield context.callActivity(APPLY_RUN_CONTROL_ACTIVITY_NAME, {
+      controlId: record.controlId,
+    });
+    if (!isAppliedRunControl(applied) || applied.controlId !== record.controlId) {
+      throw new Error("applyRunControl returned an invalid replay result");
+    }
+    const taskId = record.payload.taskId;
+    if (typeof taskId !== "string" || !(taskId in statuses)
+      || !Number.isSafeInteger(applied.replayLogicalAttempt) || applied.replayLogicalAttempt! < 1) {
+      throw new Error("replay-task control has an invalid task or logical attempt");
+    }
+    statuses[taskId] = "pending";
+    nextLogicalAttempt[taskId] = applied.replayLogicalAttempt!;
+    pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+    context.setCustomStatus("running");
   }
-
-  return { status: "complete", taskStatuses: statuses };
 }

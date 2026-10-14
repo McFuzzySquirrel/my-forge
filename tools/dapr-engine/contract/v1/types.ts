@@ -118,6 +118,7 @@ export type ControlState = "requested" | "accepted" | "applied" | "rejected";
 export type ControlRejectionCode =
   | "unsupported-schema-version"
   | "unknown-run"
+  | "unknown-control"
   | "control-conflict"
   | "invalid-run-state"
   | "invalid-task-state"

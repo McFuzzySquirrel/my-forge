@@ -128,11 +128,29 @@ POSTGRES_TEST_URL="postgres://postgres:${PG_PASSWORD}@127.0.0.1:${PG_PORT}/recei
 
 The tests create and drop unique temporary schemas. The temporary container
 has no mounted volume, and the shell trap stops and removes it even if the test
-fails. The regular unit suite skips the opt-in PostgreSQL tests when
-`POSTGRES_TEST_URL` is unset. This qualifies receipt/fencing/execution-ownership persistence and the
-local Git integration boundary against PostgreSQL; it does not qualify the Dapr
-PostgreSQL state component or the
-remaining P3 gate.
+fails.
+
+To keep a self-hosted database instead, use the compose stack in
+`tools/dapr-engine/compose.postgres.yaml`. It binds to `127.0.0.1:55432` by
+default and keeps data in a named volume. Use `podman-compose` or
+`docker compose`. podman-compose 1.0.x echoes environment values, so discard
+its output:
+
+```bash
+cd tools/dapr-engine
+cp .env.example .env    # gitignored; set POSTGRES_PASSWORD (openssl rand -hex 24)
+podman-compose -f compose.postgres.yaml up -d >/dev/null 2>&1
+set -a; . ./.env; set +a
+POSTGRES_TEST_URL="postgres://postgres:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/receipts" \
+  npm run test:postgres
+podman-compose -f compose.postgres.yaml down >/dev/null 2>&1   # add -v to delete the data volume
+```
+
+The regular unit suite skips the opt-in PostgreSQL tests when
+`POSTGRES_TEST_URL` is unset. This qualifies receipt, control-record,
+fencing/execution-ownership persistence, and the local Git integration boundary
+against PostgreSQL; it does not qualify the Dapr PostgreSQL state component or
+the remaining P3 gate.
 
 ## 2. What the automated suite covers
 

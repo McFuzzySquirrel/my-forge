@@ -4,6 +4,38 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.113
+
+### P4-03 trusted approvals and durable controls
+
+- Define a provider-neutral trusted-principal contract for task approvals.
+  Approval authorization requires an operator subject, a task waiting for
+  approval, and exact evidence digests for the current logical attempt; a
+  confirmation flag is not identity.
+- Add a PostgreSQL control-record store with request-ID deduplication,
+  conflicting-payload rejection, compare-and-set state transitions, and
+  persisted approval bindings. Control payloads are capped at 64 KiB. Include
+  an opt-in PostgreSQL integration test.
+- Dispatch accepted approvals to deterministic task workflows using only the
+  durable control ID. The wake validator rejects missing, mismatched, and
+  stale-attempt approvals; failed event delivery leaves a retryable accepted
+  control. Persist the exact task-workflow instance ID so approvals remain
+  targeted correctly after task replay. Register the guarded `resumeTask`
+  activity, which marks approval applied only after the idempotent resume
+  handler succeeds.
+- Add a durable run-control coordinator and workflow event handling for
+  pause/resume, graceful stop, cancel, and replay. Pause/stop wait at a safe
+  boundary; cancel stays accepted until the host confirms process cleanup and
+  late-result fencing; replay starts a fresh logical attempt. The host supplies
+  authoritative run context and idempotent effects.
+- Add `tools/dapr-engine/compose.postgres.yaml`, a self-hosted PostgreSQL
+  stack for the opt-in suite. It uses the pinned image, binds to loopback
+  only, and reads its password from a gitignored `.env`.
+- The live PostgreSQL integration suite passes. The trusted-principal interface
+  still expects an authenticated host adapter; no network identity provider or
+  production service is included in this reusable engine package. P4-GATE
+  remains open for representative execution and local recovery evidence.
+
 ## October 2026 - v3.112
 
 ### P4-01 deterministic Dapr orchestration and recovery

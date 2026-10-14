@@ -105,6 +105,7 @@ Controls are `select-tasks`, `pause`, `resume`, `stop`, `cancel`, `replay-task`,
 and `approve-task`. Each request contains a `controlId`, `runId`, action, and
 action-specific payload. A repeated `controlId` with the same payload returns
 the same control record; reuse with a different payload is a conflict.
+Control payloads are limited to 64 KiB of UTF-8 JSON before persistence.
 
 Control records advance through `requested`, `accepted`, then either `applied`
 or `rejected`. Rejection includes a stable reason code. `accepted` means the
@@ -124,10 +125,41 @@ control queries are the source for later application.
   prior attempt or reuses its side-effect operation IDs.
 - `approve-task` is operator-only and binds the decision to the run snapshot,
   task identity, and immutable evidence digests. `--yes` or a control request
-  without authenticated operator identity is not approval.
+  without authenticated operator identity is not approval. The trusted service
+  adapter supplies the principal subject and roles; these claims must never
+  come from the control payload or a CLI confirmation flag. The approval also
+  records the current logical attempt. Authorization requires the task to be
+  waiting for approval and the offered evidence digest set to match the current
+  attempt exactly; a delayed approval for an older attempt is not reusable.
 - Effective task selection and dependency expansion are immutable for an
   accepted run. Updating selection requires a documented new snapshot/run
   behavior, not mutation of accepted submission data.
+
+The provider-neutral `TrustedPrincipalV1` contract is an input from an
+authenticated adapter, not an authentication mechanism. `authorizeTaskApproval`
+checks the subject, operator role, current task state, attempt, and evidence
+binding. The binding also persists the deterministic task-workflow instance ID
+for that logical attempt so a replayed task cannot receive an approval event
+intended for an older workflow instance.
+
+`PostgresControlRecordStore` durably records idempotent requests and
+compare-and-set state transitions, with the approval binding stored on the
+accepted control before event delivery and retained on the applied control.
+`TaskApprovalCoordinator` raises only the control ID to that task workflow;
+`createResumeTaskActivity` calls `resolveApprovalWake` before invoking the
+host's idempotent resume handler, then marks the control applied. The
+`RunControlCoordinator` validates run/task state and raises only the control ID
+to the deterministic run workflow identified by `runOrchestrationWorkflowId`.
+Set `controlsEnabled: true` on the run
+workflow input and register the control activities to enable the run-control
+event path. Pause/stop are applied at a safe boundary and wait for resume;
+cancel remains accepted until the host adapter confirms owned-process cleanup
+and late-result fencing; replay obtains a durable next logical attempt from
+the host adapter. The host must implement these effect adapters idempotently
+by `controlId`, resolve current context from authoritative run state, provide
+an authenticated `TrustedPrincipalV1`, and never expose the store to callers.
+This package supplies reusable boundaries; it does not implement a network
+identity provider or a production service host.
 
 ## 3. Receipts, artifacts, checkpoints, and fencing
 

@@ -11,12 +11,15 @@ import { registerOrchestrationWorkflows } from "../../orchestration/index.ts";
 import { createTaskCompletionEvidence } from "../../orchestration/outcome.ts";
 import {
   RESUME_TASK_ACTIVITY_NAME,
+  APPLY_RUN_CONTROL_ACTIVITY_NAME,
+  GET_RUN_CONTROL_ACTIVITY_NAME,
   RUN_ORCHESTRATION_WORKFLOW_NAME,
   TASK_CONTROL_EVENT_NAME,
   TASK_ATTEMPT_WORKFLOW_NAME,
   runOrchestrationWorkflow,
   taskAttemptWorkflow,
   taskAttemptWorkflowId,
+  taskAttemptWorkflowIdForAttempt,
   taskOperationId,
 } from "../../orchestration/workflow.ts";
 import {
@@ -66,23 +69,31 @@ function childCompleteOutcome(input: { runId: string; taskId: string; manifestDi
   });
 }
 
-function mockContext() {
+function mockContext(options: {
+  readonly activityResult?: (name: string, input: unknown) => unknown;
+} = {}) {
   const childCalls: Array<{ name: string; input: unknown; instanceId: string }> = [];
   const activityCalls: Array<{ name: string; input: unknown }> = [];
   const timers: Array<Date | number> = [];
   const eventWaits: string[] = [];
+  const eventTasks: Array<{ kind: string; name: string; getResult(): unknown }> = [];
   const customStatuses: unknown[] = [];
+  let eventResult: unknown;
+  let waveResult: unknown;
   const context = {
     callActivity(name: string, input: unknown) {
       activityCalls.push({ name, input });
-      return { kind: "activity", input };
+      return { kind: "activity", input, result: options.activityResult?.(name, input) };
     },
     callChildWorkflow(name: string, input: unknown, instanceId: string) {
       childCalls.push({ name, input, instanceId });
       return { kind: "child", instanceId };
     },
     whenAll(tasks: unknown[]) {
-      return { kind: "all", tasks };
+      return { kind: "all", tasks, getResult: () => waveResult };
+    },
+    whenAny(tasks: unknown[]) {
+      return { kind: "any", tasks };
     },
     createTimer(deadline: Date | number) {
       timers.push(deadline);
@@ -96,10 +107,22 @@ function mockContext() {
     },
     waitForExternalEvent(name: string) {
       eventWaits.push(name);
-      return { kind: "event", name };
+      const task = { kind: "event", name, getResult: () => eventResult };
+      eventTasks.push(task);
+      return task;
     },
   } as unknown as WorkflowContext;
-  return { context, childCalls, activityCalls, timers, eventWaits, customStatuses };
+  return {
+    context,
+    childCalls,
+    activityCalls,
+    timers,
+    eventWaits,
+    eventTasks,
+    customStatuses,
+    setEventResult(value: unknown) { eventResult = value; },
+    setWaveResult(value: unknown) { waveResult = value; },
+  };
 }
 
 test("plan expands selection using task and phase prerequisites in manifest order", () => {
@@ -164,7 +187,7 @@ test("workflow waits for a wave, then dispatches tasks whose prerequisites compl
     },
   });
   const { context, childCalls } = mockContext();
-  const workflow = runOrchestrationWorkflow(context, { runId: "run-1", submission: run });
+  const workflow = runOrchestrationWorkflow(context, { runId: "run-1", submission: run, controlsEnabled: false });
 
   const firstWave = await workflow.next();
   assert.equal(firstWave.done, false);
@@ -205,7 +228,7 @@ test("workflow stops dispatch after a terminal task failure", async () => {
     configuration: { settings: { concurrency: 2 }, secretRefs: {} },
   });
   const { context, childCalls } = mockContext();
-  const workflow = runOrchestrationWorkflow(context, { runId: "run-fail", submission: run });
+  const workflow = runOrchestrationWorkflow(context, { runId: "run-fail", submission: run, controlsEnabled: false });
 
   await workflow.next();
   const result = await workflow.next([
@@ -217,6 +240,154 @@ test("workflow stops dispatch after a terminal task failure", async () => {
     taskStatuses: { first: "failed", second: "complete" },
   });
   assert.equal(childCalls.length, 2);
+});
+
+test("run cancellation applies cleanup before rejecting the active wave outcomes", async () => {
+  const controlId = "11111111-1111-4111-8111-111111111111";
+  const runId = "run-cancel";
+  const record = {
+    controlId,
+    runId,
+    action: "cancel",
+    state: "accepted",
+    payload: {},
+  };
+  const applied = { ...record, state: "applied" };
+  const harness = mockContext({
+    activityResult(name) {
+      if (name === GET_RUN_CONTROL_ACTIVITY_NAME) return record;
+      if (name === APPLY_RUN_CONTROL_ACTIVITY_NAME) return applied;
+      return undefined;
+    },
+  });
+  const workflow = runOrchestrationWorkflow(harness.context, {
+    runId,
+    submission: acceptedSubmission({
+      manifestSnapshot: { phases: [{ id: "P1", tasks: [{ id: "T1" }] }] },
+    }),
+    controlsEnabled: true,
+  });
+
+  const dispatched = await workflow.next();
+  const controlWait = (dispatched.value as unknown as { tasks: unknown[] }).tasks[1];
+  harness.setEventResult({ controlId });
+  const fetching = await workflow.next(controlWait);
+  assert.equal(harness.activityCalls.at(-1)?.name, GET_RUN_CONTROL_ACTIVITY_NAME);
+  const applying = await workflow.next(record);
+  assert.equal(harness.activityCalls.at(-1)?.name, APPLY_RUN_CONTROL_ACTIVITY_NAME);
+  const cancelled = await workflow.next(applied);
+  assert.equal(cancelled.done, true);
+  assert.deepEqual(cancelled.value, {
+    status: "cancelled",
+    taskStatuses: { T1: "cancelled" },
+  });
+  assert.equal(fetching.done, false);
+  assert.equal(applying.done, false);
+});
+
+test("pause applies after the active task boundary and waits for a durable resume", async () => {
+  const runId = "run-pause";
+  const pauseId = "33333333-3333-4333-8333-333333333333";
+  const resumeId = "44444444-4444-4444-8444-444444444444";
+  const pauseRecord = { controlId: pauseId, runId, action: "pause", state: "accepted", payload: {} };
+  const resumeRecord = { controlId: resumeId, runId, action: "resume", state: "accepted", payload: {} };
+  const pauseApplied = { ...pauseRecord, state: "applied" };
+  const resumeApplied = { ...resumeRecord, state: "applied" };
+  const records = new Map([[pauseId, pauseRecord], [resumeId, resumeRecord]]);
+  const results = new Map([[pauseId, pauseApplied], [resumeId, resumeApplied]]);
+  const harness = mockContext({
+    activityResult(name, input) {
+      const controlId = (input as { controlId: string }).controlId;
+      if (name === GET_RUN_CONTROL_ACTIVITY_NAME) return records.get(controlId);
+      if (name === APPLY_RUN_CONTROL_ACTIVITY_NAME) return results.get(controlId);
+      return undefined;
+    },
+  });
+  const workflow = runOrchestrationWorkflow(harness.context, {
+    runId,
+    submission: acceptedSubmission({
+      manifestSnapshot: { phases: [{ id: "P1", tasks: [{ id: "T1" }] }] },
+    }),
+    controlsEnabled: true,
+  });
+
+  const activeWave = await workflow.next();
+  const eventTask = (activeWave.value as unknown as { tasks: unknown[] }).tasks[1];
+  harness.setEventResult({ controlId: pauseId });
+  const fetchingPause = await workflow.next(eventTask);
+  const applyingPause = await workflow.next(pauseRecord);
+  assert.equal(harness.activityCalls.at(-1)?.name, APPLY_RUN_CONTROL_ACTIVITY_NAME);
+  const waitingForResume = await workflow.next(pauseApplied);
+  assert.equal(waitingForResume.done, false);
+  assert.equal(harness.customStatuses.at(-1), "paused");
+
+  harness.setEventResult({ controlId: resumeId });
+  const fetchingResume = await workflow.next({ controlId: resumeId });
+  assert.equal(harness.activityCalls.at(-1)?.name, GET_RUN_CONTROL_ACTIVITY_NAME);
+  const applyingResume = await workflow.next(resumeRecord);
+  assert.equal(harness.activityCalls.at(-1)?.name, APPLY_RUN_CONTROL_ACTIVITY_NAME);
+  const waitingForWave = await workflow.next(resumeApplied);
+  assert.equal(waitingForWave.done, false);
+  const terminal = await workflow.next([
+    childCompleteOutcome(harness.childCalls[0]!.input as {
+      runId: string; taskId: string; manifestDigest: string;
+    }),
+  ]);
+  assert.equal(terminal.done, false);
+  assert.equal(harness.customStatuses.at(-1), "complete");
+  assert.equal(fetchingPause.done, false);
+  assert.equal(applyingPause.done, false);
+  assert.equal(fetchingResume.done, false);
+  assert.equal(applyingResume.done, false);
+});
+
+test("terminal runs remain replayable and start a new logical attempt", async () => {
+  const runId = "run-replay";
+  const controlId = "22222222-2222-4222-8222-222222222222";
+  const record = {
+    controlId,
+    runId,
+    action: "replay-task",
+    state: "accepted",
+    payload: { taskId: "T1" },
+  };
+  const applied = { ...record, state: "applied", replayLogicalAttempt: 4 };
+  const harness = mockContext({
+    activityResult(name) {
+      if (name === GET_RUN_CONTROL_ACTIVITY_NAME) return record;
+      if (name === APPLY_RUN_CONTROL_ACTIVITY_NAME) return applied;
+      return undefined;
+    },
+  });
+  const workflow = runOrchestrationWorkflow(harness.context, {
+    runId,
+    submission: acceptedSubmission({
+      manifestSnapshot: { phases: [{ id: "P1", tasks: [{ id: "T1" }] }] },
+    }),
+    controlsEnabled: true,
+  });
+
+  const firstWave = await workflow.next();
+  const firstWaveTask = (firstWave.value as unknown as { tasks: unknown[] }).tasks[0] as { getResult(): unknown };
+  harness.setWaveResult([
+    childCompleteOutcome(harness.childCalls[0]!.input as {
+      runId: string; taskId: string; manifestDigest: string;
+    }),
+  ]);
+  const terminalWait = await workflow.next(firstWaveTask);
+  assert.equal(terminalWait.done, false);
+  harness.setEventResult({ controlId });
+  const fetching = await workflow.next({ controlId });
+  assert.equal(harness.activityCalls.at(-1)?.name, GET_RUN_CONTROL_ACTIVITY_NAME);
+  const applying = await workflow.next(record);
+  assert.equal(harness.activityCalls.at(-1)?.name, APPLY_RUN_CONTROL_ACTIVITY_NAME);
+  const replayWave = await workflow.next(applied);
+  assert.equal(replayWave.done, false);
+  const replay = harness.childCalls.at(-1)!;
+  assert.equal(replay.input && (replay.input as { initialLogicalAttempt: number }).initialLogicalAttempt, 4);
+  assert.equal(replay.instanceId, taskAttemptWorkflowIdForAttempt(runId, "T1", 4));
+  assert.equal(fetching.done, false);
+  assert.equal(applying.done, false);
 });
 
 test("task retries use durable time and stable per-attempt operation identities", async () => {
@@ -264,6 +435,7 @@ test("task control events durably wake a task but only resumeTask can accept the
     maxRetries: 0,
     retryDelayMs: 0,
     allowNoop: false,
+    initialLogicalAttempt: 4,
   };
   const workflow = taskAttemptWorkflow(context, input);
 
@@ -281,6 +453,7 @@ test("task control events durably wake a task but only resumeTask can accept the
     runId: string;
     taskId: string;
     logicalAttempt: number;
+    taskWorkflowInstanceId: string;
     waitId: string;
     controlId: string;
     operationId: string;
@@ -290,20 +463,22 @@ test("task control events durably wake a task but only resumeTask can accept the
       runId: resumeInput.runId,
       taskId: resumeInput.taskId,
       logicalAttempt: resumeInput.logicalAttempt,
+      taskWorkflowInstanceId: resumeInput.taskWorkflowInstanceId,
       waitId: resumeInput.waitId,
       controlId: resumeInput.controlId,
     },
     {
       runId: input.runId,
       taskId: input.taskId,
-      logicalAttempt: 1,
+      logicalAttempt: 4,
+      taskWorkflowInstanceId: taskAttemptWorkflowIdForAttempt(input.runId, input.taskId, 4),
       waitId: "approval-1",
       controlId: "11111111-1111-4111-8111-111111111111",
     },
   );
   assert.equal(
     resumeInput.operationId,
-    taskOperationId(input.runId, input.taskId, 1, "resume:approval-1"),
+    taskOperationId(input.runId, input.taskId, 4, "resume:approval-1"),
   );
 
   const outcome = completeOutcome(resumeCall.input as {

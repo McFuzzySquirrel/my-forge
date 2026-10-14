@@ -304,7 +304,7 @@ export async function verify() {
         registration: 'executed', activity: 'executed', durableTimer: 'executed', externalEvent: 'executed',
         replayContinuity: 'executed through restart',
         terminateSuspendResumePurge: 'released client methods inspected, not qualified',
-        retries: 'No retry-policy argument in released WorkflowContext.callActivity; not qualified',
+        retries: 'Application-owned retry timer and logical attempt recovery exercised with test-only activities; no retry-policy argument in released WorkflowContext.callActivity',
         shutdown: 'SIGTERM worker and service-container stack stop exit codes measured; Podman infra teardown code recorded separately'
       },
       volumesPreserved: volumes.length, elapsedMs: Date.now() - started,
@@ -315,7 +315,7 @@ export async function verify() {
       limitations: ['Single-host clean restart, not crash/partition or cross-host recovery',
         ...(resources.budgetsQualified ? [] : ['The accepted idle-memory budget is not qualified by this run']),
         'Offline proof covers execution with cached images and dependencies, not fresh installation or online harnesses',
-        'Stub activity only; no harness, Git worktree, provider, retry or cancellation qualification',
+        'Test-only activities; application-owned retry recovery exercised, but no harness, Git worktree, provider or cancellation qualification',
         'At-least-once activity execution; deterministic receipt prevents conflicting accepted artifact',
         'Workflow history not enumerated by the released high-level SDK; continuity checked by instance identity, creation time, phase and artifact',
         'No authenticated production control API, backup/restore or independent activity deployment',

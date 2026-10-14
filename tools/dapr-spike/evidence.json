@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "measuredAt": "2026-10-13T12:53:04.442Z",
+  "measuredAt": "2026-10-14T19:52:29.416Z",
   "result": "passed",
   "qualification": "experimental-preparation-only",
   "phaseGateAccepted": false,
   "operatorBudgetsApproved": true,
-  "startupReadinessMs": 8130,
+  "startupReadinessMs": 8155,
   "versions": {
     "hostNode": "v24.15.0",
     "workerNode": "24.11.1",
@@ -60,15 +60,15 @@
     {
       "phase": "timer-after-worker-restart",
       "status": "timer",
-      "elapsedMs": 6401,
+      "elapsedMs": 6367,
       "stopExitCodes": {
         "worker": 0,
         "daprd": 0
       },
       "readiness": {
         "ready": true,
-        "startupAdmissionMs": 2057,
-        "latestAdmissionMs": 25
+        "startupAdmissionMs": 2071,
+        "latestAdmissionMs": 20
       }
     },
     {
@@ -78,7 +78,7 @@
     {
       "phase": "approval-after-stack-restart",
       "status": "approval",
-      "elapsedMs": 40428,
+      "elapsedMs": 41052,
       "stopExitCodes": {
         "worker": 0,
         "daprd": 0,
@@ -89,9 +89,55 @@
       "infraExitCode": 137,
       "readiness": {
         "ready": true,
-        "startupAdmissionMs": 2061,
-        "latestAdmissionMs": 23
+        "startupAdmissionMs": 2065,
+        "latestAdmissionMs": 18
       }
+    },
+    {
+      "phase": "orchestration-retry-timer-after-worker-restart",
+      "status": "RUNNING",
+      "elapsedMs": 6393,
+      "stopExitCodes": {
+        "worker": 0,
+        "daprd": 0
+      }
+    },
+    {
+      "phase": "orchestration-external-event-after-full-stack-restart",
+      "status": "RUNNING",
+      "elapsedMs": 40498,
+      "stopExitCodes": {
+        "worker": 0,
+        "daprd": 0,
+        "postgres": 0,
+        "placement": 0,
+        "scheduler": 0
+      }
+    },
+    {
+      "phase": "orchestration-task-control-completed",
+      "status": "COMPLETED",
+      "runId": "p4-5f3fdae6-1ae5-4da4-a1d7-13326932908d",
+      "taskStatuses": {
+        "T1": "complete"
+      },
+      "activityOperations": [
+        {
+          "type": "execute",
+          "logicalAttempt": 1,
+          "operationId": "4249f85f-a016-5ca1-8385-d8035acf46f2"
+        },
+        {
+          "type": "execute",
+          "logicalAttempt": 2,
+          "operationId": "ab04aaa9-ae1b-5e39-8550-73cd571d60e4"
+        },
+        {
+          "type": "resume",
+          "logicalAttempt": 2,
+          "operationId": "72bf92fe-9e6a-5d86-99e6-83c2050a8467"
+        }
+      ]
     }
   ],
   "sameInstance": true,
@@ -101,8 +147,8 @@
     "strategy": "A fresh SDK canary workflow must complete and be purged on each health request",
     "initial": {
       "ready": true,
-      "startupAdmissionMs": 2066,
-      "latestAdmissionMs": 20
+      "startupAdmissionMs": 2067,
+      "latestAdmissionMs": 21
     }
   },
   "outputBytes": 195,
@@ -114,11 +160,11 @@
     "externalEvent": "executed",
     "replayContinuity": "executed through restart",
     "terminateSuspendResumePurge": "released client methods inspected, not qualified",
-    "retries": "No retry-policy argument in released WorkflowContext.callActivity; not qualified",
+    "retries": "Application-owned retry timer and logical attempt recovery exercised with test-only activities; no retry-policy argument in released WorkflowContext.callActivity",
     "shutdown": "SIGTERM worker and service-container stack stop exit codes measured; Podman infra teardown code recorded separately"
   },
   "volumesPreserved": 3,
-  "elapsedMs": 141319,
+  "elapsedMs": 231985,
   "volumeAccess": "PostgreSQL workflow state, Scheduler state, and artifact write/read verified",
   "infrastructurePortsPublished": false,
   "hostPortsPublished": 0,
@@ -129,217 +175,217 @@
     "measured": true,
     "sampleCount": 5,
     "maxMemoryBytes": 3221225472,
-    "peakMemoryBytes": 129833150,
-    "peakMemoryMiB": 123.82,
+    "peakMemoryBytes": 145887061,
+    "peakMemoryMiB": 139.13,
     "budgetsQualified": true,
     "samples": [
       {
-        "measuredAt": "2026-10-13T12:52:44.245Z",
-        "totalMemoryBytes": 129362150,
+        "measuredAt": "2026-10-14T19:52:09.248Z",
+        "totalMemoryBytes": 145356061,
         "containers": [
           {
             "service": "infra",
-            "memory": "49.15kB / 33.49GB",
-            "memoryBytes": 49150,
+            "memory": "45.06kB / 33.49GB",
+            "memoryBytes": 45060,
             "cpu": "0.03%"
           },
           {
             "service": "worker",
-            "memory": "51.51MB / 33.49GB",
-            "memoryBytes": 51510000,
-            "cpu": "22.23%"
+            "memory": "66.65MB / 33.49GB",
+            "memoryBytes": 66650001,
+            "cpu": "45.83%"
           },
           {
             "service": "daprd",
-            "memory": "26.1MB / 33.49GB",
-            "memoryBytes": 26100000,
-            "cpu": "1.37%"
+            "memory": "25.64MB / 33.49GB",
+            "memoryBytes": 25640000,
+            "cpu": "1.05%"
           },
           {
             "service": "postgres",
-            "memory": "7.221MB / 33.49GB",
-            "memoryBytes": 7221000,
-            "cpu": "1.00%"
+            "memory": "7.229MB / 33.49GB",
+            "memoryBytes": 7229000,
+            "cpu": "0.90%"
           },
           {
             "service": "placement",
-            "memory": "8.352MB / 33.49GB",
-            "memoryBytes": 8352000,
-            "cpu": "1.27%"
-          },
-          {
-            "service": "scheduler",
-            "memory": "36.13MB / 33.49GB",
-            "memoryBytes": 36130000,
-            "cpu": "1.64%"
-          }
-        ]
-      },
-      {
-        "measuredAt": "2026-10-13T12:52:49.289Z",
-        "totalMemoryBytes": 129462150,
-        "containers": [
-          {
-            "service": "infra",
-            "memory": "49.15kB / 33.49GB",
-            "memoryBytes": 49150,
-            "cpu": "0.02%"
-          },
-          {
-            "service": "worker",
-            "memory": "51.51MB / 33.49GB",
-            "memoryBytes": 51510000,
-            "cpu": "15.44%"
-          },
-          {
-            "service": "daprd",
-            "memory": "26.1MB / 33.49GB",
-            "memoryBytes": 26100000,
-            "cpu": "0.98%"
-          },
-          {
-            "service": "postgres",
-            "memory": "7.234MB / 33.49GB",
-            "memoryBytes": 7234000,
-            "cpu": "0.72%"
-          },
-          {
-            "service": "placement",
-            "memory": "8.409MB / 33.49GB",
-            "memoryBytes": 8409000,
+            "memory": "8.102MB / 33.49GB",
+            "memoryBytes": 8102000,
             "cpu": "1.21%"
           },
           {
             "service": "scheduler",
-            "memory": "36.16MB / 33.49GB",
-            "memoryBytes": 36160000,
-            "cpu": "1.29%"
+            "memory": "37.69MB / 33.49GB",
+            "memoryBytes": 37690000,
+            "cpu": "1.47%"
           }
         ]
       },
       {
-        "measuredAt": "2026-10-13T12:52:54.337Z",
-        "totalMemoryBytes": 129564150,
+        "measuredAt": "2026-10-14T19:52:14.289Z",
+        "totalMemoryBytes": 145451061,
         "containers": [
           {
             "service": "infra",
-            "memory": "49.15kB / 33.49GB",
-            "memoryBytes": 49150,
-            "cpu": "0.01%"
+            "memory": "45.06kB / 33.49GB",
+            "memoryBytes": 45060,
+            "cpu": "0.02%"
           },
           {
             "service": "worker",
-            "memory": "51.51MB / 33.49GB",
-            "memoryBytes": 51510000,
-            "cpu": "11.83%"
+            "memory": "66.65MB / 33.49GB",
+            "memoryBytes": 66650001,
+            "cpu": "34.75%"
           },
           {
             "service": "daprd",
-            "memory": "26.1MB / 33.49GB",
-            "memoryBytes": 26100000,
-            "cpu": "0.77%"
+            "memory": "25.64MB / 33.49GB",
+            "memoryBytes": 25640000,
+            "cpu": "0.82%"
           },
           {
             "service": "postgres",
-            "memory": "7.234MB / 33.49GB",
-            "memoryBytes": 7234000,
-            "cpu": "0.59%"
+            "memory": "7.229MB / 33.49GB",
+            "memoryBytes": 7229000,
+            "cpu": "0.72%"
           },
           {
             "service": "placement",
-            "memory": "8.491MB / 33.49GB",
-            "memoryBytes": 8491000,
+            "memory": "8.167MB / 33.49GB",
+            "memoryBytes": 8167000,
             "cpu": "1.16%"
           },
           {
             "service": "scheduler",
-            "memory": "36.18MB / 33.49GB",
-            "memoryBytes": 36180000,
+            "memory": "37.72MB / 33.49GB",
+            "memoryBytes": 37720000,
+            "cpu": "1.23%"
+          }
+        ]
+      },
+      {
+        "measuredAt": "2026-10-14T19:52:19.339Z",
+        "totalMemoryBytes": 145570061,
+        "containers": [
+          {
+            "service": "infra",
+            "memory": "45.06kB / 33.49GB",
+            "memoryBytes": 45060,
+            "cpu": "0.02%"
+          },
+          {
+            "service": "worker",
+            "memory": "66.65MB / 33.49GB",
+            "memoryBytes": 66650001,
+            "cpu": "27.98%"
+          },
+          {
+            "service": "daprd",
+            "memory": "25.64MB / 33.49GB",
+            "memoryBytes": 25640000,
+            "cpu": "0.67%"
+          },
+          {
+            "service": "postgres",
+            "memory": "7.229MB / 33.49GB",
+            "memoryBytes": 7229000,
+            "cpu": "0.59%"
+          },
+          {
+            "service": "placement",
+            "memory": "8.266MB / 33.49GB",
+            "memoryBytes": 8266000,
+            "cpu": "1.14%"
+          },
+          {
+            "service": "scheduler",
+            "memory": "37.74MB / 33.49GB",
+            "memoryBytes": 37740000,
             "cpu": "1.09%"
           }
         ]
       },
       {
-        "measuredAt": "2026-10-13T12:52:59.385Z",
-        "totalMemoryBytes": 129686150,
+        "measuredAt": "2026-10-14T19:52:24.378Z",
+        "totalMemoryBytes": 145765061,
         "containers": [
           {
             "service": "infra",
-            "memory": "49.15kB / 33.49GB",
-            "memoryBytes": 49150,
+            "memory": "45.06kB / 33.49GB",
+            "memoryBytes": 45060,
             "cpu": "0.01%"
           },
           {
             "service": "worker",
-            "memory": "51.51MB / 33.49GB",
-            "memoryBytes": 51510000,
-            "cpu": "9.59%"
+            "memory": "66.65MB / 33.49GB",
+            "memoryBytes": 66650001,
+            "cpu": "23.42%"
           },
           {
             "service": "daprd",
-            "memory": "26.1MB / 33.49GB",
-            "memoryBytes": 26100000,
-            "cpu": "0.64%"
+            "memory": "25.64MB / 33.49GB",
+            "memoryBytes": 25640000,
+            "cpu": "0.58%"
           },
           {
             "service": "postgres",
-            "memory": "7.234MB / 33.49GB",
-            "memoryBytes": 7234000,
-            "cpu": "0.48%"
+            "memory": "7.229MB / 33.49GB",
+            "memoryBytes": 7229000,
+            "cpu": "0.50%"
           },
           {
             "service": "placement",
-            "memory": "8.593MB / 33.49GB",
-            "memoryBytes": 8593000,
-            "cpu": "1.14%"
+            "memory": "8.401MB / 33.49GB",
+            "memoryBytes": 8401000,
+            "cpu": "1.13%"
           },
           {
             "service": "scheduler",
-            "memory": "36.2MB / 33.49GB",
-            "memoryBytes": 36200000,
-            "cpu": "0.97%"
+            "memory": "37.8MB / 33.49GB",
+            "memoryBytes": 37800000,
+            "cpu": "0.99%"
           }
         ]
       },
       {
-        "measuredAt": "2026-10-13T12:53:04.441Z",
-        "totalMemoryBytes": 129833150,
+        "measuredAt": "2026-10-14T19:52:29.416Z",
+        "totalMemoryBytes": 145887061,
         "containers": [
           {
             "service": "infra",
-            "memory": "49.15kB / 33.49GB",
-            "memoryBytes": 49150,
+            "memory": "45.06kB / 33.49GB",
+            "memoryBytes": 45060,
             "cpu": "0.01%"
           },
           {
             "service": "worker",
-            "memory": "51.51MB / 33.49GB",
-            "memoryBytes": 51510000,
-            "cpu": "8.06%"
+            "memory": "66.65MB / 33.49GB",
+            "memoryBytes": 66650001,
+            "cpu": "20.15%"
           },
           {
             "service": "daprd",
-            "memory": "26.1MB / 33.49GB",
-            "memoryBytes": 26100000,
-            "cpu": "0.55%"
+            "memory": "25.64MB / 33.49GB",
+            "memoryBytes": 25640000,
+            "cpu": "0.51%"
           },
           {
             "service": "postgres",
-            "memory": "7.234MB / 33.49GB",
-            "memoryBytes": 7234000,
-            "cpu": "0.41%"
+            "memory": "7.229MB / 33.49GB",
+            "memoryBytes": 7229000,
+            "cpu": "0.43%"
           },
           {
             "service": "placement",
-            "memory": "8.7MB / 33.49GB",
-            "memoryBytes": 8700000,
-            "cpu": "1.12%"
+            "memory": "8.503MB / 33.49GB",
+            "memoryBytes": 8503000,
+            "cpu": "1.11%"
           },
           {
             "service": "scheduler",
-            "memory": "36.24MB / 33.49GB",
-            "memoryBytes": 36240000,
-            "cpu": "0.89%"
+            "memory": "37.82MB / 33.49GB",
+            "memoryBytes": 37820000,
+            "cpu": "0.91%"
           }
         ]
       }
@@ -348,7 +394,7 @@
   "limitations": [
     "Single-host clean restart, not crash/partition or cross-host recovery",
     "Offline proof covers execution with cached images and dependencies, not fresh installation or online harnesses",
-    "Stub activity only; no harness, Git worktree, provider, retry or cancellation qualification",
+    "Test-only activities; application-owned retry recovery exercised, but no harness, Git worktree, provider or cancellation qualification",
     "At-least-once activity execution; deterministic receipt prevents conflicting accepted artifact",
     "Workflow history not enumerated by the released high-level SDK; continuity checked by instance identity, creation time, phase and artifact",
     "No authenticated production control API, backup/restore or independent activity deployment",

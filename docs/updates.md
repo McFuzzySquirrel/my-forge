@@ -4,6 +4,29 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.112
+
+### P4-01 deterministic Dapr orchestration and recovery
+
+- Add deterministic planning and Dapr workflows for snapshot task dependencies,
+  dispatch waves, concurrency limits, logical attempts, and stable operation IDs.
+  Retry delays use durable timers; waiting task attempts resume through
+  `task-control` events sent to their deterministic child workflow.
+- Integrate the orchestration into the isolated rootless Podman spike using
+  test-only execution and resume activities. Add
+  `node tools/dapr-spike/cli.js verify-orchestration` for the focused recovery
+  check; the full `npm run test:stack --prefix tools/dapr-spike` command also
+  exercises it and regenerates the tracked evidence record.
+- Complete P4-01 with live retry-timer recovery across a worker restart and
+  external-event recovery across a full service-stack restart. Verify workflow
+  identity and creation-time continuity, no repeated completed activities, and
+  final task completion. See [the recovery evidence](../plan.md#p4-01-live-recovery-evidence)
+  and [testing guide](testing-guide.md).
+- Keep the qualification boundary explicit: these activities do not execute
+  harnesses or mutate target repositories. Verification and handoff admission
+  remain P4-02; authenticated control authorization remains P4-03. P4-GATE is
+  not accepted, and existing launcher commands still use the current engine.
+
 ## October 2026 - v3.111
 
 ### P3-GATE evidence: unresolved integrations and checkpoint capture

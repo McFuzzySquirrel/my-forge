@@ -172,9 +172,15 @@ To run the same package checks locally from the repository root:
 ```bash
 npm ci --prefix templates/skills/forge-execution-adapter
 npm ci --prefix scripts/forge-launcher
+npm ci --prefix tools/dapr-engine
 npm ci --prefix templates/skills/forge-workflow-engine
 npm ci --prefix templates/skills/skill-review
+```
 
+Install `tools/dapr-engine` before checking the workflow-engine package because
+that package typechecks shared engine source files from this package.
+
+```bash
 npm run typecheck --prefix scripts/forge-launcher
 npm test --prefix scripts/forge-launcher
 npm run typecheck --prefix templates/skills/forge-execution-adapter

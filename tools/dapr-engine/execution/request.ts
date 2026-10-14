@@ -1,6 +1,7 @@
 import type { AgentDescriptor, ManifestTask, TaskAttemptRequest, HarnessAdapter, TaskCapability } from "./types.ts";
 import { DEFAULT_TASK_TIMEOUT_MS } from "./types.ts";
 import { taskReferenceContext } from "./task-context.ts";
+import { ArtifactStore } from "./artifacts.ts";
 
 export function taskCapabilities(task: ManifestTask): readonly TaskCapability[] {
   const capabilities = task.requiredCapabilities?.length ? task.requiredCapabilities : ["repository-tools"] as const;
@@ -17,7 +18,7 @@ export function assertTaskCapabilities(task: ManifestTask, harness: HarnessAdapt
   }
 }
 
-export function prepareTaskRequest(options: {
+export interface PrepareTaskRequestOptions {
   agent: AgentDescriptor;
   task: ManifestTask;
   repoRoot: string;
@@ -31,7 +32,9 @@ export function prepareTaskRequest(options: {
   previousResultPath?: string;
   signal?: AbortSignal;
   logHarnessActivity?: boolean;
-}): TaskAttemptRequest {
+}
+
+export function prepareTaskRequest(options: PrepareTaskRequestOptions): TaskAttemptRequest {
   const task = structuredClone(options.task);
   if (task.contract?.kind === "human-review") throw new Error(`Human review '${task.id}' must not be sent to a model.`);
   const agent = structuredClone(options.agent);
@@ -74,6 +77,22 @@ export function prepareTaskRequest(options: {
     budget: Object.freeze({ timeoutMs }), instructions, signal: options.signal,
     logHarnessActivity: options.logHarnessActivity === true,
   });
+}
+
+export function prepareTaskRequestWithPredecessors(
+  options: PrepareTaskRequestOptions & {
+    artifactStore: ArtifactStore;
+    predecessorTaskIds: readonly string[];
+  },
+): TaskAttemptRequest {
+  const projection = options.artifactStore.projectPredecessors({
+    taskId: options.task.id,
+    predecessorTaskIds: options.predecessorTaskIds,
+    inputTypes: options.task.inputs ?? [],
+  });
+  const projectedContext = options.artifactStore.renderProjection(projection);
+  const contextBlock = [options.contextBlock, projectedContext].filter(Boolean).join("\n\n");
+  return prepareTaskRequest({ ...options, contextBlock });
 }
 
 export function inlinePersona(request: TaskAttemptRequest): string {

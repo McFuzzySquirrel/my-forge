@@ -4,6 +4,7 @@ export * from "./process-lifecycle.ts";
 export * from "./request.ts";
 export * from "./sandbox.ts";
 export * from "./task-context.ts";
+export * from "./task-admission.ts";
 export * from "./task-execution.ts";
 export * from "./task-result.ts";
 export * from "./types.ts";

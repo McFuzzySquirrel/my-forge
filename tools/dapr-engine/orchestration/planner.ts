@@ -25,6 +25,7 @@ export interface OrchestrationPlanV1 {
   readonly maxConcurrency: number;
   readonly maxRetries: number;
   readonly retryDelayMs: number;
+  readonly allowNoop: boolean;
 }
 
 function setting(
@@ -38,6 +39,17 @@ function setting(
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
     throw new Error(`configuration.settings.${key} must be a safe integer >= ${minimum}`);
   }
+  return value;
+}
+
+function booleanSetting(
+  settings: Readonly<Record<string, unknown>>,
+  key: string,
+  fallback: boolean,
+): boolean {
+  const value = settings[key];
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") throw new Error(`configuration.settings.${key} must be a boolean`);
   return value;
 }
 
@@ -117,12 +129,14 @@ export function buildOrchestrationPlan(
   const maxRetries = setting(settings, "maxRetries", DEFAULT_MAX_RETRIES, 0);
   const retryDelayMs = setting(settings, "retryDelayMs", DEFAULT_RETRY_DELAY_MS, 0);
   const maxConcurrency = setting(settings, "concurrency", DEFAULT_CONCURRENCY, 1);
+  const allowNoop = booleanSetting(settings, "allowNoop", false);
 
   return {
     tasks,
     maxConcurrency: Math.min(maxConcurrency, tasks.length || 1),
     maxRetries,
     retryDelayMs,
+    allowNoop,
   };
 }
 

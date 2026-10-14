@@ -7,6 +7,8 @@ import {
 } from "./workflow.ts";
 
 export * from "./planner.ts";
+export * from "./outcome.ts";
+export * from "./activity-admission.ts";
 export * from "./workflow.ts";
 
 export function registerOrchestrationWorkflows(runtime: WorkflowRuntime): WorkflowRuntime {

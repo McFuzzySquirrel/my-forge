@@ -6,6 +6,13 @@ import {
   nextDispatchWave,
   type AcceptedRunSubmissionV1,
 } from "./planner.ts";
+import {
+  isTaskGateResults,
+  isTaskCompletionEvidence,
+  type TaskExecutionOutcomeV1,
+  type TaskExecutionIdentityV1,
+} from "./outcome.ts";
+export type { TaskExecutionOutcomeV1 } from "./outcome.ts";
 
 export interface RunWorkflowInputV1 {
   readonly runId: string;
@@ -18,6 +25,7 @@ export interface TaskAttemptWorkflowInputV1 {
   readonly manifestDigest: Sha256Digest;
   readonly maxRetries: number;
   readonly retryDelayMs: number;
+  readonly allowNoop: boolean;
 }
 
 export interface ExecuteTaskActivityInputV1 {
@@ -26,16 +34,13 @@ export interface ExecuteTaskActivityInputV1 {
   readonly manifestDigest: Sha256Digest;
   readonly logicalAttempt: number;
   readonly operationId: string;
+  readonly allowNoop: boolean;
 }
 
 export interface ResumeTaskActivityInputV1 extends ExecuteTaskActivityInputV1 {
   readonly waitId: string;
   readonly controlId: string;
 }
-
-export type TaskExecutionOutcomeV1 =
-  | { readonly status: "complete" | "skipped" }
-  | { readonly status: "failed"; readonly retryable: boolean; readonly failureCode?: string };
 
 export interface TaskWaitRequestV1 {
   readonly status: "waiting";
@@ -85,16 +90,32 @@ export function taskOperationId(
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function isTaskExecutionOutcome(value: unknown): value is TaskExecutionOutcomeV1 {
+function isTaskExecutionOutcome(
+  value: unknown,
+  expected?: TaskExecutionIdentityV1,
+): value is TaskExecutionOutcomeV1 {
   if (!value || typeof value !== "object" || !("status" in value)) return false;
-  const outcome = value as { status?: unknown; retryable?: unknown; failureCode?: unknown };
-  return outcome.status === "complete" || outcome.status === "skipped"
+  const outcome = value as {
+    status?: unknown;
+    retryable?: unknown;
+    failureCode?: unknown;
+    reason?: unknown;
+    gates?: unknown;
+    evidence?: unknown;
+  };
+  return (outcome.status === "complete" && isTaskCompletionEvidence(outcome.evidence, expected))
+    || outcome.status === "skipped"
     || (outcome.status === "failed" && typeof outcome.retryable === "boolean"
-      && (outcome.failureCode === undefined || typeof outcome.failureCode === "string"));
+      && (outcome.failureCode === undefined || typeof outcome.failureCode === "string")
+      && (outcome.reason === undefined || typeof outcome.reason === "string")
+      && (outcome.gates === undefined || isTaskGateResults(outcome.gates)));
 }
 
-function isTaskActivityOutcome(value: unknown): value is TaskActivityOutcomeV1 {
-  if (isTaskExecutionOutcome(value)) return true;
+function isTaskActivityOutcome(
+  value: unknown,
+  expected?: TaskExecutionIdentityV1,
+): value is TaskActivityOutcomeV1 {
+  if (isTaskExecutionOutcome(value, expected)) return true;
   if (!value || typeof value !== "object" || !("status" in value) || !("waitId" in value)) return false;
   const outcome = value as { status?: unknown; waitId?: unknown };
   return outcome.status === "waiting" && typeof outcome.waitId === "string"
@@ -112,7 +133,8 @@ function validateTaskAttemptInput(input: TaskAttemptWorkflowInputV1): void {
   if (!input.runId || !input.taskId
     || !/^sha256:[0-9a-f]{64}$/.test(input.manifestDigest)
     || !Number.isSafeInteger(input.maxRetries) || input.maxRetries < 0
-    || !Number.isSafeInteger(input.retryDelayMs) || input.retryDelayMs < 0) {
+    || !Number.isSafeInteger(input.retryDelayMs) || input.retryDelayMs < 0
+    || typeof input.allowNoop !== "boolean") {
     throw new Error("Invalid task attempt workflow input");
   }
 }
@@ -131,6 +153,7 @@ export async function* taskAttemptWorkflow(
       manifestDigest: input.manifestDigest,
       logicalAttempt,
       operationId: taskOperationId(input.runId, input.taskId, logicalAttempt),
+      allowNoop: input.allowNoop,
     };
     let activityOutcome: unknown;
     try {
@@ -140,7 +163,7 @@ export async function* taskAttemptWorkflow(
       // An activity exception may follow an external effect; do not retry it as a new operation.
       return { status: "failed", retryable: false, failureCode: "activity-failed" };
     }
-    if (!isTaskActivityOutcome(activityOutcome)) throw new Error("executeTask returned an invalid outcome");
+    if (!isTaskActivityOutcome(activityOutcome, activityInput)) throw new Error("executeTask returned an invalid outcome");
     let outcome: TaskActivityOutcomeV1 = activityOutcome;
     while (outcome.status === "waiting") {
       context.setCustomStatus("waiting-for-control");
@@ -161,7 +184,7 @@ export async function* taskAttemptWorkflow(
         if (!(error instanceof Error)) throw error;
         return { status: "failed", retryable: false, failureCode: "resume-activity-failed" };
       }
-      if (!isTaskActivityOutcome(resumedOutcome)) throw new Error("resumeTask returned an invalid outcome");
+      if (!isTaskActivityOutcome(resumedOutcome, resumeInput)) throw new Error("resumeTask returned an invalid outcome");
       outcome = resumedOutcome;
     }
     if (outcome.status !== "failed" || !outcome.retryable || retry === input.maxRetries) return outcome;
@@ -207,13 +230,18 @@ export async function* runOrchestrationWorkflow(
       manifestDigest: input.submission.manifestDigest,
       maxRetries: plan.maxRetries,
       retryDelayMs: plan.retryDelayMs,
+      allowNoop: plan.allowNoop,
     }, taskAttemptWorkflowId(input.runId, taskId)));
     const outcomes = yield context.whenAll(children);
     if (!Array.isArray(outcomes) || outcomes.length !== wave.length) {
       throw new Error("Task workflow wave returned an invalid outcome set");
     }
     outcomes.forEach((outcome, index) => {
-      if (!isTaskExecutionOutcome(outcome)) throw new Error(`Task '${wave[index]!.taskId}' returned an invalid outcome`);
+      if (!isTaskExecutionOutcome(outcome, {
+        runId: input.runId,
+        taskId: wave[index]!.taskId,
+        manifestDigest: input.submission.manifestDigest,
+      })) throw new Error(`Task '${wave[index]!.taskId}' returned an invalid outcome`);
       statuses[wave[index]!.taskId] = outcome.status;
     });
     if (outcomes.some((outcome) => outcome.status === "failed")) {

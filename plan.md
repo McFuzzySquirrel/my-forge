@@ -60,7 +60,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
-| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01 complete; P4-02 in progress | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence) |
+| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01 complete; P4-02 in review | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
@@ -228,7 +228,7 @@ local task chain running through the same contracts as the old engine.
   and bounded execution. Use durable timers/events for retry delays and waits;
   keep I/O, random identities, and wall-clock decisions in activities or approved
   deterministic runtime facilities.
-- [ ] **P4-02 — Integrate verification and handoffs** ([issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9), assigned). A successful harness exit
+- [ ] **P4-02 — Integrate verification and handoffs** ([issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9), assigned; [PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10) in review). A successful harness exit
   is insufficient: require expected outputs, no-op policy, structured outcomes,
   mandatory validation, and compact predecessor artifacts before accepting work.
 - [ ] **P4-03 — Implement durable controls and approvals.** Deduplicate requests,
@@ -412,8 +412,9 @@ P3-GATE was accepted by the operator in [issue #7](https://github.com/McFuzzySqu
 on 2026-10-14; P4 is authorized. **P4-01 — Implement deterministic
 orchestration** is complete; its local Dapr timer/event recovery evidence is
 recorded below. [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8)
-is complete. **P4-02 — Integrate verification and handoffs** is in progress under
-[issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9).
+is complete. **P4-02 — Integrate verification and handoffs** is in review under
+[issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9) and
+[PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10).
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed

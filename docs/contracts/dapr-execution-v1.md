@@ -2,9 +2,10 @@
 
 **Status:** P2-GATE and P3-GATE accepted; P4-01 deterministic orchestration and
 local timer/event recovery are complete using test-only activities. P4-02
-verification and handoff integration is in progress under
-[issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9). P4-03 onward
-and production service qualification remain pending.
+verification and handoff integration is in review under
+[issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9) and
+[PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10). P4-03 onward and
+production service qualification remain pending.
 **Owner:** [Dapr execution boundary feature](../features/dapr-execution-boundary.md).  
 **Architecture:** [ADR-066](../adr/066-dapr-workflow-full-replacement-architecture.md).
 

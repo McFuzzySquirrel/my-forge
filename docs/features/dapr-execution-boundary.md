@@ -13,9 +13,15 @@
 **Gate status:** P2-GATE was accepted by the operator on 2026-10-13 in
 [review issue #6](https://github.com/McFuzzySquirrel/my-forge/issues/6), after
 the operator ran the review commands and confirmed the contracts, tests,
-conformance fixtures, and migration notes. P3 is authorized to begin. This
-acceptance does not qualify durable Dapr effects; those remain to be
-demonstrated in P3.
+conformance fixtures, and migration notes. P3-GATE was accepted in
+[issue #7](https://github.com/McFuzzySquirrel/my-forge/issues/7). P4-01 is
+complete and tracked in
+[issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); local Dapr
+timer/event recovery is recorded in the [roadmap](../../plan.md#p4-01-live-recovery-evidence).
+The fixture proves workflow replay with test activities only; verification,
+authorization, harness execution, and production service integration remain
+later P4 work. This P2 feature remains a contract and reusable-boundary
+definition, not a production service.
 
 **Scope:** P2 run/task identities, immutable submission snapshots, service/control
 models, reusable execution boundaries, application-owned storage contracts,

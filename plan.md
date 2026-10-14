@@ -7,8 +7,10 @@ recorded in ADR-066 and the P2 v1 contract is reviewed. P2-03 extraction landed
 in [issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); P2-05
 conformance fixtures are implemented in
 [issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5). P3 is
-authorized to begin; durable Dapr effects remain unqualified. The runtime
-remains an experimental spike, not a production replacement.
+complete and P3-GATE was accepted in
+[issue #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); P4 is
+authorized to begin. Durable Dapr workflow effects remain unqualified. The
+runtime remains an experimental spike, not a production replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
 profiles; no permanent legacy backend
@@ -57,8 +59,8 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P0 — Baseline and contracts | None | Architecture + QA; agent prepares evidence, operator accepts | Gate accepted; baseline unblocked | [P0 review #2](https://github.com/McFuzzySquirrel/my-forge/issues/2); [P0 evidence](#p0-evidence--2026-10-13); [canonical feature](docs/features/dapr-foundation.md) |
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
-| P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-04/05/06 PostgreSQL fencing, Git ref CAS, Git-effect reconciliation, and execution-ownership checks pass; P3-GATE evidence prepared, awaiting operator acceptance | Unassigned |
-| P4 — Complete local vertical slice | P3 gate | Runtime + platform | Not started | Unassigned |
+| P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
+| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01 complete; P4-02 next | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
@@ -212,7 +214,7 @@ repository integration authority.
   cancellation to owned harness subprocesses, handle worker loss, and reject
   late/stale outcomes. Avoid host-home mounts and engine sockets; document the
   separately approved approach for target builds requiring containers.
-- [ ] **P3-GATE:** Redelivered activities produce one accepted effect set;
+- [x] **P3-GATE:** Redelivered activities produce one accepted effect set;
   stale owners cannot mutate the target branch; checkpoints reconstruct a task
   workspace; ambiguous integration is visible and blocks unsafe continuation.
 
@@ -221,7 +223,7 @@ repository integration authority.
 **Deliverables:** the replacement DAG workflow, durable controls, and a real
 local task chain running through the same contracts as the old engine.
 
-- [ ] **P4-01 — Implement deterministic orchestration.** Evaluate snapshot task
+- [x] **P4-01 — Implement deterministic orchestration.** Evaluate snapshot task
   readiness, phase dependencies, selected scope, skipped tasks, owner exclusivity,
   and bounded execution. Use durable timers/events for retry delays and waits;
   keep I/O, random identities, and wall-clock decisions in activities or approved
@@ -406,15 +408,21 @@ does not itself imply phase-gate acceptance or production cutover.
 
 ## Immediate next work package
 
-P1-06 is recorded in [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md).
-The P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03
-landed in [issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4).
-P2-05 is tracked in [issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5):
+P3-GATE was accepted by the operator in [issue #7](https://github.com/McFuzzySquirrel/my-forge/issues/7)
+on 2026-10-14; P4 is authorized. **P4-01 — Implement deterministic
+orchestration** is complete; its local Dapr timer/event recovery evidence is
+recorded below. [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8)
+is complete. **P4-02 — Integrate verification and handoffs** is now next.
+P1-06 is recorded in
+[ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
+P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
+in [issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4). P2-05 is
+tracked in [issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5):
 cases C01–C25 in [contract v1 §5](docs/contracts/dapr-execution-v1.md#5-conformance-matrix)
 run through `npm test --prefix tools/dapr-engine` against an in-memory
 reference model. The operator ran the review commands and accepted P2-GATE in
-[issue #6](https://github.com/McFuzzySquirrel/my-forge/issues/6) on 2026-10-13;
-P3 is authorized. P3-04 is implemented in
+[issue #6](https://github.com/McFuzzySquirrel/my-forge/issues/6) on 2026-10-13.
+P3-04 is implemented in
 `tools/dapr-engine/storage/postgres/repository-integration.ts` with a PostgreSQL
 fence migration. Lease grants and integrations serialize on the same row lock;
 the authority holds it across Git's atomic expected-head ref update and the
@@ -449,8 +457,7 @@ socket binds are rejected. Target builds that need containers require a
 separately approved dedicated builder (contract §3). Fixtures C26–C29 and the
 live PostgreSQL tests pass.
 
-**P3-GATE evidence prepared (awaiting operator acceptance).** The gate audit
-found and fixed two gaps:
+**P3-GATE accepted.** The gate audit found and fixed two gaps:
 
 - While an earlier attempt's integration was pending or ambiguous, another
   attempt could advance the same branch. `integrate` now returns
@@ -465,11 +472,32 @@ fencing, and checkpoint reconstruction against PostgreSQL and a real Git
 repository. A negative control without the unresolved-integration check fails
 it.
 
-**Next: operator review of P3-GATE.** The operator decides; this plan does not
-mark the gate accepted. The conformance fixtures remain semantic evidence only,
-not proof of full durable Dapr effects. The evidence also does not cover Dapr
-PostgreSQL state, deployment volumes, or a running service.
-Console migration and legacy-engine retirement remain gated by their later phases.
+The operator reviewed the evidence and accepted P3-GATE in issue #7. The
+conformance fixtures remain semantic evidence only, not proof of full durable
+Dapr effects. The evidence also does not cover Dapr PostgreSQL state, deployment
+volumes, or a running service. P4 execution is now authorized; Console migration
+and legacy-engine retirement remain gated by their later phases.
+
+### P4-01 live recovery evidence
+
+On 2026-10-14, `node tools/dapr-spike/cli.js verify-orchestration` passed
+against the local Dapr 1.18.7 stack and PostgreSQL workflow state. Run
+`p4-6f2d9882-672f-4404-93fd-a64698c0d22b` kept the same workflow identity and
+creation time through a worker restart during retry scheduling
+(6,458 ms) and a full worker/sidecar/PostgreSQL/Placement/Scheduler restart
+while the task-attempt child reported `waiting-for-control` before and after
+recovery (41,033 ms). All five services shut down with
+exit code 0.
+
+The task attempt returned a retryable failure, retried after the 30,000 ms
+durable timer, waited for the external event, and completed after the event
+woke its deterministic child workflow. Its three distinct operation IDs were
+`f53ec6ff-9dff-5c4a-aebd-3bad8ee79d72`,
+`861336ee-acf6-5293-8b45-e7b9e0d83e82`, and
+`b6207cab-4a5d-546a-a0e6-f8cb57a08bc5`; final task status was `complete`.
+Activities and the submission are test fixtures, not harness execution or
+control authorization. `resumeTask` authorization remains P4-03; verification
+and handoff admission is P4-02. This evidence does not accept P4-GATE.
 
 ## P0 evidence — 2026-10-13
 

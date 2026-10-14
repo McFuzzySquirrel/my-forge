@@ -1,7 +1,8 @@
 # Dapr Execution Contract v1
 
-**Status:** P2 design baseline; P2-GATE accepted on 2026-10-13; durable
-implementation remains pending.
+**Status:** P2-GATE and P3-GATE accepted; P4-01 deterministic orchestration and
+local timer/event recovery are complete using test-only activities. P4-02 onward
+and production service qualification remain pending.
 **Owner:** [Dapr execution boundary feature](../features/dapr-execution-boundary.md).  
 **Architecture:** [ADR-066](../adr/066-dapr-workflow-full-replacement-architecture.md).
 
@@ -35,6 +36,26 @@ is rejected. It stores the snapshot before accepting a run. A `submissionKey`
 is unique within `repositoryId`: an identical canonical request returns the
 original `runId`, while reuse with a different snapshot or target is rejected
 as a conflict. A deliberate new run uses a new key.
+
+The workflow graph in `manifestSnapshot` preserves phase order and phase
+dependencies. Each task includes its stable `id`, optional direct
+`dependencies`, and optional `ownerAgent`. All tasks without an `ownerAgent`
+share one exclusivity group; tasks with the same owner are not dispatched in
+parallel. A phase prerequisite includes every task in each prerequisite phase.
+The dispatcher selects ready tasks in manifest order, up to the snapshotted
+`configuration.settings.concurrency` limit (default `1`). Both `complete` and
+`skipped` prerequisites satisfy readiness. Retry settings are
+`maxRetries` (default `2`) and `retryDelayMs` (default `5000`); an explicit
+retryable task failure starts a new logical attempt after a Dapr durable timer.
+An activity exception is terminal for that task attempt because an external
+effect may be ambiguous; it is not retried as a new operation.
+An activity may return a wait request; the task workflow then waits on the
+durable `task-control` external event and passes only its UUID `controlId` to
+the `resumeTask` activity. The event is raised on the deterministic
+task-attempt workflow instance, not the parent run instance. The event is a
+wake-up signal, not an approval:
+`resumeTask` must validate authorization, run/task binding, and current evidence
+before accepting any control.
 
 Configuration needed to reproduce execution is snapshotted. Credentials and
 other secrets remain external; the snapshot records only a secret reference and

@@ -85,7 +85,7 @@ spec:
     }
   }
   for (const image of Object.values(images)) podman(['pull', image]);
-  podman(['build', '--pull=never', '--file', 'Containerfile', '--tag', localImage, '.']);
+  podman(['build', '--pull=never', '--file', join(directory, 'Containerfile'), '--tag', localImage, join(directory, '../..')]);
 }
 
 export async function waitUntil(probe, seconds = 90) {
@@ -136,7 +136,7 @@ export async function up() {
       '--dapr-listen-addresses', '127.0.0.1', '--enable-metrics=false', '--log-level', 'warn'],
       ['--env', 'DAPR_HOST_IP=127.0.0.1', '--env-file', join(runtimeDirectory, 'dapr.env'),
         '--volume', `${join(runtimeDirectory, 'components')}:/components:ro,Z`]);
-    run('worker', localImage, [], ['--volume', `${volumes[2]}:/artifacts`]);
+    run('worker', localImage, ['node', '--import', 'tsx', 'orchestration-worker.mjs'], ['--volume', `${volumes[2]}:/artifacts`]);
   }
   await waitUntil(async () => {
     try {

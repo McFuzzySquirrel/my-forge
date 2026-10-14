@@ -17,9 +17,10 @@ These commands cover the current launcher implementation, including bootstrap, d
 
 ### Isolated Dapr foundation experiment
 
-`tools/dapr-spike` is a development-only P1 experiment, not a replacement engine.
-It exercises stub activities, durable timers, and an external approval event;
-it does not execute manifests, invoke harnesses, or modify target repositories.
+`tools/dapr-spike` is a development-only Dapr runtime fixture, not a replacement
+engine. It exercises the P1 stub workflow and the P4-01 orchestration with a
+minimal validated task submission, retry timer, task-control event, and
+test-only activities; it does not invoke harnesses or modify target repositories.
 The [implementation tracker](../plan.md) records evidence and open acceptance
 gates; the [canonical foundation contracts](features/dapr-foundation.md) keep
 operator approval separate from automated checks.
@@ -41,13 +42,20 @@ run the live qualification command from the repository root:
 npm run test:stack --prefix tools/dapr-spike
 ```
 
-It builds/pulls the pinned images, starts the isolated stack, exercises worker
-and full-stack restarts, and refreshes the tracked
+It builds/pulls the pinned images, starts the isolated stack, exercises P1 and
+P4-01 timer/event recovery across worker and full-stack restarts, and refreshes the tracked
 `tools/dapr-spike/evidence.json`. A successful run preserves the database,
 Scheduler, and artifact volumes. Stop the stack without deleting those volumes:
 
 ```bash
 npm run spike --prefix tools/dapr-spike -- stop
+```
+
+To rerun only the P4-01 workflow recovery check against an already prepared
+stack, use:
+
+```bash
+node tools/dapr-spike/cli.js verify-orchestration
 ```
 
 Do not run `clean --confirm-delete-volumes` unless deleting the persistent spike

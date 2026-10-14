@@ -12,6 +12,7 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | { [key:
 export interface ManifestGraphTaskV1 {
   readonly id: string;
   readonly dependencies?: readonly string[];
+  readonly ownerAgent?: string;
 }
 
 export interface ManifestGraphPhaseV1 {

@@ -20,7 +20,7 @@ export function compactState(state) {
 
 async function withClient(action) {
   function invoke(method, args) {
-    const result = podman(['exec', `${pod}-worker`, 'node', 'control.js', method, JSON.stringify(args)]);
+    const result = podman(['exec', `${pod}-worker`, 'node', '--import', 'tsx', 'control.js', method, JSON.stringify(args)]);
     const value = JSON.parse(result.stdout.trim().split('\n').at(-1));
     if (value?.createdAt) value.createdAt = new Date(value.createdAt);
     if (value?.lastUpdatedAt) value.lastUpdatedAt = new Date(value.lastUpdatedAt);
@@ -30,7 +30,111 @@ async function withClient(action) {
     scheduleNewWorkflow: async (_name, input, id) => invoke('start', [input, id]),
     getWorkflowState: async id => invoke('state', [id]),
     raiseEvent: async id => invoke('approve', [id]),
+    startOrchestration: async runId => invoke('orchestration-start', [runId]),
+    raiseTaskControl: async (runId, taskId, controlId) => invoke('task-control', [runId, taskId, controlId]),
+    getActivityLog: async runId => invoke('activity-log', [runId]),
     waitForWorkflowCompletion: async id => invoke('completed', [id]),
+  });
+}
+
+function parseActivityLog(contents) {
+  return contents.trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+}
+
+async function verifyOrchestration(phases) {
+  const runId = `p4-${randomUUID()}`;
+  const retryDelayMs = 30_000;
+  await withClient(async client => {
+    assert.equal(await client.startOrchestration(runId), runId);
+    await waitUntil(async () => parseActivityLog(await client.getActivityLog(runId))
+      .some(record => record.type === 'execute' && record.logicalAttempt === 1), 30);
+    const firstAttempt = parseActivityLog(await client.getActivityLog(runId))[0];
+    assert.equal(firstAttempt.outcome.status, 'failed');
+    assert.equal(firstAttempt.outcome.retryable, true);
+    const beforeWorkerRestart = await client.getWorkflowState(runId, true);
+
+    const workerStarted = Date.now();
+    const workerExitCodes = await restartWorker();
+    const workerRestartMs = Date.now() - workerStarted;
+    assert.ok(workerRestartMs <= 120_000, `Orchestration worker recovery took ${workerRestartMs}ms`);
+    const afterWorkerRestart = await client.getWorkflowState(runId, true);
+    assert.equal(afterWorkerRestart.instanceId, runId);
+    assert.equal(afterWorkerRestart.createdAt.toISOString(), beforeWorkerRestart.createdAt.toISOString());
+    assert.equal(afterWorkerRestart.runtimeStatus, 'RUNNING');
+    const duringTimer = parseActivityLog(await client.getActivityLog(runId));
+    assert.deepEqual(duringTimer.map(record => record.logicalAttempt), [1],
+      'Worker restart during the durable timer must not dispatch the retry early');
+    phases.push({
+      phase: 'orchestration-retry-timer-after-worker-restart',
+      status: afterWorkerRestart.runtimeStatus,
+      elapsedMs: workerRestartMs,
+      stopExitCodes: workerExitCodes,
+    });
+
+    await waitUntil(async () => parseActivityLog(await client.getActivityLog(runId))
+      .some(record => record.type === 'execute' && record.logicalAttempt === 2), 180);
+    const waitingLog = parseActivityLog(await client.getActivityLog(runId));
+    const secondAttempt = waitingLog.find(record => record.type === 'execute' && record.logicalAttempt === 2);
+    assert.equal(secondAttempt.outcome.status, 'waiting');
+    assert.ok(Date.parse(secondAttempt.at) - Date.parse(firstAttempt.at) >= retryDelayMs,
+      'The retry must respect its durable delay');
+    const taskWorkflowId = `forge-task-${firstAttempt.operationId}`;
+    let waitingTaskState;
+    await waitUntil(async () => {
+      waitingTaskState = await client.getWorkflowState(taskWorkflowId, true);
+      return waitingTaskState?.customStatus === 'waiting-for-control';
+    }, 30);
+    const waitingState = await client.getWorkflowState(runId, true);
+    assert.equal(waitingState.runtimeStatus, 'RUNNING');
+
+    const stackStarted = Date.now();
+    stop();
+    const serviceExitCodes = Object.fromEntries(
+      ['worker', 'daprd', 'postgres', 'placement', 'scheduler'].map(name => [
+        name,
+        Number(podman(['inspect', `${pod}-${name}`, '--format', '{{.State.ExitCode}}']).stdout.trim()),
+      ]),
+    );
+    for (const [name, code] of Object.entries(serviceExitCodes)) {
+      assert.equal(code, 0, `${name} must stop gracefully while the task waits for its event`);
+    }
+    await up();
+    const stackRestartMs = Date.now() - stackStarted;
+    assert.ok(stackRestartMs <= 120_000, `Orchestration stack recovery took ${stackRestartMs}ms`);
+    const afterStackRestart = await client.getWorkflowState(runId, true);
+    assert.equal(afterStackRestart.instanceId, runId);
+    assert.equal(afterStackRestart.createdAt.toISOString(), beforeWorkerRestart.createdAt.toISOString());
+    assert.equal(afterStackRestart.runtimeStatus, 'RUNNING');
+    const afterStackTaskState = await client.getWorkflowState(taskWorkflowId, true);
+    assert.equal(afterStackTaskState.instanceId, taskWorkflowId);
+    assert.equal(afterStackTaskState.customStatus, 'waiting-for-control');
+    assert.deepEqual(parseActivityLog(await client.getActivityLog(runId)), waitingLog,
+      'Recovering an external-event wait must not rerun completed activities');
+    phases.push({
+      phase: 'orchestration-external-event-after-full-stack-restart',
+      status: afterStackRestart.runtimeStatus,
+      elapsedMs: stackRestartMs,
+      stopExitCodes: serviceExitCodes,
+    });
+
+    const controlId = randomUUID();
+    await client.raiseTaskControl(runId, 'T1', controlId);
+    const completed = await client.waitForWorkflowCompletion(runId, true, 60);
+    assert.equal(completed?.runtimeStatus, 'COMPLETED');
+    const output = JSON.parse(completed.serializedOutput);
+    assert.deepEqual(output, { status: 'complete', taskStatuses: { T1: 'complete' } });
+    const finalLog = parseActivityLog(await client.getActivityLog(runId));
+    assert.deepEqual(finalLog.map(record => record.type), ['execute', 'execute', 'resume']);
+    assert.equal(finalLog[2].controlId, controlId);
+    phases.push({
+      phase: 'orchestration-task-control-completed',
+      status: completed.runtimeStatus,
+      runId,
+      taskStatuses: output.taskStatuses,
+      activityOperations: finalLog.map(({ type, logicalAttempt, operationId }) => ({
+        type, logicalAttempt, operationId,
+      })),
+    });
   });
 }
 
@@ -166,6 +270,7 @@ export async function verify() {
     const artifact = podman(['exec', `${pod}-worker`, 'node', '-e',
       `process.stdout.write(require('fs').readFileSync('/artifacts/${runId}.json'))`]).stdout;
     assert.equal(createHash('sha256').update(artifact).digest('hex'), output.artifact.sha256);
+    await verifyOrchestration(phases);
     const resolvedImages = Object.fromEntries(Object.entries(images).map(([key, image]) =>
       [key, { tag: image, digest: JSON.parse(podman(['image', 'inspect', image]).stdout)[0].Digest }]));
     const lock = JSON.parse(await readFile(join(directory, 'package-lock.json'), 'utf8'));
@@ -221,7 +326,7 @@ export async function verify() {
     };
     await writeFile(join(directory, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`);
   });
-  return { result: 'passed', qualification: 'experimental-preparation-only', phaseGateAccepted: false, elapsedMs: Date.now() - started };
+  return { result: 'passed', qualification: 'P4-01 orchestration recovery verified; P1 spike remains experimental', phaseGateAccepted: false, elapsedMs: Date.now() - started };
 }
 
 export async function main(args) {
@@ -232,7 +337,13 @@ export async function main(args) {
     case 'stop': stop(); return { result: 'stopped', volumesPreserved: true };
     case 'clean': clean(rest[0]); return { result: 'volumes-deleted' };
     case 'restart-worker': await restartWorker(); return { result: 'ready' };
-    case 'verify': return verify();
+    case 'verify':     return verify();
+    case 'verify-orchestration': {
+    await up();
+    const phases = [];
+    await verifyOrchestration(phases);
+    return { result: 'passed', test: 'P4-01 Dapr orchestration recovery', phases };
+    }
     case 'start': {
       const runId = rest[0] ?? `spike-${randomUUID()}`;
       const input = validateInput({ runId, timerSeconds: Number(rest[1] ?? 30) });
@@ -244,7 +355,13 @@ export async function main(args) {
     case 'approve':
       if (!rest[0]) throw new Error('approve requires runId');
       return withClient(async client => { await client.raiseEvent(rest[0], 'approval', true); return { instanceId: rest[0], eventSubmitted: true }; });
-    default: throw new Error('Use setup | up | start [runId] [timerSeconds] | status runId | approve runId | restart-worker | stop | verify | clean --confirm-delete-volumes');
+    case 'orchestration-start':
+      if (!rest[0]) throw new Error('orchestration-start requires runId');
+      return withClient(async client => ({ instanceId: await client.startOrchestration(rest[0]) }));
+    case 'task-control':
+      if (!rest[0] || !rest[1] || !rest[2]) throw new Error('task-control requires runId, taskId, and controlId');
+      return withClient(async client => { await client.raiseTaskControl(rest[0], rest[1], rest[2]); return { instanceId: rest[0], eventSubmitted: true }; });
+    default: throw new Error('Use setup | up | start [runId] [timerSeconds] | orchestration-start runId | status runId | approve runId | task-control runId taskId controlId | restart-worker | stop | verify | clean --confirm-delete-volumes');
   }
 }
 

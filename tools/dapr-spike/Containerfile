@@ -1,7 +1,10 @@
 FROM docker.io/library/node:24.11.1-bookworm-slim
 WORKDIR /app
-COPY package.json package-lock.json ./
-COPY node_modules/ ./node_modules/
-COPY dist/ ./dist/
-COPY control.js ./
+COPY tools/dapr-spike/package.json tools/dapr-spike/package-lock.json ./
+COPY tools/dapr-spike/node_modules/ ./node_modules/
+COPY tools/dapr-spike/dist/ ./dist/
+COPY tools/dapr-spike/control.js ./
+COPY tools/dapr-spike/orchestration-worker.mjs ./
+COPY tools/dapr-engine/contract/ ./dapr-engine/contract/
+COPY tools/dapr-engine/orchestration/ ./dapr-engine/orchestration/
 CMD ["node", "dist/worker.js"]

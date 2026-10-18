@@ -60,7 +60,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
-| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–04 complete | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence) |
+| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–05 complete | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
@@ -239,7 +239,8 @@ local task chain running through the same contracts as the old engine.
   operator). Provide authoritative run/task/attempt queries, sequenced lifecycle
   records, and reconnectable notifications. Compatibility file exports are
   read-only, rebuildable views, never control input.
-- [ ] **P4-05 — Prove representative execution.** Complete a stub dependency chain,
+- [x] **P4-05 — Prove representative execution**
+  ([issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13)). Complete a stub dependency chain,
   verification failure/retry, manual selection, parallel isolated tasks, and an
   approval wait. Then execute one real harness using scoped credentials and
   inspect integrated changes and validation evidence.
@@ -429,6 +430,10 @@ PostgreSQL run/task/attempt status projection, sequenced idempotent lifecycle
 events, cursor replay/watch APIs, and workflow status-event activities. The live
 PostgreSQL integration suite (15 tests, including run status) passes against a
 disposable PostgreSQL container.
+**P4-05 is complete under [issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13):**
+representative stub and real Copilot CLI execution passed on a live local Dapr
+stack; see [P4-05 representative execution evidence](#p4-05-representative-execution-evidence).
+The next work package is **P4-06 — Bound histories and concurrency**.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -493,6 +498,41 @@ conformance fixtures remain semantic evidence only, not proof of full durable
 Dapr effects. The evidence also does not cover Dapr PostgreSQL state, deployment
 volumes, or a running service. P4 execution is now authorized; Console migration
 and legacy-engine retirement remain gated by their later phases.
+
+### P4-05 representative execution evidence
+
+On 2026-10-18, `npm run verify:execution --prefix tools/dapr-engine -- --copilot`
+passed against an ephemeral rootless Podman pod (Dapr 1.18.7 sidecar,
+Placement, Scheduler, and PostgreSQL workflow state, published on loopback
+only), with a host-native worker and the application PostgreSQL store. The
+composed `ExecutionHost` (`tools/dapr-engine/orchestration/execution-host.ts`)
+runs each attempt in an isolated workspace, admits the outcome through P4-02
+verification, integrates through the P3 fenced authority, and records P4-04
+status events. Scenarios:
+
+- **Stub dependency chain:** three dependent tasks integrated in order.
+- **Verification failure and retry:** attempt 1 failed with
+  `validation-failed` and did not integrate; attempt 2 integrated.
+- **Manual selection:** selecting `M-2` ran only its dependency closure
+  (`M-1`, `M-2`).
+- **Parallel isolated tasks:** two independent tasks ran concurrently in
+  separate workspaces; the later integration rebased and revalidated.
+- **Approval wait:** the attempt waited for an evidence-bound approval, the
+  target branch was unchanged while it waited, and the resumed attempt
+  integrated.
+- **Real harness:** the Copilot CLI adapter received a scoped
+  `COPILOT_GITHUB_TOKEN` from `gh auth token` via a secret reference, with an
+  isolated home. It created `docs/hello.md`, the validation command passed,
+  and the change integrated as one commit. The verifier refuses to write
+  evidence that contains a resolved secret or the database password; the
+  token was absent from the evidence and audit.
+
+The run found and fixed two defects: approval wakes assumed the attempt-1
+task workflow instance (the wait event now records `taskWorkflowInstanceId`),
+and isolation settings were not forwarded to harness adapters. The harness
+still runs as the operator's OS user, so target-repository filesystem
+isolation is not enforced; that remains P6 security qualification. This
+evidence does not accept P4-GATE.
 
 ### P4-01 live recovery evidence
 

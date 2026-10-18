@@ -6,8 +6,11 @@ verification and handoff integration is complete under
 [issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9) and
 [PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10). P4-03 is
 implemented at the reusable engine boundary. P4-04 status/audit implementation
-is tracked in [issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11);
-production service qualification remains pending.
+is tracked in [issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11).
+P4-05 representative execution is proven locally under
+[issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); approval
+wait events record the `taskWorkflowInstanceId` that resume events target.
+Production service qualification remains pending.
 **Owner:** [Dapr execution boundary feature](../features/dapr-execution-boundary.md).  
 **Architecture:** [ADR-066](../adr/066-dapr-workflow-full-replacement-architecture.md).
 

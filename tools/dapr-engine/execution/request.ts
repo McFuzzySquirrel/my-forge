@@ -1,4 +1,4 @@
-import type { AgentDescriptor, ManifestTask, TaskAttemptRequest, HarnessAdapter, TaskCapability } from "./types.ts";
+import type { AgentDescriptor, ManifestTask, TaskAttemptRequest, HarnessAdapter, HarnessProcessIsolation, TaskCapability } from "./types.ts";
 import { DEFAULT_TASK_TIMEOUT_MS } from "./types.ts";
 import { taskReferenceContext } from "./task-context.ts";
 import { ArtifactStore } from "./artifacts.ts";
@@ -32,6 +32,8 @@ export interface PrepareTaskRequestOptions {
   previousResultPath?: string;
   signal?: AbortSignal;
   logHarnessActivity?: boolean;
+  /** Supervised service executions pass the isolated environment through to the adapter. */
+  isolation?: HarnessProcessIsolation;
 }
 
 export function prepareTaskRequest(options: PrepareTaskRequestOptions): TaskAttemptRequest {
@@ -76,6 +78,7 @@ export function prepareTaskRequest(options: PrepareTaskRequestOptions): TaskAtte
     attempt: Object.freeze({ number: options.attempt ?? 1, maxRetries, runId: options.runId ?? "" }),
     budget: Object.freeze({ timeoutMs }), instructions, signal: options.signal,
     logHarnessActivity: options.logHarnessActivity === true,
+    ...(options.isolation ? { isolation: Object.freeze({ ...options.isolation }) } : {}),
   });
 }
 

@@ -104,6 +104,29 @@ opt-in database and is included in `npm run test:postgres`. It verifies
 transactional status projection, monotonic event sequencing, idempotent
 redelivery, cursor pagination, and reconnection from the durable event log.
 
+P4-05's `tests/orchestration/execution-host.integration.test.ts` is also part
+of `npm run test:postgres`. It calls the composed execution host directly with
+a scripted harness and covers a dependency chain, redelivery, validation
+failure and retry, parallel rebase, and an approval resume.
+
+`npm run verify:execution` runs the same scenarios through a live Dapr
+workflow. With the same `POSTGRES_TEST_URL`, it starts an ephemeral rootless
+Podman pod (Dapr sidecar, Placement, Scheduler, and a PostgreSQL workflow
+state store) published only on loopback, runs a host-native worker, and writes
+evidence to `tools/dapr-engine/.runtime/p4-05-evidence.json` (gitignored). Add
+`-- --copilot` to also run one real Copilot CLI task; the credential comes from
+`gh auth token` and is passed only as `COPILOT_GITHUB_TOKEN`. Use
+`-- --evidence <path>` to change the output file and `-- --keep` to keep the
+pod and temporary repositories for inspection:
+
+```bash
+cd tools/dapr-engine
+POSTGRES_TEST_URL=... npm run verify:execution -- --copilot
+```
+
+The verifier refuses to write evidence that contains a resolved secret or the
+database password.
+
 The test image is pinned to the Docker Hub multi-platform index digest
 `sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`;
 this does not change the PostgreSQL 17.6 image in the historical P1 spike.

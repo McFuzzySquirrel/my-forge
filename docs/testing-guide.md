@@ -99,6 +99,11 @@ lost cancelled executions), and the composed P3-GATE scenarios in
 - Stale-owner fencing.
 - An unresolved integration blocking a dependent task until reconciliation.
 
+P4-04's `tests/storage/postgres-run-status.integration.test.ts` uses the same
+opt-in database and is included in `npm run test:postgres`. It verifies
+transactional status projection, monotonic event sequencing, idempotent
+redelivery, cursor pagination, and reconnection from the durable event log.
+
 The test image is pinned to the Docker Hub multi-platform index digest
 `sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`;
 this does not change the PostgreSQL 17.6 image in the historical P1 spike.

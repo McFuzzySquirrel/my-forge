@@ -24,6 +24,7 @@ export * from "./outcome.ts";
 export * from "./activity-admission.ts";
 export * from "./approval-control.ts";
 export * from "./run-control.ts";
+export * from "./status-activity.ts";
 export * from "./workflow.ts";
 
 export function registerOrchestrationWorkflows(runtime: WorkflowRuntime): WorkflowRuntime {

@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import type { Task, WorkflowContext } from "@dapr/dapr";
-import type { Sha256Digest, TaskStatusV1 } from "../contract/v1/index.ts";
+import type {
+  RunLifecycleEventInputV1,
+  RunLifecycleEventV1,
+  Sha256Digest,
+  TaskStatusV1,
+} from "../contract/v1/index.ts";
 import {
   buildOrchestrationPlan,
   nextDispatchWave,
@@ -19,6 +24,8 @@ export interface RunWorkflowInputV1 {
   readonly submission: AcceptedRunSubmissionV1;
   /** Required: true only when the host registers durable control activities. */
   readonly controlsEnabled: boolean;
+  /** The host registers the durable status activity and pre-creates the run record. */
+  readonly statusEnabled: boolean;
 }
 
 export interface TaskAttemptWorkflowInputV1 {
@@ -29,6 +36,7 @@ export interface TaskAttemptWorkflowInputV1 {
   readonly retryDelayMs: number;
   readonly allowNoop: boolean;
   readonly initialLogicalAttempt?: number;
+  readonly statusEnabled: boolean;
 }
 
 export interface ExecuteTaskActivityInputV1 {
@@ -83,6 +91,7 @@ export const EXECUTE_TASK_ACTIVITY_NAME = "executeTask";
 export const RESUME_TASK_ACTIVITY_NAME = "resumeTask";
 export const TASK_CONTROL_EVENT_NAME = "task-control";
 export const RUN_CONTROL_EVENT_NAME = "run-control";
+export const RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME = "recordRunLifecycleEvent";
 export const GET_RUN_CONTROL_ACTIVITY_NAME = "getRunControl";
 export const APPLY_RUN_CONTROL_ACTIVITY_NAME = "applyRunControl";
 
@@ -159,10 +168,88 @@ function validateTaskAttemptInput(input: TaskAttemptWorkflowInputV1): void {
     || !Number.isSafeInteger(input.maxRetries) || input.maxRetries < 0
     || !Number.isSafeInteger(input.retryDelayMs) || input.retryDelayMs < 0
     || typeof input.allowNoop !== "boolean"
+    || typeof input.statusEnabled !== "boolean"
     || (input.initialLogicalAttempt !== undefined &&
       (!Number.isSafeInteger(input.initialLogicalAttempt) || input.initialLogicalAttempt < 1))) {
     throw new Error("Invalid task attempt workflow input");
   }
+}
+
+function* recordLifecycleEvent(
+    context: WorkflowContext,
+    enabled: boolean,
+    event: RunLifecycleEventInputV1,
+  ): Generator<Task<unknown>, void, unknown> {
+    if (!enabled) return;
+    const recorded: unknown = yield context.callActivity(RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME, event);
+    if (!recorded || typeof recorded !== "object") {
+      throw new Error("recordRunLifecycleEvent returned an invalid event");
+    }
+    const result = recorded as Partial<RunLifecycleEventV1>;
+    if (result.schemaVersion !== 1 || result.runId !== event.runId
+      || result.eventKey !== event.eventKey || result.eventType !== event.eventType
+      || !Number.isSafeInteger(result.sequence) || result.sequence! < 1
+      || typeof result.createdAt !== "string") {
+      throw new Error("recordRunLifecycleEvent returned a mismatched event");
+    }
+  }
+
+function* recordCancelledTasks(
+    context: WorkflowContext,
+    enabled: boolean,
+    runId: string,
+    statuses: Readonly<Record<string, TaskStatusV1>>,
+    controlId: string,
+  ): Generator<Task<unknown>, void, unknown> {
+    for (const [taskId, status] of Object.entries(statuses)) {
+      if (status !== "pending" && status !== "ready" && status !== "running"
+        && status !== "waiting-for-approval") continue;
+      yield* recordLifecycleEvent(context, enabled, {
+        schemaVersion: 1,
+        runId,
+        eventKey: taskEventKey(taskId, `cancelled:${controlId}`),
+        eventType: "task.cancelled",
+        taskId,
+        taskStatus: "cancelled",
+        detail: { controlId },
+      });
+    }
+  }
+
+function* recordReplay(
+  context: WorkflowContext,
+  enabled: boolean,
+  runId: string,
+  taskId: string,
+  logicalAttempt: number,
+  controlId: string,
+  reopenRun: boolean,
+): Generator<Task<unknown>, void, unknown> {
+  if (reopenRun) {
+    yield* recordLifecycleEvent(context, enabled, {
+      schemaVersion: 1,
+      runId,
+      eventKey: `run:reopened:${controlId}`,
+      eventType: "run.reopened",
+      runStatus: "running",
+      detail: { controlId },
+    });
+  }
+    yield* recordLifecycleEvent(context, enabled, {
+      schemaVersion: 1,
+      runId,
+      eventKey: taskEventKey(taskId, `replayed:${controlId}`),
+      eventType: "task.replayed",
+      taskId,
+      logicalAttempt,
+      taskStatus: "pending",
+      detail: { controlId },
+    });
+  }
+
+function taskEventKey(taskId: string, suffix: string): string {
+  const taskDigest = createHash("sha256").update(taskId).digest("hex");
+  return `task:${taskDigest}:${suffix}`;
 }
 
 function isRunControlWakeEvent(value: unknown): value is TaskControlWakeEventV1 {
@@ -205,6 +292,16 @@ export async function* taskAttemptWorkflow(
   validateTaskAttemptInput(input);
   for (let retry = 0; retry <= input.maxRetries; retry += 1) {
     const logicalAttempt = (input.initialLogicalAttempt ?? 1) + retry;
+    yield* recordLifecycleEvent(context, input.statusEnabled, {
+      schemaVersion: 1,
+      runId: input.runId,
+      eventKey: taskEventKey(input.taskId, `attempt:${logicalAttempt}:started`),
+      eventType: "attempt.started",
+      taskId: input.taskId,
+      logicalAttempt,
+      taskStatus: "running",
+      attemptStatus: "running",
+    });
     const activityInput: ExecuteTaskActivityInputV1 = {
       runId: input.runId,
       taskId: input.taskId,
@@ -219,11 +316,35 @@ export async function* taskAttemptWorkflow(
     } catch (error) {
       if (!(error instanceof Error)) throw error;
       // An activity exception may follow an external effect; do not retry it as a new operation.
+      yield* recordLifecycleEvent(context, input.statusEnabled, {
+        schemaVersion: 1,
+        runId: input.runId,
+        eventKey: taskEventKey(input.taskId, `attempt:${logicalAttempt}:activity-failed`),
+        eventType: "task.failed",
+        taskId: input.taskId,
+        logicalAttempt,
+        taskStatus: "failed",
+        attemptStatus: "failed",
+        detail: { failureCode: "activity-failed" },
+      });
       return { status: "failed", retryable: false, failureCode: "activity-failed" };
     }
     if (!isTaskActivityOutcome(activityOutcome, activityInput)) throw new Error("executeTask returned an invalid outcome");
     let outcome: TaskActivityOutcomeV1 = activityOutcome;
+    let waitCount = 0;
     while (outcome.status === "waiting") {
+      waitCount += 1;
+      yield* recordLifecycleEvent(context, input.statusEnabled, {
+        schemaVersion: 1,
+        runId: input.runId,
+        eventKey: taskEventKey(input.taskId, `attempt:${logicalAttempt}:wait:${waitCount}`),
+        eventType: "attempt.waiting-for-approval",
+        taskId: input.taskId,
+        logicalAttempt,
+        taskStatus: "waiting-for-approval",
+        attemptStatus: "waiting-for-approval",
+        detail: { waitId: outcome.waitId },
+      });
       context.setCustomStatus("waiting-for-control");
       const wakeEvent: unknown = yield context.waitForExternalEvent(TASK_CONTROL_EVENT_NAME);
       if (!isTaskControlWakeEvent(wakeEvent)) {
@@ -240,17 +361,50 @@ export async function* taskAttemptWorkflow(
           input.initialLogicalAttempt ?? 1,
         ),
       };
+      yield* recordLifecycleEvent(context, input.statusEnabled, {
+        schemaVersion: 1,
+        runId: input.runId,
+        eventKey: taskEventKey(input.taskId, `attempt:${logicalAttempt}:resumed:${wakeEvent.controlId}`),
+        eventType: "attempt.resumed",
+        taskId: input.taskId,
+        logicalAttempt,
+        taskStatus: "running",
+        attemptStatus: "running",
+      });
       let resumedOutcome: unknown;
       try {
         resumedOutcome = yield context.callActivity(RESUME_TASK_ACTIVITY_NAME, resumeInput);
       } catch (error) {
         if (!(error instanceof Error)) throw error;
+        yield* recordLifecycleEvent(context, input.statusEnabled, {
+          schemaVersion: 1,
+          runId: input.runId,
+          eventKey: taskEventKey(input.taskId, `attempt:${logicalAttempt}:resume-failed:${wakeEvent.controlId}`),
+          eventType: "task.failed",
+          taskId: input.taskId,
+          logicalAttempt,
+          taskStatus: "failed",
+          attemptStatus: "failed",
+          detail: { failureCode: "resume-activity-failed" },
+        });
         return { status: "failed", retryable: false, failureCode: "resume-activity-failed" };
       }
       if (!isTaskActivityOutcome(resumedOutcome, resumeInput)) throw new Error("resumeTask returned an invalid outcome");
       outcome = resumedOutcome;
     }
-    if (outcome.status !== "failed" || !outcome.retryable || retry === input.maxRetries) return outcome;
+    const retrying = outcome.status === "failed" && outcome.retryable && retry < input.maxRetries;
+    yield* recordLifecycleEvent(context, input.statusEnabled, {
+      schemaVersion: 1,
+      runId: input.runId,
+      eventKey: taskEventKey(input.taskId, `attempt:${logicalAttempt}:finished`),
+      eventType: retrying ? "attempt.failed" : `task.${outcome.status === "complete" ? "completed" : outcome.status}`,
+      taskId: input.taskId,
+      logicalAttempt,
+      ...(retrying ? {} : { taskStatus: outcome.status }),
+      attemptStatus: outcome.status === "complete" ? "complete"
+        : outcome.status === "skipped" ? "skipped" : "failed",
+    });
+    if (!retrying) return outcome;
 
     const deadline = context.getCurrentUtcDateTime().getTime() + input.retryDelayMs;
     if (!Number.isSafeInteger(deadline)) throw new Error("retry timer deadline exceeds the safe timestamp range");
@@ -280,6 +434,7 @@ export async function* runOrchestrationWorkflow(
 ): AsyncGenerator<Task<unknown>, RunWorkflowResultV1, unknown> {
   if (!input.runId) throw new Error("runId is required");
   if (typeof input.controlsEnabled !== "boolean") throw new Error("controlsEnabled must be explicit");
+  if (typeof input.statusEnabled !== "boolean") throw new Error("statusEnabled must be explicit");
   const plan = buildOrchestrationPlan(input.submission);
   const statuses: Record<string, TaskStatusV1> = Object.fromEntries(
     plan.tasks.map(({ taskId }) => [taskId, "pending"]),
@@ -291,6 +446,14 @@ export async function* runOrchestrationWorkflow(
   let pendingControlEvent: Task<unknown> | undefined = input.controlsEnabled
     ? context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME)
     : undefined;
+  let runCycle = 0;
+  yield* recordLifecycleEvent(context, input.statusEnabled, {
+    schemaVersion: 1,
+    runId: input.runId,
+    eventKey: "run:started",
+    eventType: "run.started",
+    runStatus: "running",
+  });
   while (true) {
     while (Object.values(statuses).some((status) => status === "pending")) {
       const wave = nextDispatchWave(plan.tasks, statuses, plan.maxConcurrency);
@@ -311,6 +474,7 @@ export async function* runOrchestrationWorkflow(
             retryDelayMs: plan.retryDelayMs,
             allowNoop: plan.allowNoop,
             initialLogicalAttempt: logicalAttempt,
+            statusEnabled: input.statusEnabled,
           },
           taskAttemptWorkflowIdForAttempt(input.runId, taskId, logicalAttempt),
         );
@@ -343,23 +507,56 @@ export async function* runOrchestrationWorkflow(
             pendingControlEvent = undefined;
 
             if (record.action === "cancel") {
+              yield* recordLifecycleEvent(context, input.statusEnabled, {
+                schemaVersion: 1,
+                runId: input.runId,
+                eventKey: `run:cancelling:${record.controlId}`,
+                eventType: "run.cancelling",
+                runStatus: "cancelling",
+                detail: { controlId: record.controlId },
+              });
               const applied: unknown = yield context.callActivity(APPLY_RUN_CONTROL_ACTIVITY_NAME, {
                 controlId: record.controlId,
               });
               if (!isAppliedRunControl(applied) || applied.controlId !== record.controlId) {
                 throw new Error("applyRunControl returned an invalid cancellation result");
               }
+              yield* recordCancelledTasks(context, input.statusEnabled, input.runId, statuses, record.controlId);
               cancelUnfinishedTasks(statuses);
+              yield* recordLifecycleEvent(context, input.statusEnabled, {
+                schemaVersion: 1,
+                runId: input.runId,
+                eventKey: `run:cancelled:${record.controlId}`,
+                eventType: "run.cancelled",
+                runStatus: "cancelled",
+                detail: { controlId: record.controlId },
+              });
               return { status: "cancelled", taskStatuses: statuses };
             }
 
             if (record.action === "pause" || record.action === "stop") {
+              yield* recordLifecycleEvent(context, input.statusEnabled, {
+                schemaVersion: 1,
+                runId: input.runId,
+                eventKey: `run:${record.action === "stop" ? "stopping" : "pausing"}:${record.controlId}`,
+                eventType: record.action === "stop" ? "run.stopping" : "run.pausing",
+                runStatus: record.action === "stop" ? "stopping" : "pausing",
+                detail: { controlId: record.controlId },
+              });
               const applied: unknown = yield context.callActivity(APPLY_RUN_CONTROL_ACTIVITY_NAME, {
                 controlId: record.controlId,
               });
               if (!isAppliedRunControl(applied) || applied.controlId !== record.controlId) {
                 throw new Error("applyRunControl returned an invalid pause/stop result");
               }
+              yield* recordLifecycleEvent(context, input.statusEnabled, {
+                schemaVersion: 1,
+                runId: input.runId,
+                eventKey: `run:paused:${record.controlId}`,
+                eventType: record.action === "stop" ? "run.stopped" : "run.paused",
+                runStatus: "paused",
+                detail: { controlId: record.controlId },
+              });
               context.setCustomStatus("paused");
               while (true) {
                 const resumeWake: unknown = yield context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
@@ -374,15 +571,44 @@ export async function* runOrchestrationWorkflow(
                   throw new Error("getRunControl returned a mismatched control record");
                 }
                 if (resumeRecord.state === "applied") continue;
+                if (resumeRecord.action === "cancel") {
+                  yield* recordLifecycleEvent(context, input.statusEnabled, {
+                    schemaVersion: 1,
+                    runId: input.runId,
+                    eventKey: `run:cancelling:${resumeRecord.controlId}`,
+                    eventType: "run.cancelling",
+                    runStatus: "cancelling",
+                    detail: { controlId: resumeRecord.controlId },
+                  });
+                }
                 const resumeResult: unknown = yield context.callActivity(APPLY_RUN_CONTROL_ACTIVITY_NAME, {
                   controlId: resumeRecord.controlId,
                 });
                 if (!isAppliedRunControl(resumeResult) || resumeResult.controlId !== resumeRecord.controlId) {
                   throw new Error("applyRunControl returned an invalid result");
                 }
-                if (resumeRecord.action === "resume") break;
+                if (resumeRecord.action === "resume") {
+                  yield* recordLifecycleEvent(context, input.statusEnabled, {
+                    schemaVersion: 1,
+                    runId: input.runId,
+                    eventKey: `run:resumed:${resumeRecord.controlId}`,
+                    eventType: "run.resumed",
+                    runStatus: "running",
+                    detail: { controlId: resumeRecord.controlId },
+                  });
+                  break;
+                }
                 if (resumeRecord.action === "cancel") {
+                  yield* recordCancelledTasks(context, input.statusEnabled, input.runId, statuses, resumeRecord.controlId);
                   cancelUnfinishedTasks(statuses);
+                  yield* recordLifecycleEvent(context, input.statusEnabled, {
+                    schemaVersion: 1,
+                    runId: input.runId,
+                    eventKey: `run:cancelled:${resumeRecord.controlId}`,
+                    eventType: "run.cancelled",
+                    runStatus: "cancelled",
+                    detail: { controlId: resumeRecord.controlId },
+                  });
                   return { status: "cancelled", taskStatuses: statuses };
                 }
                 if (resumeRecord.action === "replay-task") boundaryControls.push(resumeRecord);
@@ -436,6 +662,10 @@ export async function* runOrchestrationWorkflow(
           }
           statuses[taskId] = "pending";
           nextLogicalAttempt[taskId] = applied.replayLogicalAttempt!;
+          yield* recordReplay(
+            context, input.statusEnabled, input.runId, taskId,
+            applied.replayLogicalAttempt!, boundaryControl.controlId, false,
+          );
         }
         pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
       } else if (input.controlsEnabled && !pendingControlEvent) {
@@ -446,10 +676,18 @@ export async function* runOrchestrationWorkflow(
     }
 
     const failed = Object.values(statuses).some((status) => status === "failed");
+    const terminalStatus = failed ? "failed" : "complete";
+    yield* recordLifecycleEvent(context, input.statusEnabled, {
+      schemaVersion: 1,
+      runId: input.runId,
+      eventKey: `run:terminal:${runCycle}`,
+      eventType: terminalStatus === "complete" ? "run.completed" : "run.failed",
+      runStatus: terminalStatus,
+    });
     if (!input.controlsEnabled) {
-      return { status: failed ? "failed" : "complete", taskStatuses: statuses };
+      return { status: terminalStatus, taskStatuses: statuses };
     }
-    context.setCustomStatus(failed ? "failed" : "complete");
+    context.setCustomStatus(terminalStatus);
     const terminalControlEvent = pendingControlEvent ?? context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
     const wake: unknown = yield terminalControlEvent;
     if (!isRunControlWakeEvent(wake)) throw new Error("run-control event must contain a UUID controlId");
@@ -477,6 +715,11 @@ export async function* runOrchestrationWorkflow(
     }
     statuses[taskId] = "pending";
     nextLogicalAttempt[taskId] = applied.replayLogicalAttempt!;
+    runCycle += 1;
+    yield* recordReplay(
+      context, input.statusEnabled, input.runId, taskId,
+      applied.replayLogicalAttempt!, record.controlId, true,
+    );
     pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
     context.setCustomStatus("running");
   }

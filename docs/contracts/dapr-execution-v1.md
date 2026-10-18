@@ -2,10 +2,12 @@
 
 **Status:** P2-GATE and P3-GATE accepted; P4-01 deterministic orchestration and
 local timer/event recovery are complete using test-only activities. P4-02
-verification and handoff integration is in review under
+verification and handoff integration is complete under
 [issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9) and
-[PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10). P4-03 onward and
-production service qualification remain pending.
+[PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10). P4-03 is
+implemented at the reusable engine boundary. P4-04 status/audit implementation
+is tracked in [issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11);
+production service qualification remains pending.
 **Owner:** [Dapr execution boundary feature](../features/dapr-execution-boundary.md).  
 **Architecture:** [ADR-066](../adr/066-dapr-workflow-full-replacement-architecture.md).
 
@@ -100,6 +102,48 @@ Run statuses are `queued`, `running`, `pausing`, `paused`, `stopping`,
 `skipped`, and `cancelled`. Status responses include the run/snapshot identity,
 observation time, and a monotonically increasing service revision so clients
 can detect stale reads.
+
+### Sequenced status and lifecycle audit
+
+`RunStatusCreateV1` registers the immutable status identity
+(`runId`, `repositoryId`, `targetRef`, and `manifestDigest`) and the ordered task
+IDs before the workflow starts. Registration creates the authoritative `queued`
+run record and `pending` task projections. Repeating the same registration
+returns the existing record; changing its identity or task order is a conflict.
+
+`RunLifecycleEventInputV1` records one status transition with an event type,
+optional task/logical-attempt identity, and bounded JSON detail. The host gives
+each logical event a stable `eventKey`; activity redelivery with the same key
+and payload returns its original event, while key reuse with different data is
+rejected. PostgreSQL serializes updates per run and commits the append-only audit
+event, monotonically increasing per-run sequence/revision, and run/task/attempt
+status projections in one transaction. A failed write cannot advance the
+projection without the corresponding event.
+The v1 event types are `run.created`, `run.started`, `run.pausing`,
+`run.paused`, `run.stopping`, `run.stopped`, `run.cancelling`,
+`run.cancelled`, `run.completed`, `run.failed`, `run.reopened`, `run.resumed`,
+`attempt.started`, `attempt.waiting-for-approval`, `attempt.resumed`,
+`attempt.failed`, `task.completed`, `task.failed`, `task.skipped`,
+`task.cancelled`, and `task.replayed`. Run, task, and attempt event types must
+carry the matching status field.
+
+`PostgresRunStatusStore` exposes `getRunStatus`, `getTaskStatus`,
+`getTaskAttempt`, and `listEvents`. Status snapshots include database
+observation/update timestamps and the latest event sequence as `revision`.
+`watchEvents(runId, afterSequence)` polls the durable event log and yields all
+later events in sequence; clients reconnect with the last received sequence,
+so notification delivery does not depend on an ephemeral in-memory channel.
+The local API currently provides the durable cursor and polling primitive, not
+an HTTP/SSE endpoint.
+
+Workflow hosts register `registerRunLifecycleEventActivity`, create the run
+record before scheduling its workflow, and set the explicit `statusEnabled`
+input on both run and task-attempt workflows. When enabled, the workflows
+durably record run start/terminal/replay/cancel transitions and task/attempt
+start, approval-wait, resume, and outcome transitions. A status activity failure
+fails the workflow rather than silently reporting unrecorded progress.
+Compatibility file exports, if added by the host, are read-only rebuildable
+views; they are never accepted as control or status input.
 
 Controls are `select-tasks`, `pause`, `resume`, `stop`, `cancel`, `replay-task`,
 and `approve-task`. Each request contains a `controlId`, `runId`, action, and

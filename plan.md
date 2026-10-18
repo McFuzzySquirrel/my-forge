@@ -60,7 +60,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
-| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01 and P4-02 complete | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence) |
+| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–04 complete | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
@@ -234,9 +234,11 @@ local task chain running through the same contracts as the old engine.
 - [x] **P4-03 — Implement durable controls and approvals.** Deduplicate requests,
   authorize operators, bind approvals to run/task and manifest/evidence digests,
   and reject stale attestations. Honor the agreed pause/stop/cancel distinctions.
-- [ ] **P4-04 — Expose status and audit.** Provide authoritative run/task/attempt
-  queries, sequenced lifecycle records, and reconnectable notifications.
-  Compatibility file exports are read-only, rebuildable views, never control input.
+- [x] **P4-04 — Expose status and audit**
+  ([issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); owner:
+  operator). Provide authoritative run/task/attempt queries, sequenced lifecycle
+  records, and reconnectable notifications. Compatibility file exports are
+  read-only, rebuildable views, never control input.
 - [ ] **P4-05 — Prove representative execution.** Complete a stub dependency chain,
   verification failure/retry, manual selection, parallel isolated tasks, and an
   approval wait. Then execute one real harness using scoped credentials and
@@ -422,6 +424,11 @@ graceful stop, cancellation, and replay at safe boundaries. Hosts must provide
 an authenticated trusted-principal adapter, authoritative run context, and
 idempotent process/control effects; this repository does not yet contain a
 network identity provider or production service host. P4-GATE remains open.
+**P4-04 is complete under issue #11 (owner: operator):** a transactional
+PostgreSQL run/task/attempt status projection, sequenced idempotent lifecycle
+events, cursor replay/watch APIs, and workflow status-event activities. The live
+PostgreSQL integration suite (15 tests, including run status) passes against a
+disposable PostgreSQL container.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed

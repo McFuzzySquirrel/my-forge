@@ -5,4 +5,5 @@ export * from "./git-effects.ts";
 export * from "./integrity.ts";
 export * from "./receipts.ts";
 export * from "./submission.ts";
+export * from "./status.ts";
 export * from "./types.ts";

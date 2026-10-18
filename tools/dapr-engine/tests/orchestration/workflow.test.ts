@@ -13,6 +13,7 @@ import {
   RESUME_TASK_ACTIVITY_NAME,
   APPLY_RUN_CONTROL_ACTIVITY_NAME,
   GET_RUN_CONTROL_ACTIVITY_NAME,
+  RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME,
   RUN_ORCHESTRATION_WORKFLOW_NAME,
   TASK_CONTROL_EVENT_NAME,
   TASK_ATTEMPT_WORKFLOW_NAME,
@@ -187,7 +188,9 @@ test("workflow waits for a wave, then dispatches tasks whose prerequisites compl
     },
   });
   const { context, childCalls } = mockContext();
-  const workflow = runOrchestrationWorkflow(context, { runId: "run-1", submission: run, controlsEnabled: false });
+  const workflow = runOrchestrationWorkflow(context, {
+    runId: "run-1", submission: run, controlsEnabled: false, statusEnabled: false,
+  });
 
   const firstWave = await workflow.next();
   assert.equal(firstWave.done, false);
@@ -228,7 +231,9 @@ test("workflow stops dispatch after a terminal task failure", async () => {
     configuration: { settings: { concurrency: 2 }, secretRefs: {} },
   });
   const { context, childCalls } = mockContext();
-  const workflow = runOrchestrationWorkflow(context, { runId: "run-fail", submission: run, controlsEnabled: false });
+  const workflow = runOrchestrationWorkflow(context, {
+    runId: "run-fail", submission: run, controlsEnabled: false, statusEnabled: false,
+  });
 
   await workflow.next();
   const result = await workflow.next([
@@ -266,6 +271,7 @@ test("run cancellation applies cleanup before rejecting the active wave outcomes
       manifestSnapshot: { phases: [{ id: "P1", tasks: [{ id: "T1" }] }] },
     }),
     controlsEnabled: true,
+    statusEnabled: false,
   });
 
   const dispatched = await workflow.next();
@@ -309,6 +315,7 @@ test("pause applies after the active task boundary and waits for a durable resum
       manifestSnapshot: { phases: [{ id: "P1", tasks: [{ id: "T1" }] }] },
     }),
     controlsEnabled: true,
+    statusEnabled: false,
   });
 
   const activeWave = await workflow.next();
@@ -365,6 +372,7 @@ test("terminal runs remain replayable and start a new logical attempt", async ()
       manifestSnapshot: { phases: [{ id: "P1", tasks: [{ id: "T1" }] }] },
     }),
     controlsEnabled: true,
+    statusEnabled: false,
   });
 
   const firstWave = await workflow.next();
@@ -399,6 +407,7 @@ test("task retries use durable time and stable per-attempt operation identities"
     maxRetries: 2,
     retryDelayMs: 5_000,
     allowNoop: false,
+    statusEnabled: false,
   };
   const workflow = taskAttemptWorkflow(context, input);
 
@@ -426,6 +435,136 @@ test("task retries use durable time and stable per-attempt operation identities"
   assert.deepEqual(complete.value, outcome);
 });
 
+test("task workflow records attempt and task lifecycle transitions durably", async () => {
+  let sequence = 0;
+  const harness = mockContext({
+    activityResult(name, input) {
+      if (name !== RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME) return undefined;
+      const event = input as { schemaVersion: 1; runId: string; eventKey: string; eventType: string };
+      return {
+        ...event,
+        sequence: ++sequence,
+        createdAt: "2026-10-18T00:00:00.000Z",
+      };
+    },
+  });
+  const input = {
+    runId: "run-status",
+    taskId: "task/status",
+    manifestDigest: SHA256,
+    maxRetries: 0,
+    retryDelayMs: 0,
+    allowNoop: false,
+    statusEnabled: true,
+  };
+  const workflow = taskAttemptWorkflow(harness.context, input);
+
+  const starting = await workflow.next();
+  assert.equal(harness.activityCalls[0]?.name, RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME);
+  const startedEvent = harness.activityCalls[0]!.input as {
+    schemaVersion: 1; runId: string; eventKey: string; eventType: string;
+  };
+  const executing = await workflow.next({
+    ...startedEvent,
+    sequence: 1,
+    createdAt: "2026-10-18T00:00:00.000Z",
+  });
+  assert.equal(starting.done, false);
+  assert.equal(harness.activityCalls.at(-1)?.name, "executeTask");
+
+  const activityInput = harness.activityCalls.at(-1)!.input as {
+    runId: string; taskId: string; manifestDigest: string; logicalAttempt: number; operationId: string;
+  };
+  const outcome = completeOutcome(activityInput);
+  const finishing = await workflow.next(outcome);
+  assert.equal(finishing.done, false);
+  assert.equal(harness.activityCalls.at(-1)?.name, RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME);
+  const completedInput = harness.activityCalls.at(-1)!.input as {
+    schemaVersion: 1;
+    runId: string;
+    eventKey: string;
+    eventType: string;
+    taskStatus: string;
+    attemptStatus: string;
+  };
+  const completed = await workflow.next({
+    ...completedInput,
+    sequence: 2,
+    createdAt: "2026-10-18T00:00:01.000Z",
+  });
+  assert.equal(completed.done, true);
+  assert.equal((harness.activityCalls[0]!.input as { attemptStatus: string }).attemptStatus, "running");
+  assert.deepEqual(
+    {
+      taskStatus: completedInput.taskStatus,
+      attemptStatus: completedInput.attemptStatus,
+    },
+    { taskStatus: "complete", attemptStatus: "complete" },
+  );
+  assert.equal(executing.done, false);
+});
+
+test("run workflow records start and terminal status transitions durably", async () => {
+  let sequence = 0;
+  const harness = mockContext({
+    activityResult(name, input) {
+      if (name !== RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME) return undefined;
+      const event = input as { schemaVersion: 1; runId: string; eventKey: string; eventType: string };
+      return {
+        ...event,
+        sequence: ++sequence,
+        createdAt: "2026-10-18T00:00:00.000Z",
+      };
+    },
+  });
+  const runId = "run-lifecycle";
+  const workflow = runOrchestrationWorkflow(harness.context, {
+    runId,
+    submission: acceptedSubmission({
+      manifestSnapshot: { phases: [{ id: "P1", tasks: [{ id: "T1" }] }] },
+    }),
+    controlsEnabled: false,
+    statusEnabled: true,
+  });
+
+  const started = await workflow.next();
+  const startInput = harness.activityCalls[0]!.input as {
+    schemaVersion: 1; runId: string; eventKey: string; eventType: string;
+  };
+  const wave = await workflow.next({
+    ...startInput,
+    sequence: 1,
+    createdAt: "2026-10-18T00:00:00.000Z",
+  });
+  const outcome = childCompleteOutcome(harness.childCalls[0]!.input as {
+    runId: string; taskId: string; manifestDigest: string;
+  });
+  const terminal = await workflow.next([outcome]);
+  const terminalInput = harness.activityCalls.at(-1)!.input as {
+    schemaVersion: 1; runId: string; eventKey: string; eventType: string; runStatus: string;
+  };
+  const done = await workflow.next({
+    ...terminalInput,
+    sequence: 2,
+    createdAt: "2026-10-18T00:00:01.000Z",
+  });
+
+  assert.equal(started.done, false);
+  assert.equal(wave.done, false);
+  assert.equal(terminal.done, false);
+  assert.deepEqual(done.value, {
+    status: "complete",
+    taskStatuses: { T1: "complete" },
+  });
+  assert.deepEqual(
+    harness.activityCalls
+      .filter((call) => call.name === RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME)
+      .map((call) => (call.input as { eventType: string }).eventType),
+    ["run.started", "run.completed"],
+  );
+  assert.equal(terminalInput.runStatus, "complete");
+});
+
 test("task control events durably wake a task but only resumeTask can accept them", async () => {
   const { context, activityCalls, eventWaits, customStatuses } = mockContext();
   const input = {
@@ -436,6 +575,7 @@ test("task control events durably wake a task but only resumeTask can accept the
     retryDelayMs: 0,
     allowNoop: false,
     initialLogicalAttempt: 4,
+    statusEnabled: false,
   };
   const workflow = taskAttemptWorkflow(context, input);
 
@@ -503,6 +643,7 @@ test("task workflow rejects a bare successful activity outcome", async () => {
     maxRetries: 0,
     retryDelayMs: 0,
     allowNoop: false,
+    statusEnabled: false,
   });
   await workflow.next();
   await assert.rejects(workflow.next({ status: "complete" }), /invalid outcome/);
@@ -517,6 +658,7 @@ test("task retries stop at the configured limit and do not retry unclassified ac
     maxRetries: 1,
     retryDelayMs: 0,
     allowNoop: false,
+    statusEnabled: false,
   });
 
   await workflow.next();
@@ -535,6 +677,7 @@ test("task retries stop at the configured limit and do not retry unclassified ac
     maxRetries: 3,
     retryDelayMs: 10,
     allowNoop: false,
+    statusEnabled: false,
   });
   await failedWorkflow.next();
   const activityFailure = await failedWorkflow.throw(new Error("activity failed"));

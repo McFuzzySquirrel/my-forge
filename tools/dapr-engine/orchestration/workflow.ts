@@ -332,6 +332,11 @@ export async function* taskAttemptWorkflow(
     if (!isTaskActivityOutcome(activityOutcome, activityInput)) throw new Error("executeTask returned an invalid outcome");
     let outcome: TaskActivityOutcomeV1 = activityOutcome;
     let waitCount = 0;
+    const taskWorkflowInstanceId = taskAttemptWorkflowIdForAttempt(
+      input.runId,
+      input.taskId,
+      input.initialLogicalAttempt ?? 1,
+    );
     while (outcome.status === "waiting") {
       waitCount += 1;
       yield* recordLifecycleEvent(context, input.statusEnabled, {
@@ -343,7 +348,7 @@ export async function* taskAttemptWorkflow(
         logicalAttempt,
         taskStatus: "waiting-for-approval",
         attemptStatus: "waiting-for-approval",
-        detail: { waitId: outcome.waitId },
+        detail: { waitId: outcome.waitId, taskWorkflowInstanceId },
       });
       context.setCustomStatus("waiting-for-control");
       const wakeEvent: unknown = yield context.waitForExternalEvent(TASK_CONTROL_EVENT_NAME);
@@ -355,11 +360,7 @@ export async function* taskAttemptWorkflow(
         waitId: outcome.waitId,
         controlId: wakeEvent.controlId,
         operationId: taskOperationId(input.runId, input.taskId, logicalAttempt, `resume:${outcome.waitId}`),
-        taskWorkflowInstanceId: taskAttemptWorkflowIdForAttempt(
-          input.runId,
-          input.taskId,
-          input.initialLogicalAttempt ?? 1,
-        ),
+        taskWorkflowInstanceId,
       };
       yield* recordLifecycleEvent(context, input.statusEnabled, {
         schemaVersion: 1,
@@ -403,6 +404,7 @@ export async function* taskAttemptWorkflow(
       ...(retrying ? {} : { taskStatus: outcome.status }),
       attemptStatus: outcome.status === "complete" ? "complete"
         : outcome.status === "skipped" ? "skipped" : "failed",
+      ...(outcome.status === "failed" && outcome.failureCode ? { detail: { failureCode: outcome.failureCode } } : {}),
     });
     if (!retrying) return outcome;
 

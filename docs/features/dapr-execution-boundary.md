@@ -27,8 +27,9 @@ resume activities, and run-control event workflows for pause/resume, graceful
 stop, cancellation, and replay. The host supplies authoritative context,
 idempotent process/control effects, and a trusted principal from its
 authentication adapter; this repository does not yet provide a network identity
-provider or production service host. Representative harness execution also
-remains P4 work. P4-04 adds an application-owned PostgreSQL status projection
+provider or production service host. P4-05 adds a composed `ExecutionHost`
+and a live verifier (`npm run verify:execution`) that prove representative
+stub and Copilot CLI execution locally. P4-04 adds an application-owned PostgreSQL status projection
 and sequenced, reconnectable lifecycle journal; it does not add a network
 service host or Console integration. This P2 feature defines contracts and
 reusable boundaries, not a production service.

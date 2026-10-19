@@ -35,7 +35,7 @@ import { RepositoryIntegrationAmbiguousError } from "../storage/postgres/reposit
 import type { RunLifecycleEventPageV1, TaskStatusResponseV1 } from "../contract/v1/status.ts";
 import { executeVerifiedTaskActivity } from "./activity-admission.ts";
 import { createResumeTaskActivity, type ApprovalControlStore, type ApprovalWakeIdentityV1 } from "./approval-control.ts";
-import { createTaskCompletionEvidence, type TaskExecutionOutcomeV1 } from "./outcome.ts";
+import { boundTaskExecutionOutcome, createTaskCompletionEvidence, type TaskExecutionOutcomeV1 } from "./outcome.ts";
 import { buildOrchestrationPlan, type AcceptedRunSubmissionV1 } from "./planner.ts";
 import {
   EXECUTE_TASK_ACTIVITY_NAME,
@@ -563,6 +563,8 @@ export class ExecutionHost {
       validationCommands: effect.validationCommands,
     });
     const complete: TaskExecutionOutcomeV1 = { status: "complete", evidence };
+    const bounded = boundTaskExecutionOutcome(complete);
+    if (bounded.status !== "complete") return this.finishFailed(key, receipt, bounded as FailedOutcome);
     await this.writeJournal(key.operationId, {
       pending: { outcome: complete, repositoryId: run.repositoryId, targetRef: run.targetRef },
     });
@@ -709,8 +711,9 @@ export class ExecutionHost {
 
   private async journalFailure(
     key: OperationKeyV1,
-    outcome: Extract<TaskExecutionOutcomeV1, { status: "failed" }>,
+    unbounded: Extract<TaskExecutionOutcomeV1, { status: "failed" }>,
   ): Promise<TaskExecutionOutcomeV1> {
+    const outcome = boundTaskExecutionOutcome(unbounded) as typeof unbounded;
     await this.writeJournal(key.operationId, {
       outcome,
       failureReason: [outcome.failureCode, outcome.reason].filter(Boolean).join(": "),

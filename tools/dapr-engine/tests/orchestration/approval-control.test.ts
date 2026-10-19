@@ -88,6 +88,13 @@ class MemoryControlStore implements ApprovalControlStore {
     return record ? structuredClone(record) : undefined;
   }
 
+  async listAccepted(runId: string, limit: number): Promise<readonly StoredControlRecordV1[]> {
+    return [...this.records.values()]
+      .filter((record) => record.runId === runId && record.state === "accepted" && record.action !== "approve-task")
+      .slice(0, limit)
+      .map((record) => structuredClone(record));
+  }
+
   async transition(
     controlId: string,
     expectedRecordVersion: number,

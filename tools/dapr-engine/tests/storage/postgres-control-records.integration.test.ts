@@ -83,6 +83,28 @@ test("PostgreSQL controls deduplicate requests, CAS transitions, and retain appr
     assert.deepEqual(await store.getApproval(request.runId, "task-a", 3), bindingResult.binding);
     assert.equal(await store.getApproval(request.runId, "task-a", 2), undefined);
 
+    const runControl = (action: "pause" | "replay-task"): ControlRequestV1 => ({
+      schemaVersion: 1,
+      controlId: randomUUID(),
+      runId: request.runId,
+      action,
+      payload: action === "replay-task" ? { taskId: "task-a" } : {},
+    });
+    const pause = runControl("pause");
+    const replay = runControl("replay-task");
+    const requestedOnly = runControl("pause");
+    for (const control of [pause, replay, requestedOnly]) assert.ok((await store.request(control)).ok);
+    assert.ok((await store.transition(pause.controlId, 1, "accepted")).ok);
+    assert.ok((await store.transition(replay.controlId, 1, "accepted")).ok);
+    assert.deepEqual(
+      (await store.listAccepted(request.runId, 64)).map((record) => record.controlId).sort(),
+      [pause.controlId, replay.controlId].sort(),
+    );
+    assert.equal((await store.listAccepted(request.runId, 1)).length, 1);
+    assert.ok((await store.transition(pause.controlId, 2, "applied")).ok);
+    assert.deepEqual((await store.listAccepted(request.runId, 64)).map((record) => record.controlId), [replay.controlId]);
+    await assert.rejects(store.listAccepted(request.runId, 0), /limit/);
+
     const stale = await store.transition(request.controlId, 2, "rejected", {
       reasonCode: "stale-evidence",
     });

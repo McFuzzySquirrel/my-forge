@@ -19,7 +19,24 @@ import {
 
 export type ArtifactPublishResult =
   | { readonly ok: true; readonly ref: ArtifactRefV1 }
-  | { readonly ok: false; readonly code: "artifact-size-mismatch" | "artifact-digest-mismatch" | "artifact-missing" };
+  | {
+    readonly ok: false;
+    readonly code: "artifact-size-mismatch" | "artifact-digest-mismatch" | "artifact-missing" | "artifact-too-large";
+  };
+
+export const GIT_BUNDLE_MEDIA_TYPE = "application/vnd.git.bundle";
+
+/** P4-06 publish ceilings; references stay small while bytes live in the artifact store. */
+export const ARTIFACT_SIZE_LIMITS = Object.freeze({
+  /** One evidence, lockfile, or report artifact (the P0 artifact budget). */
+  maxArtifactBytes: 32 * 1024 * 1024,
+  /** One checkpoint Git bundle, which carries the repository history the checkpoint needs. */
+  maxGitBundleBytes: 512 * 1024 * 1024,
+});
+
+export function artifactSizeLimit(mediaType: string): number {
+  return mediaType === GIT_BUNDLE_MEDIA_TYPE ? ARTIFACT_SIZE_LIMITS.maxGitBundleBytes : ARTIFACT_SIZE_LIMITS.maxArtifactBytes;
+}
 
 export type ArtifactResolveResult =
   | { readonly ok: true; readonly bytes: Uint8Array }
@@ -264,6 +281,7 @@ export class FileArtifactCheckpointStore {
     declared: Pick<ArtifactRefV1, "mediaType" | "sizeBytes" | "sha256"> &
       Partial<Pick<ArtifactRefV1, "sensitivity" | "retentionClass">>,
   ): Promise<ArtifactPublishResult> {
+    if (bytes.byteLength > artifactSizeLimit(declared.mediaType)) return { ok: false, code: "artifact-too-large" };
     const integrity = verifyArtifactBytes(bytes, declared);
     if (!integrity.ok) return { ok: false, code: integrity.code };
 

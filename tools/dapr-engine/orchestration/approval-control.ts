@@ -20,6 +20,7 @@ import {
 export interface ApprovalControlStore {
   request(request: ControlRequestV1, principal?: TrustedPrincipalV1): Promise<ControlStoreResult>;
   get(controlId: string): Promise<StoredControlRecordV1 | undefined>;
+  listAccepted(runId: string, limit: number): Promise<readonly StoredControlRecordV1[]>;
   transition(
     controlId: string,
     expectedRecordVersion: number,

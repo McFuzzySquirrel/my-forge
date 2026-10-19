@@ -17,6 +17,7 @@ import {
   type TaskExecutionOutcomeV1,
   type TaskExecutionIdentityV1,
 } from "./outcome.ts";
+import { RUN_LIMITS_V1 } from "./limits.ts";
 export type { TaskExecutionOutcomeV1 } from "./outcome.ts";
 
 export interface RunWorkflowInputV1 {
@@ -26,6 +27,18 @@ export interface RunWorkflowInputV1 {
   readonly controlsEnabled: boolean;
   /** The host registers the durable status activity and pre-creates the run record. */
   readonly statusEnabled: boolean;
+  /** Present only on a generation started by continue-as-new. */
+  readonly continuation?: RunContinuationV1;
+}
+
+/** Run progress carried across a continue-as-new history rollover. */
+export interface RunContinuationV1 {
+  readonly schemaVersion: 1;
+  /** 1 for the first continued generation. */
+  readonly generation: number;
+  readonly statuses: Readonly<Record<string, TaskStatusV1>>;
+  readonly nextLogicalAttempt: Readonly<Record<string, number>>;
+  readonly runCycle: number;
 }
 
 export interface TaskAttemptWorkflowInputV1 {
@@ -66,7 +79,8 @@ export interface TaskControlWakeEventV1 {
 export type TaskActivityOutcomeV1 = TaskExecutionOutcomeV1 | TaskWaitRequestV1;
 
 export interface RunWorkflowResultV1 {
-  readonly status: "complete" | "failed" | "cancelled";
+  /** "continued" is the discarded result of a generation that rolled its history over. */
+  readonly status: "complete" | "failed" | "cancelled" | "continued";
   readonly taskStatuses: Readonly<Record<string, TaskStatusV1>>;
 }
 
@@ -94,6 +108,10 @@ export const RUN_CONTROL_EVENT_NAME = "run-control";
 export const RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME = "recordRunLifecycleEvent";
 export const GET_RUN_CONTROL_ACTIVITY_NAME = "getRunControl";
 export const APPLY_RUN_CONTROL_ACTIVITY_NAME = "applyRunControl";
+export const LIST_ACCEPTED_RUN_CONTROLS_ACTIVITY_NAME = "listAcceptedRunControls";
+/** Accepted controls a continued generation recovers in one pass; more remain accepted for the next. */
+export const MAX_RECOVERED_RUN_CONTROLS = 64;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function runOrchestrationWorkflowId(runId: string): string {
   return `forge-run-${taskOperationId(runId, "_run", 1, "orchestration")}`;
@@ -158,8 +176,7 @@ function isTaskActivityOutcome(
 function isTaskControlWakeEvent(value: unknown): value is TaskControlWakeEventV1 {
   if (!value || typeof value !== "object" || !("controlId" in value)) return false;
   const controlId = (value as { controlId?: unknown }).controlId;
-  return typeof controlId === "string"
-    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(controlId);
+  return typeof controlId === "string" && UUID_PATTERN.test(controlId);
 }
 
 function validateTaskAttemptInput(input: TaskAttemptWorkflowInputV1): void {
@@ -339,6 +356,21 @@ export async function* taskAttemptWorkflow(
     );
     while (outcome.status === "waiting") {
       waitCount += 1;
+      if (waitCount > RUN_LIMITS_V1.maxApprovalWaitsPerAttempt) {
+        // Each approval round adds history; an attempt that keeps re-entering approval fails closed.
+        yield* recordLifecycleEvent(context, input.statusEnabled, {
+          schemaVersion: 1,
+          runId: input.runId,
+          eventKey: taskEventKey(input.taskId, `attempt:${logicalAttempt}:wait-limit-exceeded`),
+          eventType: "task.failed",
+          taskId: input.taskId,
+          logicalAttempt,
+          taskStatus: "failed",
+          attemptStatus: "failed",
+          detail: { failureCode: "wait-limit-exceeded" },
+        });
+        return { status: "failed", retryable: false, failureCode: "wait-limit-exceeded" };
+      }
       yield* recordLifecycleEvent(context, input.statusEnabled, {
         schemaVersion: 1,
         runId: input.runId,
@@ -429,6 +461,38 @@ export function taskAttemptWorkflowIdForAttempt(
   return `forge-task-${taskOperationId(runId, taskId, logicalAttempt)}`;
 }
 
+const CONTINUABLE_TASK_STATUSES: ReadonlySet<unknown> = new Set(["pending", "complete", "skipped", "failed"]);
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Validates carried progress against the immutable plan; a continued run always has pending work. */
+function restoreContinuation(
+  continuation: unknown,
+  taskIds: readonly string[],
+): RunContinuationV1 {
+  if (!isPlainRecord(continuation) || continuation.schemaVersion !== 1
+    || !Number.isSafeInteger(continuation.generation) || (continuation.generation as number) < 1
+    || !Number.isSafeInteger(continuation.runCycle) || (continuation.runCycle as number) < 0
+    || !isPlainRecord(continuation.statuses) || !isPlainRecord(continuation.nextLogicalAttempt)
+    || Object.keys(continuation.statuses).length !== taskIds.length
+    || Object.keys(continuation.nextLogicalAttempt).length !== taskIds.length) {
+    throw new Error("Invalid run continuation");
+  }
+  const statuses = continuation.statuses;
+  const attempts = continuation.nextLogicalAttempt;
+  for (const taskId of taskIds) {
+    if (!Object.hasOwn(statuses, taskId) || !CONTINUABLE_TASK_STATUSES.has(statuses[taskId])
+      || !Object.hasOwn(attempts, taskId) || !Number.isSafeInteger(attempts[taskId])
+      || (attempts[taskId] as number) < 1) {
+      throw new Error(`Invalid run continuation for task '${taskId}'`);
+    }
+  }
+  if (!Object.values(statuses).includes("pending")) throw new Error("A continued run must have pending tasks");
+  return continuation as unknown as RunContinuationV1;
+}
+
 /** Runs manifest-ordered task waves and only dispatches dependency-ready work. */
 export async function* runOrchestrationWorkflow(
   context: WorkflowContext,
@@ -438,31 +502,91 @@ export async function* runOrchestrationWorkflow(
   if (typeof input.controlsEnabled !== "boolean") throw new Error("controlsEnabled must be explicit");
   if (typeof input.statusEnabled !== "boolean") throw new Error("statusEnabled must be explicit");
   const plan = buildOrchestrationPlan(input.submission);
-  const statuses: Record<string, TaskStatusV1> = Object.fromEntries(
-    plan.tasks.map(({ taskId }) => [taskId, "pending"]),
-  );
-  const nextLogicalAttempt: Record<string, number> = Object.fromEntries(
-    plan.tasks.map(({ taskId }) => [taskId, 1]),
-  );
+  const continuation = input.continuation === undefined
+    ? undefined
+    : restoreContinuation(input.continuation, plan.tasks.map(({ taskId }) => taskId));
+  const statuses: Record<string, TaskStatusV1> = continuation
+    ? { ...continuation.statuses }
+    : Object.fromEntries(plan.tasks.map(({ taskId }) => [taskId, "pending"]));
+  const nextLogicalAttempt: Record<string, number> = continuation
+    ? { ...continuation.nextLogicalAttempt }
+    : Object.fromEntries(plan.tasks.map(({ taskId }) => [taskId, 1]));
+  const generation = continuation?.generation ?? 0;
 
   let pendingControlEvent: Task<unknown> | undefined = input.controlsEnabled
     ? context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME)
     : undefined;
-  let runCycle = 0;
-  yield* recordLifecycleEvent(context, input.statusEnabled, {
-    schemaVersion: 1,
-    runId: input.runId,
-    eventKey: "run:started",
-    eventType: "run.started",
-    runStatus: "running",
-  });
+  /** Accepted controls recovered from the durable store; processed before new wake events. */
+  const queuedControlIds: string[] = [];
+  /** Child dispatches plus processed control wakes since this generation started. */
+  let historyUnits = 0;
+  // Keep at most one outstanding run-control waiter; an orphaned waiter would swallow a wake.
+  const armControlWait = (): void => {
+    if (input.controlsEnabled && !pendingControlEvent) {
+      pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+    }
+  };
+  function* nextControlWake(): Generator<Task<unknown>, TaskControlWakeEventV1, unknown> {
+    historyUnits += 1;
+    const queued = queuedControlIds.shift();
+    if (queued !== undefined) return { controlId: queued };
+    const waiter = pendingControlEvent ?? context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+    pendingControlEvent = undefined;
+    const wake: unknown = yield waiter;
+    if (!isRunControlWakeEvent(wake)) throw new Error("run-control event must contain a UUID controlId");
+    return wake;
+  }
+
+  let runCycle = continuation?.runCycle ?? 0;
+  if (continuation) {
+    if (input.controlsEnabled) {
+      // A wake raised while the previous generation rolled over may not be carried over.
+      const recovered: unknown = yield context.callActivity(LIST_ACCEPTED_RUN_CONTROLS_ACTIVITY_NAME, {
+        runId: input.runId,
+      });
+      if (!Array.isArray(recovered) || recovered.length > MAX_RECOVERED_RUN_CONTROLS
+        || !recovered.every((controlId) => typeof controlId === "string" && UUID_PATTERN.test(controlId))) {
+        throw new Error("listAcceptedRunControls returned invalid control IDs");
+      }
+      queuedControlIds.push(...recovered as string[]);
+    }
+    context.setCustomStatus("running");
+  } else {
+    yield* recordLifecycleEvent(context, input.statusEnabled, {
+      schemaVersion: 1,
+      runId: input.runId,
+      eventKey: "run:started",
+      eventType: "run.started",
+      runStatus: "running",
+    });
+  }
   while (true) {
     while (Object.values(statuses).some((status) => status === "pending")) {
+      if (historyUnits >= plan.historyRolloverUnits && queuedControlIds.length === 0
+        && !(pendingControlEvent?.isComplete ?? false)) {
+        // Task boundary with no wave or child in flight: carry progress into a fresh history.
+        const next: RunWorkflowInputV1 = {
+          runId: input.runId,
+          submission: input.submission,
+          controlsEnabled: input.controlsEnabled,
+          statusEnabled: input.statusEnabled,
+          continuation: {
+            schemaVersion: 1,
+            generation: generation + 1,
+            statuses: { ...statuses },
+            nextLogicalAttempt: { ...nextLogicalAttempt },
+            runCycle,
+          },
+        };
+        context.continueAsNew(next, true);
+        return { status: "continued", taskStatuses: statuses };
+      }
       const wave = nextDispatchWave(plan.tasks, statuses, plan.maxConcurrency);
       if (wave.length === 0) {
         if (Object.values(statuses).some((status) => status === "failed")) break;
         throw new Error("No task is ready while pending tasks remain");
       }
+      historyUnits += wave.length;
 
       const children = wave.map(({ taskId }) => {
         const logicalAttempt = nextLogicalAttempt[taskId]!;
@@ -481,21 +605,58 @@ export async function* runOrchestrationWorkflow(
           taskAttemptWorkflowIdForAttempt(input.runId, taskId, logicalAttempt),
         );
       });
-      const waveTask = context.whenAll(children);
-      let outcomes: TaskExecutionOutcomeV1[];
+      // Mock tasks in unit tests lack the isComplete getter; treat that as still running.
+      const childDone = (child: Task<unknown>): boolean => child.isComplete ?? false;
+      function* awaitWave(): Generator<Task<unknown>, TaskExecutionOutcomeV1[], unknown> {
+        // Dapr JS SDK 3.18's WhenAllTask resets its completed count after the base constructor
+        // counts already-finished children, so a whenAll over a partly finished wave never
+        // completes. Wait only on children that are still running.
+        const running = children.filter((child) => !childDone(child));
+        if (running.length === 0) return children.map((child) => child.getResult() as TaskExecutionOutcomeV1);
+        const runningResults = (yield context.whenAll(running)) as TaskExecutionOutcomeV1[];
+        let next = 0;
+        return children.map((child) => (running.includes(child)
+          ? runningResults[next++]!
+          : child.getResult() as TaskExecutionOutcomeV1));
+      }
+      let outcomes: TaskExecutionOutcomeV1[] | undefined;
       const boundaryControls: RunControlRecordSummaryV1[] = [];
+      let wake: TaskControlWakeEventV1 | undefined;
 
-      if (pendingControlEvent) {
-        const winner = yield context.whenAny([waveTask, pendingControlEvent]);
-        if (!winner || typeof winner !== "object" || !("getResult" in winner)) {
-          throw new Error("Run workflow whenAny returned an invalid task");
-        }
-        const completedTask = winner as Task<unknown>;
-        if (completedTask === pendingControlEvent) {
-          const wake = completedTask.getResult();
-          if (!isRunControlWakeEvent(wake)) {
-            throw new Error("run-control event must contain a UUID controlId");
+      if (queuedControlIds.length > 0) {
+        wake = yield* nextControlWake();
+      } else if (pendingControlEvent) {
+        // Race the children directly: in Dapr JS SDK 3.18 a completed WhenAllTask never notifies
+        // its parent, so whenAny([whenAll(children), event]) cannot resolve through the wave.
+        const controlEvent: Task<unknown> = pendingControlEvent;
+        while (outcomes === undefined && wake === undefined) {
+          const running = children.filter((child) => !childDone(child));
+          if (running.length === 0) {
+            outcomes = children.map((child) => child.getResult());
+            break;
           }
+          const winner = yield context.whenAny([...running, controlEvent]);
+          if (!winner || typeof winner !== "object" || !("getResult" in winner)) {
+            throw new Error("Run workflow whenAny returned an invalid task");
+          }
+          const completedTask = winner as Task<unknown>;
+          if (completedTask === controlEvent) {
+            const result = completedTask.getResult();
+            pendingControlEvent = undefined;
+            historyUnits += 1;
+            if (!isRunControlWakeEvent(result)) {
+              throw new Error("run-control event must contain a UUID controlId");
+            }
+            wake = result;
+          } else if (!(running as readonly Task<unknown>[]).includes(completedTask)) {
+            throw new Error("Run workflow whenAny returned an unrelated task");
+          }
+        }
+      } else {
+        outcomes = yield* awaitWave();
+      }
+
+      if (wake) {
           const record: unknown = yield context.callActivity(GET_RUN_CONTROL_ACTIVITY_NAME, {
             controlId: wake.controlId,
           });
@@ -503,11 +664,9 @@ export async function* runOrchestrationWorkflow(
             throw new Error("getRunControl returned a mismatched control record");
           }
           if (record.state === "applied" && record.action !== "cancel") {
-            pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
-            outcomes = (yield waveTask) as TaskExecutionOutcomeV1[];
+            armControlWait();
+            outcomes = yield* awaitWave();
           } else {
-            pendingControlEvent = undefined;
-
             if (record.action === "cancel") {
               yield* recordLifecycleEvent(context, input.statusEnabled, {
                 schemaVersion: 1,
@@ -561,10 +720,7 @@ export async function* runOrchestrationWorkflow(
               });
               context.setCustomStatus("paused");
               while (true) {
-                const resumeWake: unknown = yield context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
-                if (!isRunControlWakeEvent(resumeWake)) {
-                  throw new Error("run-control event must contain a UUID controlId");
-                }
+                const resumeWake = yield* nextControlWake();
                 const resumeRecord: unknown = yield context.callActivity(GET_RUN_CONTROL_ACTIVITY_NAME, {
                   controlId: resumeWake.controlId,
                 });
@@ -617,19 +773,12 @@ export async function* runOrchestrationWorkflow(
                 else throw new Error("Only resume, cancel, or replay-task is valid while paused");
               }
               context.setCustomStatus("running");
-              outcomes = (yield waveTask) as TaskExecutionOutcomeV1[];
+              outcomes = yield* awaitWave();
             } else {
               boundaryControls.push(record);
-              outcomes = (yield waveTask) as TaskExecutionOutcomeV1[];
+              outcomes = yield* awaitWave();
             }
           }
-        } else if (completedTask === waveTask) {
-          outcomes = completedTask.getResult() as TaskExecutionOutcomeV1[];
-        } else {
-          throw new Error("Run workflow whenAny returned an unrelated task");
-        }
-      } else {
-        outcomes = (yield waveTask) as TaskExecutionOutcomeV1[];
       }
 
       if (!Array.isArray(outcomes) || outcomes.length !== wave.length) {
@@ -669,9 +818,9 @@ export async function* runOrchestrationWorkflow(
             applied.replayLogicalAttempt!, boundaryControl.controlId, false,
           );
         }
-        pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+        armControlWait();
       } else if (input.controlsEnabled && !pendingControlEvent) {
-        pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+        armControlWait();
       } else if (outcomes.some((outcome) => outcome.status === "failed")) {
         break;
       }
@@ -690,19 +839,20 @@ export async function* runOrchestrationWorkflow(
       return { status: terminalStatus, taskStatuses: statuses };
     }
     context.setCustomStatus(terminalStatus);
-    const terminalControlEvent = pendingControlEvent ?? context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
-    const wake: unknown = yield terminalControlEvent;
-    if (!isRunControlWakeEvent(wake)) throw new Error("run-control event must contain a UUID controlId");
+    const wake = yield* nextControlWake();
     const record: unknown = yield context.callActivity(GET_RUN_CONTROL_ACTIVITY_NAME, {
       controlId: wake.controlId,
     });
-    if (!isRunControlRecord(record, input.runId) || record.controlId !== wake.controlId
-      || record.action !== "replay-task") {
-      throw new Error("Only a valid replay-task control can reopen a terminal run");
+    if (!isRunControlRecord(record, input.runId) || record.controlId !== wake.controlId) {
+      throw new Error("getRunControl returned a mismatched control record");
     }
     if (record.state === "applied") {
-      pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+      // A duplicate wake (for example one recovered after a rollover) for an applied control.
+      armControlWait();
       continue;
+    }
+    if (record.action !== "replay-task") {
+      throw new Error("Only a valid replay-task control can reopen a terminal run");
     }
     const applied: unknown = yield context.callActivity(APPLY_RUN_CONTROL_ACTIVITY_NAME, {
       controlId: record.controlId,
@@ -722,7 +872,7 @@ export async function* runOrchestrationWorkflow(
       context, input.statusEnabled, input.runId, taskId,
       applied.replayLogicalAttempt!, record.controlId, true,
     );
-    pendingControlEvent = context.waitForExternalEvent(RUN_CONTROL_EVENT_NAME);
+    armControlWait();
     context.setCustomStatus("running");
   }
 }

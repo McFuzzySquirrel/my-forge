@@ -127,6 +127,32 @@ POSTGRES_TEST_URL=... npm run verify:execution -- --copilot
 The verifier refuses to write evidence that contains a resolved secret or the
 database password.
 
+P4-06's `npm run measure:bounds` uses the same Podman Dapr stack, with stub
+task activities and an in-memory control store. It does not need
+`POSTGRES_TEST_URL`. It measures:
+
+- history rollover for a large manifest, with and without the default budget;
+- a retry storm;
+- a long approval wait across a worker restart;
+- pause, resume, and replay controls across frequent continue-as-new;
+- run admission;
+- outcome and submission bounds.
+
+It reads history size directly from the Dapr state table and writes evidence
+to `tools/dapr-engine/.runtime/p4-06-bounds.json` (gitignored). Options:
+
+- `-- --tasks <16..1000>` sets the large-manifest size (default 240);
+- `-- --wait-seconds <n>` sets the approval wait length (default 60);
+- `-- --only <scenario>` runs a single scenario;
+- `-- --evidence <path>` changes the output file.
+
+Set `MEASURE_VERBOSE=1` to keep the Dapr SDK's info logs.
+
+```bash
+cd tools/dapr-engine
+npm run measure:bounds -- --tasks 1000
+```
+
 The test image is pinned to the Docker Hub multi-platform index digest
 `sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c`;
 this does not change the PostgreSQL 17.6 image in the historical P1 spike.

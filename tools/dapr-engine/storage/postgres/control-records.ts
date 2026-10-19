@@ -211,6 +211,26 @@ export class PostgresControlRecordStore {
     return result.rows[0] ? toRecord(result.rows[0]) : undefined;
   }
 
+  /**
+   * Accepted, unapplied run-level controls in acceptance order. A run
+   * workflow generation started by continue-as-new drains these because a
+   * wake event raised during the rollover may not reach the new generation.
+   */
+  async listAccepted(runId: string, limit: number): Promise<readonly StoredControlRecordV1[]> {
+    if (!runId || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
+      throw new TypeError("Accepted control lookup requires a runId and a limit from 1 to 1000");
+    }
+    const result = await this.database.query<ControlRow>(
+      `SELECT ${CONTROL_COLUMNS}
+       FROM forge_control_records
+       WHERE run_id = $1 AND state = 'accepted' AND action <> 'approve-task'
+       ORDER BY created_at, control_id
+       LIMIT $2`,
+      [runId, limit],
+    );
+    return result.rows.map(toRecord);
+  }
+
   async getApproval(
     runId: string,
     taskId: string,

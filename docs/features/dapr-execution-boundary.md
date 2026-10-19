@@ -29,7 +29,11 @@ idempotent process/control effects, and a trusted principal from its
 authentication adapter; this repository does not yet provide a network identity
 provider or production service host. P4-05 adds a composed `ExecutionHost`
 and a live verifier (`npm run verify:execution`) that prove representative
-stub and Copilot CLI execution locally. P4-04 adds an application-owned PostgreSQL status projection
+stub and Copilot CLI execution locally. P4-06 bounds run histories with
+continue-as-new rollover, caps submissions, settings, outcomes, and artifacts,
+adds pre-start run admission against the SDK worker budget, and measures them
+live with `npm run measure:bounds`
+([ADR-067](../adr/067-bounded-workflow-histories-and-concurrency.md)). P4-04 adds an application-owned PostgreSQL status projection
 and sequenced, reconnectable lifecycle journal; it does not add a network
 service host or Console integration. This P2 feature defines contracts and
 reusable boundaries, not a production service.

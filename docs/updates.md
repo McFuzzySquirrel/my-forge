@@ -4,6 +4,38 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.114
+
+### P4-06 bounded workflow histories and concurrency
+
+- Enforce explicit run limits (`RUN_LIMITS_V1`) at planning time: at most
+  1,000 tasks, a 1 MiB workflow input, concurrency 8, 10 retries, a 24-hour
+  retry delay, and a history rollover budget of 1–1,000 units. Out-of-range
+  settings are rejected rather than clamped.
+- Roll run history over with `continueAsNew` at task boundaries (default every
+  64 history units). Task statuses, logical attempts, and the run cycle carry
+  into the next generation, so task identity and operation IDs are preserved.
+  A continued generation recovers accepted run controls from the control store
+  before waiting for new wakes.
+- Bound task outcomes before they enter workflow history (256 KiB outcome,
+  4,000-character failure reasons). Reject artifacts above 32 MiB and git
+  bundles above 512 MiB before writing. A task attempt fails closed after 16
+  approval waits.
+- Add run admission backpressure. Hosts reserve task-attempt slots against the
+  SDK worker's 8 usable slots, and runs that do not fit are rejected with
+  `worker-capacity-exhausted` instead of queuing inside the SDK.
+- Work around two Dapr JS SDK 3.18 `WhenAllTask` defects: a completed
+  `whenAll` never notifies its parent, and its constructor forgets children
+  that already finished. Controls-enabled runs race individual children, and
+  `whenAll` only ever receives still-running children. Pin tests detect an SDK
+  fix.
+- Add `npm run measure:bounds` in `tools/dapr-engine/`, a live Podman/Dapr
+  harness covering large manifests, retry storms, long approval waits across a
+  worker restart, admission, oversized outcomes, and controls across frequent
+  rollover. See [ADR-067](adr/067-bounded-workflow-histories-and-concurrency.md)
+  and the P4-06 evidence in [plan.md](../plan.md#p4-06-bound-evidence).
+  P4-GATE remains open.
+
 ## October 2026 - v3.113
 
 ### P4-03 trusted approvals and durable controls

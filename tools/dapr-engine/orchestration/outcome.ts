@@ -4,6 +4,7 @@ import {
   type Sha256Digest,
 } from "../contract/v1/index.ts";
 import type { TaskGateResult } from "../execution/types.ts";
+import { RUN_LIMITS_V1, utf8JsonBytes } from "./limits.ts";
 
 export interface TaskCompletionEvidenceV1 {
   readonly schemaVersion: 1;
@@ -55,6 +56,64 @@ export type TaskExecutionOutcomeV1 =
       readonly reason?: string;
       readonly gates?: readonly TaskGateResult[];
     };
+
+export const MAX_FAILURE_REASON_CHARS = 4_000;
+const MAX_FAILURE_CODE_CHARS = 200;
+const MAX_GATE_TEXT_CHARS = 1_000;
+const MAX_GATE_EVIDENCE_ENTRIES = 32;
+
+function truncateText(value: string, maximum: number): string {
+  if (value.length <= maximum) return value;
+  // The marker counts toward the limit so a truncated value never exceeds `maximum`.
+  const marker = `… [truncated ${value.length} chars]`;
+  let kept = value.slice(0, Math.max(0, maximum - marker.length));
+  if (/[\uD800-\uDBFF]$/.test(kept)) kept = kept.slice(0, -1);
+  return `${kept}${marker}`;
+}
+
+/**
+ * Keeps one outcome within the workflow-history metadata budget before it is
+ * returned from an activity. Failure diagnostics are truncated; completion
+ * evidence is never altered, so an oversized completion fails closed.
+ */
+export function boundTaskExecutionOutcome(
+  outcome: TaskExecutionOutcomeV1,
+  maximumBytes: number = RUN_LIMITS_V1.maxTaskOutcomeBytes,
+): TaskExecutionOutcomeV1 {
+  const size = utf8JsonBytes(outcome);
+  if (size <= maximumBytes) return outcome;
+  if (outcome.status === "complete") {
+    return {
+      status: "failed",
+      retryable: false,
+      failureCode: "outcome-too-large",
+      reason: `Completion evidence is ${size} bytes; the workflow outcome limit is ${maximumBytes} bytes.`,
+    };
+  }
+  if (outcome.status !== "failed") return outcome;
+  const essential = {
+    status: "failed" as const,
+    retryable: outcome.retryable,
+    ...(outcome.failureCode !== undefined
+      ? { failureCode: truncateText(outcome.failureCode, MAX_FAILURE_CODE_CHARS) }
+      : {}),
+    ...(outcome.reason !== undefined ? { reason: truncateText(outcome.reason, MAX_FAILURE_REASON_CHARS) } : {}),
+  };
+  if (outcome.gates) {
+    const withGates = {
+      ...essential,
+      gates: outcome.gates.map((gate) => ({
+        ...gate,
+        ...(gate.reason !== undefined ? { reason: truncateText(gate.reason, MAX_GATE_TEXT_CHARS) } : {}),
+        ...(gate.evidence !== undefined
+          ? { evidence: gate.evidence.slice(0, MAX_GATE_EVIDENCE_ENTRIES).map((entry) => truncateText(entry, MAX_GATE_TEXT_CHARS)) }
+          : {}),
+      })),
+    };
+    if (utf8JsonBytes(withGates) <= maximumBytes) return withGates;
+  }
+  return essential;
+}
 
 export function isTaskGateResults(value: unknown): value is TaskGateResult[] {
   if (!Array.isArray(value)) return false;

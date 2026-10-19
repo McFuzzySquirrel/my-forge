@@ -10,6 +10,8 @@ is tracked in [issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11)
 P4-05 representative execution is proven locally under
 [issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); approval
 wait events record the `taskWorkflowInstanceId` that resume events target.
+P4-06 history, payload, and concurrency bounds are enforced and measured
+locally ([ADR-067](../adr/067-bounded-workflow-histories-and-concurrency.md)).
 Production service qualification remains pending.
 **Owner:** [Dapr execution boundary feature](../features/dapr-execution-boundary.md).  
 **Architecture:** [ADR-066](../adr/066-dapr-workflow-full-replacement-architecture.md).
@@ -51,7 +53,8 @@ dependencies. Each task includes its stable `id`, optional direct
 share one exclusivity group; tasks with the same owner are not dispatched in
 parallel. A phase prerequisite includes every task in each prerequisite phase.
 The dispatcher selects ready tasks in manifest order, up to the snapshotted
-`configuration.settings.concurrency` limit (default `1`). Both `complete` and
+`configuration.settings.concurrency` limit (default `1`, see
+[Run bounds](#run-bounds)). Both `complete` and
 `skipped` prerequisites satisfy readiness. Retry settings are
 `maxRetries` (default `2`) and `retryDelayMs` (default `5000`); an explicit
 retryable task failure starts a new logical attempt after a Dapr durable timer.
@@ -76,6 +79,70 @@ paths, validation commands, artifact input/output types, and task/phase
 dependencies. `configuration.settings.allowNoop` is a snapshotted boolean that
 defaults to `false`; it bypasses only the no-op heuristic when no expected
 outputs are declared.
+
+### Run bounds
+
+`RUN_LIMITS_V1` in `tools/dapr-engine/orchestration/limits.ts` sets the
+P4-06 limits ([ADR-067](../adr/067-bounded-workflow-histories-and-concurrency.md)).
+If a setting exceeds its ceiling, the planner rejects the submission before
+any workflow starts. It does not clamp the value.
+
+| Bound | Default | Ceiling |
+|---|---|---|
+| Selected tasks per run | — | 1,000 |
+| Submission (workflow input) | — | 1 MiB of UTF-8 JSON |
+| `settings.concurrency` | 1 | 8 active task attempts |
+| `settings.maxRetries` | 2 | 10 |
+| `settings.retryDelayMs` | 5,000 | 86,400,000 (24 hours) |
+| `settings.historyRolloverUnits` | 64 | 1,000 |
+| Approval waits per logical attempt | — | 16, then `wait-limit-exceeded` |
+| Task outcome entering history | — | 256 KiB |
+
+**History rollover.** A run workflow counts child dispatches and processed
+control wakes as history units. When the count reaches
+`historyRolloverUnits`, the run continues as new at a task boundary with no
+wave in flight. The continuation carries:
+
+- task statuses;
+- the next logical attempt per task;
+- the replay cycle;
+- the generation number.
+
+The run keeps its workflow instance ID, task-attempt IDs, and operation IDs.
+Each new generation first processes accepted, unapplied run controls listed by
+the `listAcceptedRunControls` activity (up to 64), because a wake raised during
+rollover may not reach the new generation. Control stores therefore implement
+`listAccepted(runId, limit)`. Controls must be accepted durably before their
+wake event is raised.
+
+**Outcome bounds.** Outcomes are bounded before an activity returns:
+
+- Failure diagnostics are truncated. Each cap includes the truncation
+  marker:
+  - `reason`: 4,000 characters;
+  - `failureCode`: 200 characters;
+  - gate text: 1,000 characters;
+  - gate evidence: 32 entries.
+- Completion evidence is never altered. If it is too large, the outcome
+  becomes a non-retryable `outcome-too-large` failure.
+
+**Backpressure.** The Dapr JS SDK 3.18 worker runs 10 work items at once and
+queues 100. Two slots stay reserved for orchestration work, so long-running
+task attempts are limited to 8 per worker. Before scheduling a run, the host
+reserves the run's concurrency with `RunAdmissionController`. If the reservation
+does not fit, the run is refused with `worker-capacity-exhausted`; it is not
+queued in the SDK. The host releases the reservation when the run ends.
+
+**Controls-enabled terminal state.** A run with `controlsEnabled` does not
+complete as a Dapr workflow at its terminal state. It sets custom status
+`complete` or `failed` and waits for a `replay-task` control. Hosts detect
+completion from the custom status. On Dapr 1.18, the gRPC instance query omits
+the custom status, so hosts read it from the HTTP workflow API or the status
+projection. While a wave runs, the workflow races each running child against
+the control event. The pinned SDK's `WhenAllTask` never notifies a parent
+composite task, so `whenAll` cannot be nested inside `whenAny`. Its constructor
+also forgets children that finished before it was built, so the workflow passes
+only still-running children to `whenAll`.
 
 ### Stable identities
 
@@ -296,10 +363,16 @@ The service verifies the digest and size when publishing and resolving a
 reference. Replacing content creates a new reference; it never overwrites bytes
 under an accepted digest.
 
-The P0 proposals of 32 MiB per production artifact and 256 KiB for bounded
-metadata still require later qualification; this contract does not claim those
-limits have been tested. Provider output, logs, secrets, and repository payloads
-must not be copied into workflow history merely for convenience.
+P4-06 enforces the P0 budgets locally:
+
+- Publication rejects artifacts larger than 32 MiB with `artifact-too-large`;
+  checkpoint Git bundles (`application/vnd.git.bundle`) may be up to 512 MiB.
+- A task outcome entering workflow history is limited to 256 KiB (see
+  [Run bounds](#run-bounds)).
+
+Hosted storage qualification is still pending. Provider output, logs,
+secrets, and repository payloads must not be copied into workflow history
+merely for convenience.
 
 `FileArtifactCheckpointStore` in `tools/dapr-engine/storage/files/` persists
 artifact bytes below an absolute, operator-configured storage root, separate

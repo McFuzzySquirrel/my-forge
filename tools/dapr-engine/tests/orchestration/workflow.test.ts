@@ -70,6 +70,18 @@ function childCompleteOutcome(input: { runId: string; taskId: string; manifestDi
   });
 }
 
+/** Completes the most recent wave's mock children, mirroring the real SDK's per-task completion. */
+function completeLatestChildren(
+  childTasks: Array<{ isComplete: boolean; result: unknown }>,
+  value: unknown,
+): void {
+  if (!Array.isArray(value)) return;
+  childTasks.slice(-value.length).forEach((task, index) => {
+    task.isComplete = true;
+    task.result = value[index];
+  });
+}
+
 function mockContext(options: {
   readonly activityResult?: (name: string, input: unknown) => unknown;
 } = {}) {
@@ -81,6 +93,7 @@ function mockContext(options: {
   const customStatuses: unknown[] = [];
   let eventResult: unknown;
   let waveResult: unknown;
+  const childTasks: Array<{ isComplete: boolean; result: unknown; getResult(): unknown }> = [];
   const context = {
     callActivity(name: string, input: unknown) {
       activityCalls.push({ name, input });
@@ -88,7 +101,9 @@ function mockContext(options: {
     },
     callChildWorkflow(name: string, input: unknown, instanceId: string) {
       childCalls.push({ name, input, instanceId });
-      return { kind: "child", instanceId };
+      const task = { kind: "child", instanceId, isComplete: false, result: undefined as unknown, getResult() { return this.result; } };
+      childTasks.push(task);
+      return task;
     },
     whenAll(tasks: unknown[]) {
       return { kind: "all", tasks, getResult: () => waveResult };
@@ -122,7 +137,7 @@ function mockContext(options: {
     eventTasks,
     customStatuses,
     setEventResult(value: unknown) { eventResult = value; },
-    setWaveResult(value: unknown) { waveResult = value; },
+    setWaveResult(value: unknown) { waveResult = value; completeLatestChildren(childTasks, value); },
   };
 }
 

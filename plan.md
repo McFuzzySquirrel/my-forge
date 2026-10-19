@@ -60,7 +60,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
-| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–05 complete | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence) |
+| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE open | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
@@ -244,10 +244,12 @@ local task chain running through the same contracts as the old engine.
   verification failure/retry, manual selection, parallel isolated tasks, and an
   approval wait. Then execute one real harness using scoped credentials and
   inspect integrated changes and validation evidence.
-- [ ] **P4-06 — Bound histories and concurrency.** Measure large manifests,
+- [x] **P4-06 — Bound histories and concurrency.** Measure large manifests,
   long waits, retry storms, and artifact/reference limits. Decide history rollover
   or child-workflow strategies only where supported, preserving task identity and
-  evidence; apply backpressure and configurable worker limits.
+  evidence; apply backpressure and configurable worker limits. See
+  [ADR-067](docs/adr/067-bounded-workflow-histories-and-concurrency.md) and the
+  [P4-06 bound evidence](#p4-06-bound-evidence).
 - [ ] **P4-GATE:** Representative manifests meet the conformance matrix locally
   and resume after interruption without manual state edits.
 
@@ -433,7 +435,11 @@ disposable PostgreSQL container.
 **P4-05 is complete under [issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13):**
 representative stub and real Copilot CLI execution passed on a live local Dapr
 stack; see [P4-05 representative execution evidence](#p4-05-representative-execution-evidence).
-The next work package is **P4-06 — Bound histories and concurrency**.
+**P4-06 is complete:** explicit run limits, `continueAsNew` history rollover,
+outcome and artifact bounds, and run admission backpressure; see
+[P4-06 bound evidence](#p4-06-bound-evidence) and
+[ADR-067](docs/adr/067-bounded-workflow-histories-and-concurrency.md).
+The next work package is the **P4-GATE** operator review.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -498,6 +504,42 @@ conformance fixtures remain semantic evidence only, not proof of full durable
 Dapr effects. The evidence also does not cover Dapr PostgreSQL state, deployment
 volumes, or a running service. P4 execution is now authorized; Console migration
 and legacy-engine retirement remain gated by their later phases.
+
+### P4-06 bound evidence
+
+On 2026-10-18, `npm run measure:bounds --prefix tools/dapr-engine -- --tasks 1000`
+passed all seven scenarios against an ephemeral rootless Podman pod (Dapr
+1.18.7 sidecar, Placement, Scheduler, and PostgreSQL workflow state) with a
+host-native worker and stub task activities. History rows and bytes are read
+from the Dapr PostgreSQL state table. Evidence is written to
+`tools/dapr-engine/.runtime/p4-06-bounds.json` (gitignored).
+
+| Scenario | Result |
+|---|---|
+| 1,000 tasks, default rollover (64 units) | 16 generations; run history peaked at 165 rows / 570,819 B and ended at 106 rows / 540,567 B; 454,562 B input re-carried per generation; 127 s |
+| 1,000 tasks, no rollover (budget 1,000) | 1 generation; 2,361 rows / 1,812,768 B; 129 s |
+| Retry storm | 32 tasks × 2 retries (96 operations); peak 8 active attempts, also the worker-wide peak; child history 18 rows / 3,990 B |
+| Long approval wait | 60 s wait with a worker restart; run (11 rows / 7,146 B) and child (5 rows / 1,041 B) history unchanged throughout; the attempt then completed |
+| Controls across rollover | 80 tasks, rollover every 3 units, 22 generations; 6 pause/resume pairs and a `replay-task` all applied (logical attempt 2 with a new operation ID); final run history 8 rows |
+| Run admission | Two runs at concurrency 4 admitted, a third rejected with `worker-capacity-exhausted`; worker-wide peak 8; reservations released afterwards |
+| Outcome and input bounds | A 2 MiB failure reason was stored as 4,000 characters (child history 6 rows / 9,160 B); the planner rejected 1,001 tasks and a 1,049,605 B submission |
+
+With rollover, history size is bounded by the rollover budget and the
+submission input rather than by manifest size; without it, history grows
+linearly. A peak of 4 active attempts in the large-manifest runs reflects the
+20 ms stub activity, not a limit.
+
+The measurements found and fixed three defects:
+
+- Dapr JS SDK 3.18's `WhenAllTask` never notifies a parent composite, so
+  every controls-enabled run hung after its first wave.
+- Its constructor forgets children that finished before construction, so a
+  control that woke the run mid-wave stalled about one in six
+  controls-across-rollover runs. After the fix, 10 of 10 looped runs passed.
+- Failure-reason truncation appended its marker beyond the maximum.
+
+Dapr 1.18's gRPC instance query omits custom status, so the harness reads it
+from the HTTP workflow API. This evidence does not accept P4-GATE.
 
 ### P4-05 representative execution evidence
 

@@ -3,6 +3,7 @@ import {
   type RunSubmissionV1,
   type TaskStatusV1,
 } from "../contract/v1/index.ts";
+import { RUN_LIMITS_V1, utf8JsonBytes } from "./limits.ts";
 
 export const DEFAULT_MAX_RETRIES = 2;
 export const DEFAULT_RETRY_DELAY_MS = 5_000;
@@ -26,6 +27,8 @@ export interface OrchestrationPlanV1 {
   readonly maxRetries: number;
   readonly retryDelayMs: number;
   readonly allowNoop: boolean;
+  /** History units (dispatches + processed controls) before the run workflow continues as new. */
+  readonly historyRolloverUnits: number;
 }
 
 function setting(
@@ -33,11 +36,12 @@ function setting(
   key: string,
   fallback: number,
   minimum: number,
+  maximum: number,
 ): number {
   const value = settings[key];
   if (value === undefined) return fallback;
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum) {
-    throw new Error(`configuration.settings.${key} must be a safe integer >= ${minimum}`);
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`configuration.settings.${key} must be a safe integer from ${minimum} to ${maximum}`);
   }
   return value;
 }
@@ -81,11 +85,22 @@ export function buildOrchestrationPlan(
   if (!validation.ok) {
     throw new Error(`Invalid run submission (${validation.code}): ${validation.detail}`);
   }
+  const inputBytes = utf8JsonBytes(submission);
+  if (inputBytes > RUN_LIMITS_V1.maxWorkflowInputBytes) {
+    throw new Error(
+      `Run submission is ${inputBytes} bytes; the workflow input limit is ${RUN_LIMITS_V1.maxWorkflowInputBytes} bytes`,
+    );
+  }
   const frozenSelection = submission.selection.effectiveTaskIds;
   if (!Array.isArray(frozenSelection)
     || frozenSelection.length !== validation.effectiveTaskIds.length
     || frozenSelection.some((taskId, index) => taskId !== validation.effectiveTaskIds[index])) {
     throw new Error("Frozen effective task selection does not match the immutable submission");
+  }
+  if (frozenSelection.length > RUN_LIMITS_V1.maxTasksPerRun) {
+    throw new Error(
+      `Run selects ${frozenSelection.length} tasks; at most ${RUN_LIMITS_V1.maxTasksPerRun} tasks are allowed per run`,
+    );
   }
 
   const selected = new Set(frozenSelection);
@@ -126,9 +141,16 @@ export function buildOrchestrationPlan(
   validateAcyclic(tasks);
 
   const settings = submission.configuration.settings as Readonly<Record<string, unknown>>;
-  const maxRetries = setting(settings, "maxRetries", DEFAULT_MAX_RETRIES, 0);
-  const retryDelayMs = setting(settings, "retryDelayMs", DEFAULT_RETRY_DELAY_MS, 0);
-  const maxConcurrency = setting(settings, "concurrency", DEFAULT_CONCURRENCY, 1);
+  const maxRetries = setting(settings, "maxRetries", DEFAULT_MAX_RETRIES, 0, RUN_LIMITS_V1.maxRetries);
+  const retryDelayMs = setting(settings, "retryDelayMs", DEFAULT_RETRY_DELAY_MS, 0, RUN_LIMITS_V1.maxRetryDelayMs);
+  const maxConcurrency = setting(settings, "concurrency", DEFAULT_CONCURRENCY, 1, RUN_LIMITS_V1.maxConcurrency);
+  const historyRolloverUnits = setting(
+    settings,
+    "historyRolloverUnits",
+    RUN_LIMITS_V1.defaultHistoryRolloverUnits,
+    1,
+    RUN_LIMITS_V1.maxHistoryRolloverUnits,
+  );
   const allowNoop = booleanSetting(settings, "allowNoop", false);
 
   return {
@@ -137,6 +159,7 @@ export function buildOrchestrationPlan(
     maxRetries,
     retryDelayMs,
     allowNoop,
+    historyRolloverUnits,
   };
 }
 

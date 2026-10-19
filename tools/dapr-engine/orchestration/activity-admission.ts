@@ -8,7 +8,11 @@ import {
 import { admitTaskResult } from "../execution/task-admission.ts";
 import type { HarnessAdapter, ManifestTask, TaskResult } from "../execution/types.ts";
 import { captureWorktree, type WorktreeSnapshot } from "../execution/verify.ts";
-import { createTaskCompletionEvidence, type TaskExecutionOutcomeV1 } from "./outcome.ts";
+import {
+  boundTaskExecutionOutcome,
+  createTaskCompletionEvidence,
+  type TaskExecutionOutcomeV1,
+} from "./outcome.ts";
 import type { TaskAdmissionResult } from "../execution/task-admission.ts";
 
 export interface TaskActivityAdmissionInputV1 {
@@ -50,15 +54,15 @@ function outcomeForAdmission(
   artifactRefs: readonly ArtifactRefV1[],
 ): TaskExecutionOutcomeV1 {
   if (!admission.ok) {
-    return {
+    return boundTaskExecutionOutcome({
       status: "failed",
       retryable: admission.retryable,
       failureCode: admission.failureCode,
       reason: admission.reason,
       gates: admission.gates,
-    };
+    });
   }
-  return {
+  return boundTaskExecutionOutcome({
     status: "complete",
     evidence: createTaskCompletionEvidence({
       runId: input.runId,
@@ -71,7 +75,7 @@ function outcomeForAdmission(
       artifactRefs,
       validationCommands: admission.validationCommands,
     }),
-  };
+  });
 }
 
 /** Bridges the Dapr-independent execution gates to the workflow activity result. */

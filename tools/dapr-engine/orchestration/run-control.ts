@@ -12,6 +12,7 @@ import type {
 } from "../storage/postgres/control-records.ts";
 import type { ApprovalControlStore, WorkflowEventPublisher } from "./approval-control.ts";
 import {
+  MAX_RECOVERED_RUN_CONTROLS,
   RUN_CONTROL_EVENT_NAME,
   type AppliedRunControlV1,
   runOrchestrationWorkflowId,
@@ -137,6 +138,19 @@ export function createGetRunControlActivity(
       throw new Error(`Run control '${input.controlId}' is not accepted`);
     }
     return record;
+  };
+}
+
+/** Lists accepted run controls a continued run workflow generation must process. */
+export function createListAcceptedRunControlsActivity(
+  store: Pick<ApprovalControlStore, "listAccepted">,
+): (_context: unknown, input: { readonly runId: string }) => Promise<readonly string[]> {
+  return async (_context, input) => {
+    const records = await store.listAccepted(input.runId, MAX_RECOVERED_RUN_CONTROLS);
+    return records
+      .filter((record) => record.runId === input.runId && record.state === "accepted"
+        && isRunControlAction(record.action))
+      .map((record) => record.controlId);
   };
 }
 

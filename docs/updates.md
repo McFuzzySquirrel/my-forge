@@ -4,6 +4,21 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.115
+
+### P4-GATE accepted; P5 authorized
+
+- The operator accepted P4-GATE after the local execution conformance matrix
+  passed and a live recovery check resumed the same orchestration after worker
+  and full-stack restarts without manual state edits.
+- P4-05 representative execution and P4-06 history/concurrency measurements
+  also passed on the local Dapr/PostgreSQL stack. P5 launcher and Console
+  migration is now authorized; P4 evidence does not qualify production
+  authentication, host isolation, or release security.
+- The current engine test run passed 124 tests; 15 PostgreSQL-dependent tests
+  were skipped because `POSTGRES_TEST_URL` was not configured. Previously
+  recorded live PostgreSQL evidence remains linked from [plan.md](../plan.md).
+
 ## October 2026 - v3.114
 
 ### P4-06 bounded workflow histories and concurrency

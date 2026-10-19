@@ -60,8 +60,8 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P1 — Released SDK and runtime spike | P0 gate | Runtime + platform; agent prepares experiment, operator accepts | P1-GATE accepted; P1-06 recorded | [P1 spike #3](https://github.com/McFuzzySquirrel/my-forge/issues/3); [P1 evidence](#p1-spike-evidence--2026-10-13); [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md) |
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
-| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE open | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
-| P5 — Launcher and Console migration | P4 gate | Launcher + Console | Not started | Unassigned |
+| P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE accepted 2026-10-19 | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-GATE evidence](#p4-gate-acceptance-evidence--2026-10-19); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
+| P5 — Launcher and Console migration | P4 gate | Launcher + Console | Authorized; not started | Unassigned |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
@@ -426,7 +426,7 @@ the registered resume activity, and run workflows handle pause/resume,
 graceful stop, cancellation, and replay at safe boundaries. Hosts must provide
 an authenticated trusted-principal adapter, authoritative run context, and
 idempotent process/control effects; this repository does not yet contain a
-network identity provider or production service host. P4-GATE remains open.
+network identity provider or production service host.
 **P4-04 is complete under issue #11 (owner: operator):** a transactional
 PostgreSQL run/task/attempt status projection, sequenced idempotent lifecycle
 events, cursor replay/watch APIs, and workflow status-event activities. The live
@@ -439,7 +439,8 @@ stack; see [P4-05 representative execution evidence](#p4-05-representative-execu
 outcome and artifact bounds, and run admission backpressure; see
 [P4-06 bound evidence](#p4-06-bound-evidence) and
 [ADR-067](docs/adr/067-bounded-workflow-histories-and-concurrency.md).
-The next work package is the **P4-GATE** operator review.
+**P4-GATE was accepted by the operator on 2026-10-19**, authorizing P5. The
+next work package is **P5-01 — Package the local stack**.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -504,6 +505,24 @@ conformance fixtures remain semantic evidence only, not proof of full durable
 Dapr effects. The evidence also does not cover Dapr PostgreSQL state, deployment
 volumes, or a running service. P4 execution is now authorized; Console migration
 and legacy-engine retirement remain gated by their later phases.
+
+### P4-GATE acceptance evidence — 2026-10-19
+
+The operator accepted P4-GATE after reviewing the completed P4-01–06 evidence.
+The local engine typecheck passed, and `npm test --prefix tools/dapr-engine`
+passed 124 tests with 15 PostgreSQL-dependent integration tests skipped because
+`POSTGRES_TEST_URL` was not configured. All local conformance fixtures ran.
+
+`node tools/dapr-spike/cli.js verify-orchestration` passed: the workflow kept
+its identity through a worker restart during a retry timer and a full
+Dapr/PostgreSQL stack restart while waiting for an external event, then resumed
+and completed without manual state edits. The existing [P4-05 representative
+execution evidence](#p4-05-representative-execution-evidence) records six
+passing execution scenarios, including a real Copilot CLI harness; the
+[P4-06 bound evidence](#p4-06-bound-evidence) records seven passing
+history/concurrency scenarios. This gate does not establish production
+authentication, host-level harness isolation, or release qualification; those
+remain later-phase work.
 
 ### P4-06 bound evidence
 

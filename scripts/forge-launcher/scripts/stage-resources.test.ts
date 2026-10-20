@@ -22,10 +22,12 @@ test("launcher resources package the execution service and its dependencies", (t
   }
   writeFileSync(join(root, "templates", "skills", "forge-workflow-engine", "SKILL.md"), "engine skill\n");
   writeFileSync(join(root, "docs", "prompt-playbook.md"), "playbook\n");
+  writeFileSync(join(root, "tools", "dapr-engine", "package.json"), JSON.stringify({ type: "module" }));
   writeFileSync(join(root, "tools", "dapr-engine", "execution", "index.ts"), "export {};\n");
   writeFileSync(join(root, "tools", "dapr-engine", "execution", "node_modules", "ignored.js"), "ignored\n");
   writeFileSync(join(root, "tools", "dapr-engine", "workflow.ts"), "service\n");
-  writeFileSync(join(root, "tools", "dapr-engine", "service", "main.ts"), "service entry\n");
+  writeFileSync(join(root, "tools", "dapr-engine", "service", "main.ts"),
+    'await Promise.resolve();\nconsole.log("service entry ready");\n');
   writeFileSync(join(root, "tools", "dapr-engine", "storage", "migration.sql"), "migration\n");
   writeFileSync(join(root, "tools", "dapr-engine", "deploy", "compose.yaml"), "services: {}\n");
   writeFileSync(join(root, "tools", "dapr-engine", "deploy", "components", "state.yaml"), "kind: Component\n");
@@ -41,4 +43,10 @@ test("launcher resources package the execution service and its dependencies", (t
   assert.ok(existsSync(join(resources, "tools", "dapr-engine", "deploy", "compose.yaml")));
   assert.ok(existsSync(join(resources, "tools", "dapr-engine", "deploy", "components", "state.yaml")));
   assert.ok(!existsSync(join(resources, "tools", "dapr-engine", "workflow.ts")));
+
+  const output = execFileSync(process.execPath, [
+    "--import", import.meta.resolve("tsx"),
+    join(resources, "tools", "dapr-engine", "service", "main.ts"),
+  ], { cwd: join(resources, "tools", "dapr-engine"), encoding: "utf8" });
+  assert.equal(output.trim(), "service entry ready");
 });

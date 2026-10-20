@@ -46,6 +46,10 @@ for (const directory of ["contract", "orchestration", "service", "storage"]) {
     path.join(resourcesDir, "tools", "dapr-engine", directory),
   );
 }
+copyFileSync(
+  path.join(repoRoot, "tools", "dapr-engine", "package.json"),
+  path.join(resourcesDir, "tools", "dapr-engine", "package.json"),
+);
 copyTree(
   path.join(repoRoot, "tools", "dapr-engine", "deploy"),
   path.join(resourcesDir, "tools", "dapr-engine", "deploy"),

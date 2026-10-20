@@ -4,6 +4,21 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.126
+
+### Packed runtime worker starts as an ES module
+
+- The launcher package now includes the execution service's `package.json`,
+  preserving its ES module context when the installed worker starts with
+  `node --import tsx`. Previously, a packed installation could fail with
+  `Top-level await is currently not supported with the "cjs" output format`.
+- Packaging coverage now executes a staged service entry point with top-level
+  await. Generated runtime resources are excluded from source control.
+- Runtime guidance now distinguishes failed cleanup from a completed reset
+  and warns against moving credentials while containers still use them.
+
+---
+
 ## October 2026 - v3.125
 
 ### Engine runner install failures stop execution

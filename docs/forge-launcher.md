@@ -167,6 +167,15 @@ them. `runtime rotate-tokens` replaces the service API token and the Dapr
 sidecar token (`DAPR_API_TOKEN`) in `runtime.env` and keeps the database
 passwords; run `runtime stop` and `runtime start` to apply them.
 
+On Linux, credentials are stored in
+`${XDG_DATA_HOME:-$HOME/.local/share}/MyForge/runtime/runtime.env`; Podman
+volumes are separate and shared by clones under the same user. Do not move
+the runtime directory while containers are running. If backup or reset says
+`Local runtime is not initialized`, it has not backed up or removed the
+existing volumes. Stop and locate the original credential directory before
+continuing: generating a new `runtime.env` does not change existing database
+passwords. A failed startup is not a successful fresh-install acceptance run.
+
 `runtime backup --output <new-directory>` stops the stack long enough to export
 the PostgreSQL (application and workflow state), Dapr Scheduler, and Forge
 artifact/runtime volumes as tar files with a checksummed manifest, then restores
@@ -291,6 +300,12 @@ npm install -g ./forge-launcher-1.0.0-beta.6.tgz   # global `forge-launcher`
 # dev alternative (once dist/ is built): global symlink
 npm run build && npm link
 ```
+
+The packed resources include the execution service's `package.json` so its
+TypeScript entry point runs as an ES module inside the worker. If an older
+packed installation reports top-level await with the `"cjs"` output format,
+repack and reinstall the corrected launcher, then stop/start the runtime;
+resetting database volumes is not needed to fix that packaging error.
 
 Remove either install with:
 

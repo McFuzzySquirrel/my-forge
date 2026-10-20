@@ -63,6 +63,11 @@ repositories, `engine-run`, `resume`, and Console builds and controls use the
 service; unregistered repositories keep the legacy engine. See
 [ADR-071](../../docs/adr/071-service-harnesses-and-execution-entry-points.md).
 
+For an unpublished checkout, run `npm install`, `npm pack`, and
+`npm install -g ./forge-launcher-1.0.0-beta.6.tgz` in this package directory.
+Packing bundles the service source and its ES module package metadata.
+See the [local installation guide](../../docs/forge-launcher.md#install-locally-before-publishing).
+
 In the Console's **Projects** view, use **Remove from Forge** for one project or
 **Remove selected (N)** for several. Confirmation is required. Only Forge
 registration, Console job history, and verified external job-result files are

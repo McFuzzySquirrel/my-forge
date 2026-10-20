@@ -158,10 +158,11 @@ over automatic detection. If that path is stale, update the selected root and
 recompile the manifest explicitly; the Console will not silently switch roots.
 - **Artifacts**: structured outputs produced by the run, browsable by type and task.
 - **Timeline**: a chronological record of important events and failures.
-- **Service runs**: runs submitted with `forge-launcher service submit`. Select
-  a run to see its tasks and events, and to pause, resume, stop, cancel,
-  approve, or replay through the local execution service. Each button shows the
-  service's acknowledgement. Register the repository with
+- **Service runs**: runs held by the local execution service for the open
+  repository, whether started from Overview, `engine-run`, or
+  `forge-launcher service submit`. Select a run to see its tasks and events,
+  and to pause, resume, stop, cancel, approve, or replay it. Each button shows
+  the service's acknowledgement. Register the repository with
   `forge-launcher runtime repo add` and start the runtime first.
 
 The most useful combination for day-to-day work is usually Overview + Board + Logs.
@@ -178,8 +179,16 @@ the lifecycle failure record and the command output in the same log.
 
 The Overview controls panel offers the same actions you would otherwise issue from the CLI:
 
+For a repository registered with the local runtime, the **Execution
+deployment** panel reads **Local execution service**. In that case these
+controls go to the service's newest run instead of the local engine process,
+and builds run in the runtime's worker with the harness credentials granted
+through `forge-launcher runtime harness grant`. See
+[Service runs](forge-console.md#service-runs).
+
 - **Pause**: stop after the current task completes.
-- **Stop**: terminate the running engine.
+- **Stop**: terminate the running engine (a service run stops after the
+  current task and can be resumed).
 - **Resume**: continue the run from the saved state.
 - **Replay**: retry a failed task.
 - **Manual build**: before a manifest exists, prevent the team → build step from
@@ -241,6 +250,22 @@ them from the originating task or progress document. Older state files without
 reported gaps remain readable; an empty list does not establish full coverage.
 The minimum note length applies to the Console evidence-writing path, not to
 existing evidence files submitted through the CLI.
+
+#### Service runs
+
+For a registered repository, the service waits on a human-review task without
+sending it to a model. The service records which task contract and target
+commit the review covers. Approve the waiting task with **Approve** in the
+**Service runs** view, or with
+`forge-launcher service control <run-id> approve-task --task <id>`. When the
+review is completed through the **Complete human review** form, the Console
+also writes `docs/reviews/<task-id>-console-review.md` with your notes and the
+run and control IDs.
+
+The service does not use the `reviewFile` attestation. It records the approval
+as an authenticated control, and its event trail shows the task resuming and
+completing. Export the trail with `forge-launcher service events <run-id>
+--json`.
 
 #### Approve from the CLI
 

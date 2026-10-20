@@ -13,6 +13,7 @@ import type {
   ExecutionMode,
   RederiveStepStatus,
   RunSummary,
+  ServiceRunsResponse,
   Summary,
   TaskRow,
 } from "../types.js";
@@ -52,6 +53,7 @@ export function unmountOverview(): void {
   stopPoll();
   stopScheduledRender();
   overviewContainer = null;
+  lastServiceProfile = null;
 }
 
 export async function renderOverview(container: HTMLElement): Promise<void> {
@@ -100,6 +102,7 @@ export async function renderOverview(container: HTMLElement): Promise<void> {
     region("overview-guidance", renderGuidance(container, summary, actions)),
     ...(summary.authoring ? [region("overview-authoring", renderAuthoringStatus(summary))] : []),
     region("overview-run", renderRun(summary.run)),
+    region("overview-service", renderServiceProfile()),
     region("overview-manifest", renderManifest(summary)),
     region("overview-actions", renderActions(container, summary, actions, tasks)),
     region("overview-feature", summary.hasPrd && summary.hasTeam ? renderFeatureIncrement(container) : renderFeaturePrd(container)),
@@ -151,6 +154,7 @@ async function refreshOverviewData(container: HTMLElement): Promise<void> {
     if (summary.authoring) update("overview-authoring", renderAuthoringStatus(summary));
     syncRederiveRegion(container, summary);
     update("overview-run", renderRun(summary.run));
+    update("overview-service", renderServiceProfile());
     update("overview-manifest", renderManifest(summary));
     update("overview-actions", renderActions(container, summary, actions, tasks));
     const feature = summary.hasPrd && summary.hasTeam ? renderFeatureIncrement(container) : renderFeaturePrd(container);
@@ -417,6 +421,61 @@ async function launchCli(): Promise<void> {
   } catch (err) {
     toast(err instanceof Error ? err.message : "launch failed");
   }
+}
+
+// ─── Deployment profile ─────────────────────────────────────────────────────
+//
+// Registered repositories build in the local execution service; the Overview
+// names which deployment Build/Resume/Pause/Stop will use and links to the
+// Service runs view. The last response is reused while a refresh is in flight
+// so the panel does not flicker.
+
+let lastServiceProfile: ServiceRunsResponse | null = null;
+
+function fillServiceProfile(panel: HTMLElement, response: ServiceRunsResponse | null): void {
+  if (!response) {
+    panel.replaceChildren(el("div", { className: "row gap" }, [statusBadge("checking"), el("span", { className: "dim" }, "Checking the execution deployment…")]));
+    return;
+  }
+  if (!response.available && response.reason === "not-registered") {
+    panel.replaceChildren(
+      el("div", { className: "row gap" }, [statusBadge("legacy"), el("strong", null, "Execution: in-process engine")]),
+      el("p", { className: "dim" }, "Builds run in this machine's legacy engine. Register the repository with the local runtime " +
+        "(forge-launcher runtime repo add <path>) to run builds in the local execution service."),
+    );
+    return;
+  }
+  if (!response.available) {
+    panel.replaceChildren(
+      el("div", { className: "row gap" }, [statusBadge("unavailable"), el("strong", null, "Execution: local service")]),
+      el("p", { className: "error-text", role: "alert" }, response.message ?? "The local execution service is not reachable."),
+      el("p", { className: "dim" }, "Start it with forge-launcher runtime start, then refresh."),
+    );
+    return;
+  }
+  const runs = [...response.runs].sort((left, right) => String(right.createdAt ?? "").localeCompare(String(left.createdAt ?? "")));
+  const latest = runs[0];
+  panel.replaceChildren(
+    el("div", { className: "row gap" }, [
+      statusBadge(latest?.status ?? "ready"),
+      el("strong", null, "Execution: local service"),
+      el("span", { className: "dim" }, latest
+        ? `Latest run ${latest.runId} on ${latest.targetRef.replace(/^refs\/heads\//, "")} (${runs.length} total).`
+        : "No service runs yet; Build submits the first one."),
+    ]),
+    el("p", { className: "dim" }, "Build, Resume, Pause, Stop, Replay, and human-review approval use this repository's service run."),
+    el("a", { href: "#/service", className: "btn" }, "Open service runs"),
+  );
+}
+
+function renderServiceProfile(): HTMLElement {
+  const panel = el("div", { className: "panel", "aria-label": "Execution deployment" });
+  fillServiceProfile(panel, lastServiceProfile);
+  void api.serviceRuns().then((response) => {
+    lastServiceProfile = response;
+    fillServiceProfile(panel, response);
+  }).catch(() => undefined);
+  return panel;
 }
 
 function renderRun(run: RunSummary | null): HTMLElement {

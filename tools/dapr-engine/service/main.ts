@@ -69,7 +69,9 @@ const daprHttpUrl = `http://${DAPR_HOST}:${DAPR_HTTP_PORT}`;
 const runtime = new WorkflowRuntime(daprAddress);
 const client = new DaprWorkflowClient(daprAddress);
 const repositoryRoot = mountedRepositoryResolver(REPOSITORIES_DIR);
-const registry = new ServiceRunRegistry(defaultServiceHarnesses());
+const registry = new ServiceRunRegistry(defaultServiceHarnesses({
+  credentialsFile: process.env.MYFORGE_HARNESS_CREDENTIALS_FILE,
+}));
 const status = new PostgresRunStatusStore(database);
 const controls = new PostgresControlRecordStore(database);
 const executions = new PostgresExecutionOwnershipStore(database);

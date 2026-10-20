@@ -216,10 +216,51 @@ Resubmitting with the same `--key` returns the existing run. `--json` on
 JSON object per line) for scripts and support reports. `service control`
 accepts pause, resume, stop, cancel, replay-task, and approve-task.
 
-The worker currently provides only the deterministic `stub` harness, which
-needs `--allow-noop` when tasks make no changes. Real harness runs still use
-`engine-run`, `resume`, and the Console until harness CLIs and credentials can
-be supplied to the worker.
+**Harnesses and credentials** ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)).
+The worker image includes pinned `copilot`, `claude`, and `opencode` CLIs and
+the deterministic `stub` harness. `stub` needs `--allow-noop` when tasks make
+no changes. Host logins are not visible to the worker. Grant each harness its
+credentials explicitly:
+
+```bash
+forge-launcher runtime harness grant copilot COPILOT_GITHUB_TOKEN   # value read from stdin
+forge-launcher runtime harness grant claude ANTHROPIC_API_KEY --from-env
+forge-launcher runtime harness list                                 # names only, never values
+forge-launcher runtime harness revoke copilot [COPILOT_GITHUB_TOKEN]
+```
+
+- Each harness accepts only its own variables:
+  - copilot: `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`
+  - claude: `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`
+  - opencode: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+    `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`
+- Grants are stored owner-only under the runtime data directory
+  (`harness-grants/grants.json`) and mounted read-only into the worker. They
+  apply from the next task attempt, with no restart.
+- A run for a harness with no grant is rejected at submission with a hint
+  naming the grant command.
+
+**Routing for registered repositories.** Once a repository is registered,
+`engine-run`, `resume`, feature-increment runs, and Console builds use the
+service instead of the legacy engine:
+
+- `engine-run --repo <path> [--harness <h>]` compiles a missing manifest, then
+  resumes or attaches to the repository's active run, or submits a new one.
+- It follows the run's events, which are also written to
+  `docs/engine-run.log`. When the run completes, it fast-forwards the
+  checked-out branch to `forge/<branch>`.
+- `--concurrency`, `--max-retries`, `--retry-delay-ms`, `--allow-noop`,
+  `--granularity`, and task selection apply to new runs. An active run keeps
+  its settings and harness.
+- `engine-run --stop`/`--pause` send service controls.
+- Flags with no service meaning (timeouts, heartbeats, `--viz`, commit
+  options) are reported as ignored.
+- Human-review tasks wait in the service until approved through the Console
+  or with `service control <run-id> approve-task --task <id>`.
+
+Unregistered repositories keep the legacy engine. `FORGE_DEPLOYMENT` selects
+the deployment: unset or `local` uses the local service, and `hosted` is not
+available yet.
 
 `bootstrap` takes these options:
 
@@ -1138,6 +1179,7 @@ reflect the running build (monitor + resume) rather than the manual
   | `FORGE_ENGINE_ALLOW_NOOP` | 8 | `1` to relax the engine's output-verification no-op heuristic (`engine-run --allow-noop`) |
   | `FORGE_ENGINE_RUN_VALIDATION` | 8 | `1` to run each task's manifest `validationCommands` before marking it complete (`engine-run --run-validation`) |
   | `FORGE_ENGINE_LOG_HARNESS_ACTIVITY` | 8 | `1` to stream harness CLI stdout/stderr into `docs/engine-run.log` as it arrives (`engine-run --log-harness-activity`; `--no-log-harness-activity` overrides). Default off; may contain sensitive content |
+  | `FORGE_DEPLOYMENT` | 8 | Execution deployment for repositories registered with `runtime repo add`: unset or `local` uses the local execution service; `hosted` is not available yet and fails. Unregistered repositories use the legacy engine (ADR-071) |
 
 All other step inputs (repo name, description, visibility, parent directory) use their defaults in non-interactive mode. Override them by setting the variables before running:
 
@@ -1282,7 +1324,9 @@ air-gapped machine (`podman save`/`podman load`) is not yet supported.
 
 | Option | Status |
 |---|---|
-| `service submit --harness` other than `stub` | Rejected by the worker until real harnesses are provisioned. Use `engine-run`. |
+| Service runs with `copilot`, `claude`, or `opencode` and no credential grant | Rejected at submission (`harness-unavailable`). Run `runtime harness grant <harness> <VARIABLE>`. |
+| `engine-run --task-timeout-ms`, `--heartbeat-ms`, `--viz`, `--viz-port`, `--run-validation`, `--log-harness-activity`, `--auto-commit`, `--commit-message-template` for registered repositories | Ignored with a note. The service applies its own budgets, validation, and per-task commits, and the Console **Service runs** view replaces the board. |
+| `FORGE_DEPLOYMENT=hosted` | Not available until shared access is qualified (P8). |
 | `--postgres-port` without `--host-tools` | Rejected. PostgreSQL stays private unless host tools are requested. |
 | Binding the Console or service API beyond loopback | Not available in the local profile ([ADR-068](adr/068-local-deployment-and-access-profiles.md)). |
 | Console `GET /api/token` | Removed in v3.120. Use the terminal sign-in link ([ADR-070](adr/070-local-operator-session-and-sidecar-token.md)). |

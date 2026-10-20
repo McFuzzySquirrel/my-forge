@@ -433,8 +433,27 @@ number seen, so a reload or reconnect picks up from the service's record.
 - When the repository is not registered (`forge-launcher runtime repo add`) or
   the runtime is not running, the view says so.
 
-Builds started from Overview still use the legacy engine and the file-based
-controls above, because the worker provides only the stub harness so far.
+For a registered repository, Overview builds and controls also use the
+service ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)):
+
+- **Continue**/**Resume** run `forge-launcher engine-run`, which submits a new
+  service run or resumes and attaches to the active one. Progress streams
+  into `docs/engine-run.log`, and the checked-out branch is fast-forwarded
+  to `forge/<branch>` when the run completes.
+- **Pause** and **Stop** send service controls to the newest active run;
+  **Replay** targets the newest run.
+- Approving a human review requires the same reviewer and 40-character notes
+  and sends `approve-task` for the waiting task. The service binds the approval
+  to the review evidence it published. The Console then writes
+  `docs/reviews/<task-id>-console-review.md` with the notes and the run and
+  control IDs. It writes no `reviewFile` attestation or `WORKFLOW-STATE.json`.
+- The Overview's **Execution deployment** panel shows whether the open
+  repository uses the local execution service or the legacy engine. If the
+  repository is registered but the runtime is unreachable, controls report the
+  error instead of falling back to the legacy engine.
+
+Unregistered repositories keep the legacy engine and the file-based controls
+above.
 
 ### Execution mode
 

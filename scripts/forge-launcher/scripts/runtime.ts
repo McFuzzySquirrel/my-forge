@@ -14,6 +14,7 @@ import {
   unregisterRepository,
   writeRepositoryOverride,
 } from "./runtime-repositories.ts";
+import { ensureHarnessGrants, harnessCli } from "./runtime-harnesses.ts";
 
 const CREDENTIALS_FILE = "runtime.env";
 const LEGACY_KEYS = ["POSTGRES_SUPERUSER_PASSWORD", "DAPR_DB_PASSWORD", "APP_DB_PASSWORD"] as const;
@@ -455,6 +456,7 @@ async function compose(
   env.MYFORGE_ENGINE_DIR = engineDir;
   env.MYFORGE_LAUNCHER_NODE_MODULES = launcherNodeModules;
   env.MYFORGE_TEMPLATES_DIR = templatesDir;
+  env.MYFORGE_HARNESS_GRANTS_DIR = await ensureHarnessGrants(path.dirname(environment.file));
   if (action === "up" && options.hostTools) {
     env.POSTGRES_PORT = String(options.postgresPort ?? 55432);
   }
@@ -478,6 +480,7 @@ const RUNTIME_USAGE = `Usage:
   forge-launcher runtime repo list
   forge-launcher runtime repo remove <id>
   forge-launcher runtime rotate-tokens
+  forge-launcher runtime harness list|grant|revoke ...
 
 Starts the local Forge execution service and its PostgreSQL/Dapr infrastructure.
 Infrastructure ports remain private. --host-tools publishes PostgreSQL on loopback (default 127.0.0.1:55432).
@@ -489,6 +492,8 @@ The service API listens on 127.0.0.1:\${MYFORGE_API_PORT:-8483} and requires the
 "repo add" registers a repository's .git directory for the service; restart the runtime
 (stop, then start) to apply registration changes. Worktrees and submodules are rejected.
 "rotate-tokens" replaces the service API and Dapr sidecar tokens; restart the runtime to apply them.
+"harness grant <harness> <VARIABLE>" grants a credential (read from stdin) to one worker harness;
+grants apply to the next task attempt and are excluded from backups.
 `;
 
 export async function runtimeCli(args: readonly string[]): Promise<number> {
@@ -498,6 +503,7 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
     return actionValue ? 0 : 1;
   }
   if (actionValue === "repo") return repositoryCli(rest);
+  if (actionValue === "harness") return harnessCli(getRuntimeDataDir(), rest);
   if (actionValue === "rotate-tokens") {
     if (rest.length) throw new Error("Usage: forge-launcher runtime rotate-tokens");
     await rotateRuntimeTokens();

@@ -176,6 +176,8 @@ interface JournalEntry {
   readonly pending?: { readonly outcome: TaskExecutionOutcomeV1; readonly repositoryId: string; readonly targetRef: string };
   /** Present for an approval wait: the verified, not yet integrated effect. */
   readonly approval?: PreparedEffect & { readonly evidenceDigests: readonly Sha256Digest[] };
+  /** Present for a human-review wait: the published review evidence, no harness effect. */
+  readonly review?: { readonly evidenceRef: ArtifactRefV1; readonly evidenceDigests: readonly Sha256Digest[] };
   readonly failureReason?: string;
 }
 
@@ -248,7 +250,7 @@ export class ExecutionHost {
       // The workflow records `attempt.resumed` before the resume activity validates
       // the wake, so that one control still observes the attempt as waiting.
       taskStatus: wait.resumedBy ? "waiting-for-approval" : status.task.status,
-      evidenceDigests: journal?.approval?.evidenceDigests ?? [],
+      evidenceDigests: journal?.approval?.evidenceDigests ?? journal?.review?.evidenceDigests ?? [],
     };
   }
 
@@ -291,6 +293,7 @@ export class ExecutionHost {
     if (!claimed.ok) throw new Error(`Could not claim operation receipt: ${claimed.code}`);
     if (claimed.receipt.state !== "claimed") return this.recover(run, key, claimed.receipt, journaled);
     let receipt = await this.transition(key, claimed.receipt, "executing");
+    if (task.contract?.kind === "human-review") return this.awaitReview(run, task, key, receipt);
 
     const workspace = await this.prepareWorkspace(run, input.operationId);
     this.audit({ event: "attempt.workspace", ...key, baseRevision: workspace.baseRevision });
@@ -384,12 +387,93 @@ export class ExecutionHost {
     return this.integrate(run, task, key, receipt, prepared.effect, { rebase: true });
   }
 
+  /**
+   * Human-review tasks are never sent to a model. The attempt publishes review
+   * evidence binding the task contract to the target head the reviewer sees,
+   * then waits for an authorized approval of exactly that evidence.
+   */
+  private async awaitReview(
+    run: ExecutionHostRunV1,
+    task: ManifestTask,
+    key: OperationKeyV1,
+    receipt: OperationReceiptV1,
+  ): Promise<TaskActivityOutcomeV1> {
+    const head = await this.git(this.targetRoot(run), ["rev-parse", "--verify", `${run.targetRef}^{commit}`]);
+    const bytes = new TextEncoder().encode(`${JSON.stringify({
+      schemaVersion: 1,
+      kind: "human-review",
+      runId: run.runId,
+      manifestDigest: run.manifestDigest,
+      taskId: task.id,
+      logicalAttempt: key.logicalAttempt,
+      targetRef: run.targetRef,
+      targetHead: head,
+      contract: task.contract,
+    }, null, 2)}\n`);
+    const published = await this.dependencies.checkpoints.publishArtifact(bytes, {
+      mediaType: "application/json",
+      sizeBytes: bytes.byteLength,
+      sha256: sha256Digest(bytes),
+      retentionClass: "checkpoint-evidence",
+    });
+    if (!published.ok) throw new Error(`Could not publish review evidence: ${published.code}`);
+    const evidenceDigests = [published.ref.sha256 as Sha256Digest];
+    const waitId = `review-${published.ref.sha256.slice(7, 23)}`;
+    const effectPublished = await this.transition(key, receipt, "effect-published", evidenceDigests[0]);
+    await this.writeJournal(key.operationId, { review: { evidenceRef: published.ref, evidenceDigests } });
+    await this.transition(key, effectPublished, "accepted");
+    const waiting: TaskActivityOutcomeV1 = { status: "waiting", waitId };
+    await this.writeJournal(key.operationId, { review: { evidenceRef: published.ref, evidenceDigests }, outcome: waiting });
+    this.audit({ event: "attempt.waiting-for-approval", ...key, waitId, evidenceDigests, review: true });
+    return waiting;
+  }
+
+  /** Completes an approved human review; there is no repository effect to integrate. */
+  private async completeReview(
+    run: ExecutionHostRunV1,
+    input: ResumeTaskActivityInputV1,
+    binding: ApprovalBindingV1,
+    review: NonNullable<JournalEntry["review"]>,
+  ): Promise<TaskActivityOutcomeV1> {
+    const evidenceDigest = (digests: readonly string[]) => [...digests].sort().join(",");
+    if (evidenceDigest(binding.evidenceDigests) !== evidenceDigest(review.evidenceDigests)) {
+      return { status: "failed", retryable: false, failureCode: "approval-evidence-mismatch" };
+    }
+    const key = operationKey(input);
+    const journaled = await this.readJournal(input.operationId);
+    if (journaled?.outcome) return journaled.outcome;
+    const claimed = await this.dependencies.receipts.claim(key);
+    if (!claimed.ok) throw new Error(`Could not claim operation receipt: ${claimed.code}`);
+    if (claimed.receipt.state !== "claimed") return this.recover(run, key, claimed.receipt, journaled);
+    const receipt = await this.transition(key, claimed.receipt, "executing");
+    const evidence = createTaskCompletionEvidence({
+      runId: key.runId,
+      taskId: key.taskId,
+      manifestDigest: run.manifestDigest,
+      logicalAttempt: key.logicalAttempt,
+      operationId: key.operationId,
+      outputFiles: [],
+      handoffDigest: review.evidenceDigests[0]!,
+      artifactRefs: [review.evidenceRef],
+      validationCommands: [],
+      harnessEvidence: [`human review approved by ${binding.operatorId}`],
+    });
+    const complete: TaskExecutionOutcomeV1 = { status: "complete", evidence };
+    const published = await this.transition(key, receipt, "effect-published", evidence.completionDigest);
+    await this.transition(key, published, "accepted");
+    await this.writeJournal(key.operationId, { outcome: complete });
+    this.audit({ event: "attempt.reviewed", ...key, operatorId: binding.operatorId, evidenceDigests: review.evidenceDigests });
+    return complete;
+  }
+
   private async resumeTask(input: ResumeTaskActivityInputV1, binding: ApprovalBindingV1): Promise<TaskActivityOutcomeV1> {
     const run = this.requireRun(input);
     const task = run.tasks.get(input.taskId);
     if (!task) throw new Error(`Run '${input.runId}' has no task '${input.taskId}'`);
     const executeOperation = taskOperationId(input.runId, input.taskId, input.logicalAttempt);
-    const approval = (await this.readJournal(executeOperation))?.approval;
+    const executed = await this.readJournal(executeOperation);
+    if (executed?.review) return this.completeReview(run, input, binding, executed.review);
+    const approval = executed?.approval;
     if (!approval) throw new Error(`No verified approval effect exists for ${input.taskId} attempt ${input.logicalAttempt}`);
     const evidenceDigest = (digests: readonly string[]) => [...digests].sort().join(",");
     if (evidenceDigest(binding.evidenceDigests) !== evidenceDigest(approval.evidenceDigests)) {

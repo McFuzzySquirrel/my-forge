@@ -11,6 +11,7 @@ import { prompt as defaultPrompt, promptMultiline as defaultPromptMultiline, pro
 import { launchCliInTerminal } from "./terminal.ts";
 import { assertEngineHarnessAvailable, loadEngineConfig, saveEngineConfig } from "./engine-config.ts";
 import { engineRunCli } from "./engine-run.ts";
+import { serviceEngineRun } from "./service-run.ts";
 import { createSessionScope } from "./launcher-session.ts";
 import { type AuthoringOptions, type AuthoringRunnerChoice, type AuthoringRunnerSelection, type AuthoringStage, loadAuthoringConfig, saveAuthoringConfig, selectAuthoringModel, selectAuthoringRunner } from "./authoring-config.ts";
 import { authoringArgv, interactiveAuthoringArgv, inventoryForRunner, readAuthoringInventory, refreshAuthoringInventory, resolveAuthoringModel, type AuthoringInvocation, type AuthoringRunner, type InventoryProbe } from "./authoring-inventory.ts";
@@ -1152,6 +1153,7 @@ async function configureEngineOptions(opts: LauncherOptions): Promise<void> {
 }
 
 async function stopEngine(_opts: LauncherOptions): Promise<void> {
+  if (await serviceEngineRun(["--repo", state.repoDir, "--stop"], { write: (text) => out(text.trimEnd()) }) !== undefined) return;
   const engineDir = findEngineDir(state.repoDir);
   if (!engineDir) {
     warn("forge-workflow-engine not found under the repo; cannot stop the engine from here.");
@@ -2266,7 +2268,7 @@ async function engineRunCliForIncrement(repoDir: string, featureNames: string[])
     if (cfg.viz) args.push("--viz", ...(cfg.vizPort ? ["--viz-port", cfg.vizPort] : []));
     if (cfg.autoCommit === false) args.push("--no-auto-commit");
     args.push(cfg.logHarnessActivity ? "--log-harness-activity" : "--no-log-harness-activity");
-    return engineRunCli(args);
+    return (await serviceEngineRun(args)) ?? engineRunCli(args);
   } catch {
     fail("Cannot run feature increment: execution manifest is missing or invalid.");
     return 1;

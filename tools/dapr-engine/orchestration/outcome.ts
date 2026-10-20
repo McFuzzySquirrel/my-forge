@@ -36,6 +36,8 @@ export interface TaskCompletionEvidenceInputV1 {
   readonly handoffDigest: Sha256Digest;
   readonly artifactRefs: readonly ArtifactRefV1[];
   readonly validationCommands: readonly string[];
+  /** Overrides the harness gate evidence, e.g. for a human review that ran no harness. */
+  readonly harnessEvidence?: readonly string[];
 }
 
 export interface TaskExecutionIdentityV1 {
@@ -152,7 +154,7 @@ export function createTaskCompletionEvidence(
     handoffDigest: input.handoffDigest,
     artifactRefs: [...input.artifactRefs],
     gates: {
-      harness: { status: "passed" as const, evidence: ["harness exited successfully"] },
+      harness: { status: "passed" as const, evidence: [...(input.harnessEvidence ?? ["harness exited successfully"])] },
       outputs: {
         status: "passed" as const,
         evidence: input.outputFiles.length > 0 ? [...input.outputFiles] : ["no-op policy passed"],

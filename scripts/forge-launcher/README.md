@@ -32,8 +32,8 @@ the queued command it prints.
 | `forge-launcher --draft` | Same, but auto-draft the agent team and project skills (keeps review boundaries). The PRD is always interactive. |
 | `forge-launcher --headless` | Drive the queued skill from the terminal via `opencode run --auto` / `copilot -p --yolo`. Stops with a handoff when no PRD exists. |
 | `forge-launcher bootstrap <dir> [--harness agents\|github\|claude\|opencode]` | Copy agent/skill templates into an existing project. |
-| `forge-launcher engine-run [--repo <path>] [--harness <h>] …` | Compile the manifest and run the workflow engine (autonomous build). |
-| `forge-launcher resume [--repo <path>]` | Pick up a paused/finished setup where it left off. |
+| `forge-launcher engine-run [--repo <path>] [--harness <h>] …` | Compile the manifest and run the autonomous build: through the local service for registered repositories, otherwise with the legacy workflow engine. |
+| `forge-launcher resume [--repo <path>]` | Pick up a paused/finished setup where it left off (resumes the active service run for registered repositories). |
 | `forge-launcher console [--repo <path>]` | Local web UI (`http://127.0.0.1:4300`) for authoring, build monitoring, and run controls; sign in with the printed single-use link. |
 | `forge-launcher runtime start [--host-tools]` | Start the Forge worker and persistent PostgreSQL/Dapr services with rootless Podman; host tools publish PostgreSQL on loopback only. |
 | `forge-launcher runtime status` | Show runtime containers and recent logs for unhealthy or stopped services. |
@@ -43,6 +43,7 @@ the queued command it prints.
 | `forge-launcher runtime backup --output <new-directory>` | Quiesce the runtime and write checksummed PostgreSQL, Scheduler, and Forge volume archives. |
 | `forge-launcher runtime restore --from <backup-directory> --confirm` | Verify an archive, replace runtime volumes, and restart the service. |
 | `forge-launcher runtime repo add <path> [--id <id>] \| list \| remove <id>` | Register repositories whose `.git` directory the service may mount; restart the runtime to apply. |
+| `forge-launcher runtime harness grant <harness> <VARIABLE> [--from-env] \| list \| revoke <harness> [VARIABLE]` | Grant, list, or revoke the credentials a worker harness (`copilot`, `claude`, `opencode`) receives; values are read from stdin or the environment. |
 | `forge-launcher service submit [--repo <path>] [--follow] ...` | Submit the compiled manifest to the local service; it integrates into `forge/<branch>`. |
 | `forge-launcher service runs \| status \| events \| control \| merge` | List, monitor, control, and fast-forward-merge service runs; `--json` exports run records and the event audit trail. |
 | `forge-launcher draft-team \| draft-skills [--repo <path>]` | Headless derivation stages (PRD → agent team → project skills). |
@@ -56,8 +57,11 @@ repository.
 
 The `runtime` commands manage the local service and its infrastructure. The
 `service` commands use its loopback, token-authenticated run API. The worker
-currently offers only the `stub` harness; real harness runs still use
-`engine-run`, and the authenticated Console path is still in progress.
+image includes pinned `copilot`, `claude`, and `opencode` CLIs, which run only
+with credentials granted through `runtime harness grant`. For registered
+repositories, `engine-run`, `resume`, and Console builds and controls use the
+service; unregistered repositories keep the legacy engine. See
+[ADR-071](../../docs/adr/071-service-harnesses-and-execution-entry-points.md).
 
 In the Console's **Projects** view, use **Remove from Forge** for one project or
 **Remove selected (N)** for several. Confirmation is required. Only Forge

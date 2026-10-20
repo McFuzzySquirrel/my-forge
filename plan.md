@@ -9,10 +9,11 @@ conformance fixtures are implemented in
 [issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5). P3 is
 complete and P3-GATE was accepted in
 [issue #7](https://github.com/McFuzzySquirrel/my-forge/issues/7). P4-GATE was
-accepted by the operator on 2026-10-19, authorizing P5; the next work package is
-P5-01, with deployment/access decisions recorded in
-[ADR-068](docs/adr/068-local-deployment-and-access-profiles.md). The runtime is
-not yet a production replacement.
+accepted by the operator on 2026-10-19, authorizing P5, with deployment/access
+decisions recorded in
+[ADR-068](docs/adr/068-local-deployment-and-access-profiles.md). P5-01–06 are
+done, and the P5-GATE evidence awaits operator acceptance. The runtime is not
+yet a production replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
 profiles; no permanent legacy backend
@@ -63,7 +64,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE accepted 2026-10-19 | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-GATE evidence](#p4-gate-acceptance-evidence--2026-10-19); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
-| P5 — Launcher and Console migration | P4 gate | Launcher + Console | In progress (P5-01, P5-02, P5-05, P5-06 done; P5-03, P5-04 partial) | @McFuzzySquirrel |
+| P5 — Launcher and Console migration | P4 gate | Launcher + Console | P5-01–06 done; P5-GATE evidence recorded, pending operator acceptance ([evidence](#p5-gate-evidence--2026-10-22)) | @McFuzzySquirrel |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
@@ -291,7 +292,7 @@ server, or GitHub App is a first-class path.
   compatibility are not promised. The backup does not include target Git
   repositories or their working trees/refs; repository backup remains separate
   until those paths are service-managed.
-- [ ] **P5-03 — Migrate execution entry points.** Update engine-run, resume,
+- [x] **P5-03 — Migrate execution entry points.** Update engine-run, resume,
   launcher flow, wrappers, bootstrap/package resources, and auto-build polling
   to submit/query/control the service. Select local versus hosted deployment,
   not legacy versus Dapr scheduling.
@@ -303,20 +304,37 @@ server, or GitHub App is a first-class path.
   on `forge/<base>` branches and fast-forwards the checked-out branch on
   request. Terminal runs release repository leases. Live stub-harness runs,
   replay, idempotent resubmission, and restart rebinding were validated.
-  **Blocked remainder:** the worker provides only the `stub` harness; real
-  harness CLIs and explicitly granted credentials are not provisioned in the
-  container, so engine-run, resume, auto-build, and Console runs still use the
-  legacy engine. Migrating them needs a decision on harness provisioning.
-- [ ] **P5-04 — Migrate Console/Board controls.** Replace file/PID control with
+  *Done* ([ADR-071](docs/adr/071-service-harnesses-and-execution-entry-points.md)):
+  - The worker image pins the `copilot`, `claude`, and `opencode` CLIs.
+  - `runtime harness grant|list|revoke` manages owner-only, per-harness
+    allowlisted credentials, re-read for each attempt. Ungranted harnesses
+    are rejected at submission.
+  - For registered repositories, engine-run, resume, feature-increment
+    runs, and auto-build use the service: they submit, attach, or resume,
+    follow events, and fast-forward on completion. Unregistered
+    repositories keep the legacy engine until P7.
+  - `FORGE_DEPLOYMENT` selects local versus hosted; hosted fails until P8.
+  - Human-review tasks wait on published review evidence without a harness.
+  - Wrappers delegate to `engine-run`, and `stage-resources.mjs` already
+    stages the deploy resources.
+- [x] **P5-04 — Migrate Console/Board controls.** Replace file/PID control with
   authenticated service requests and acknowledged outcomes; reconnect from
   sequenced status/events. Remove scheduling dependence on dynamically importing
   the legacy engine while retaining shared readiness semantics.
   *In progress:* the Console **Service runs** view monitors service runs from
   sequenced events and sends authenticated pause/resume/stop/cancel/approve/
   replay requests through the Console server, showing the service's
-  acknowledgement (live approve validated). File/PID control and the legacy
-  engine import remain for Overview builds until real harnesses run in the
-  worker (see P5-03).
+  acknowledgement (live approve validated).
+  *Done:* for registered repositories:
+  - Overview builds run through the service.
+  - Pause, Stop, Replay, and human-review approval go to the repository's
+    service run. A Console review approval also writes the reviewer's notes,
+    with the run and control IDs, to `docs/reviews/`.
+  - The Overview shows the execution deployment.
+
+  The Console still imports the shared readiness logic to project task
+  status. File/PID control remains only for unregistered repositories until
+  P7 retires the legacy engine.
 - [x] **P5-05 — Harden local access.** Expose Forge API/Console only on loopback
   by default; authenticate controls, validate browser origins/CSRF protections,
   constrain repository paths, scope secrets, and redact logs. Sidecar/store APIs
@@ -351,6 +369,8 @@ server, or GitHub App is a first-class path.
 - [ ] **P5-GATE:** A fresh local user can start the stack, submit and monitor a
   run, approve/control it, stop/restart, and recover through launcher and Console
   without editing generated files or using infrastructure APIs.
+  *Evidence recorded, pending operator acceptance:* see
+  [P5-GATE evidence](#p5-gate-evidence--2026-10-22).
 
 **Starting points:** `scripts/forge-launcher/scripts/engine-run.ts`, `resume.ts`,
 `bootstrap.ts`, `launcher.ts`, `stage-resources.mjs`, and
@@ -526,15 +546,19 @@ volumes, and confirmed reset removing them. An occupied host port is rejected
 before credentials or containers are created. Launcher staging and package
 contents, protected credential creation and reuse, and required-credential
 failures are tested. The flaky C26 durable-cancel fixture was fixed, and the
-full engine suite passes repeatedly. The next work package is **P5-03**: migrate launcher execution entry points
-to submit/query/control the service. P5-02 now provides the worker entry point,
+full engine suite passes repeatedly. P5-02 provides the worker entry point,
 lifecycle, diagnostics, migration checks, and checksummed backups of
 service-owned volumes. P5-03 added the service run API, repository binding,
-and the `service` launcher commands; real-harness execution in the worker is
-blocked on a harness-provisioning decision (see P5-03). P5-05 hardened local
-access with a Console operator session and a Dapr sidecar token (ADR-070);
-P5-06 added runtime remediation hints, JSON status/audit export, and
-troubleshooting docs. P5-04 has started with the Console **Service runs** view.
+and the `service` launcher commands, then completed by provisioning pinned
+harness CLIs with granted credentials and routing engine-run, resume, and
+Console builds for registered repositories through the service (ADR-071).
+P5-05 hardened local access with a Console operator session and a Dapr
+sidecar token (ADR-070). P5-06 added runtime remediation hints, JSON
+status/audit export, and troubleshooting docs. P5-04 routes Console controls
+and human-review approval to service runs. **P5-GATE evidence is recorded and
+awaits operator acceptance**
+([P5-GATE evidence](#p5-gate-evidence--2026-10-22)); P6 starts once it is
+accepted.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -599,6 +623,47 @@ conformance fixtures remain semantic evidence only, not proof of full durable
 Dapr effects. The evidence also does not cover Dapr PostgreSQL state, deployment
 volumes, or a running service. P4 execution is now authorized; Console migration
 and legacy-engine retirement remain gated by their later phases.
+
+### P5-GATE evidence — 2026-10-22
+
+**Status: recorded, pending operator acceptance.**
+
+**Automated checks.**
+- Launcher: typecheck, the full `node --test` suite, build, and
+  `check:version` pass.
+- Engine: typecheck passes, and `npm test --prefix tools/dapr-engine` passes
+  170 tests, including the 17 PostgreSQL integration tests, run against a
+  throwaway local PostgreSQL. The execution-host integration test covers a
+  human-review wait, approval, and completion with no harness invocation and
+  no target change.
+
+**Live checks.** These ran against the rootless Podman runtime (Dapr 1.18.7)
+with a registered smoke repository, `forge-smoke-gate`.
+
+1. `runtime start` built `localhost/myforge-worker:2` with copilot 1.0.100,
+   claude 2.1.304, and opencode 1.19.3.
+2. `engine-run --harness copilot` with no grant was rejected at submission
+   with the grant hint and exit 1. `runtime harness grant`, `list`, and
+   `revoke` updated the worker's mounted grant file live, and revoke left
+   `{"grants":{}}`.
+3. `engine-run --harness stub --allow-noop` routed through the service and
+   submitted `run_53f537554c52454890ef747781aca4ea`. T1 completed, and the
+   human-review task T2 waited for approval without a harness.
+4. `engine-run --stop` paused the run. A full `runtime stop`/`runtime start`
+   followed, then `resume` resumed and attached to the same run, with T2
+   still waiting.
+5. The Console's `/api/service/runs` listed the run.
+   `POST /api/tasks/human-review` approved T2 through the service, and T3
+   then completed. The run reached `complete`, and the launcher
+   fast-forwarded `main` to `forge/main`, which has the T1 and T3 commits.
+6. An earlier run, `run_66ccb5c7b44443c6958fa1c8b62e1c35`, exposed the
+   human-review gap: T2 failed three times with `execution-error`. That gap
+   is fixed in this release.
+
+**Not covered by this evidence; for operator acceptance.**
+- A real-harness task run with a granted credential.
+- A fresh install from a clean runtime data directory.
+- A browser walkthrough of the Console Overview and Service runs views.
 
 ### P4-GATE acceptance evidence — 2026-10-19
 

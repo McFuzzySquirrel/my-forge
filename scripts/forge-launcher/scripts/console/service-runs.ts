@@ -142,3 +142,56 @@ export async function controlServiceRun(
     return failure(error);
   }
 }
+
+export type RoutedConsoleAction = "pause" | "stop" | "replay" | "approve";
+
+function newestFirst(runs: readonly Record<string, unknown>[]): Record<string, unknown>[] {
+  return [...runs].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+}
+
+const ACTIVE_STATUSES = new Set(["queued", "running", "pausing", "paused", "stopping", "cancelling"]);
+
+/**
+ * Routes a Console build control to the repository's service run. Returns
+ * undefined when the repository is not registered with the local runtime, so
+ * the caller keeps the legacy engine control path.
+ *
+ * pause/stop and approve target the newest active run; replay targets the
+ * newest run, which the service reopens if it already finished.
+ */
+export async function routeServiceControl(
+  deps: ServiceRunsDeps,
+  repoRoot: string | null,
+  action: RoutedConsoleAction,
+  taskId?: string,
+): Promise<ServiceResponse | undefined> {
+  const repositoryId = await scope(deps, repoRoot);
+  if (typeof repositoryId !== "string") return repositoryId.status === 200 ? undefined : repositoryId;
+  const needsTask = action === "replay" || action === "approve";
+  if (needsTask && (typeof taskId !== "string" || !TASK_ID.test(taskId))) {
+    return { status: 400, body: { ok: false, code: "unknown-task", message: `${action} requires a task id.` } };
+  }
+  try {
+    const client = await deps.client();
+    const runs = newestFirst((await client.list(repositoryId)).runs);
+    const run = action === "replay" ? runs[0] : runs.find((entry) => ACTIVE_STATUSES.has(String(entry.status)));
+    if (!run) {
+      return {
+        status: 409,
+        body: { ok: false, code: "no-active-run", message: action === "replay" ? "This repository has no service runs to replay." : "No active service run for this repository." },
+      };
+    }
+    const runId = String(run.runId);
+    const serviceAction = action === "replay" ? "replay-task" : action === "approve" ? "approve-task" : action;
+    const result = await client.control(runId, serviceAction, needsTask ? { taskId } : {});
+    const messages: Record<RoutedConsoleAction, string> = {
+      pause: `Pause requested for service run ${runId}; it pauses after the current task.`,
+      stop: `Stop requested for service run ${runId}; it stops after the current task and can be resumed.`,
+      replay: `Replay of ${taskId} requested for service run ${runId}.`,
+      approve: `Human review of ${taskId} approved for service run ${runId}; the run continues.`,
+    };
+    return { status: 200, body: { ok: true, message: messages[action], runId, ...result } };
+  } catch (error) {
+    return failure(error);
+  }
+}

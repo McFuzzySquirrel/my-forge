@@ -106,7 +106,7 @@ services:
   forge:
     # Built locally from the pinned Node image; bump the tag when the
     # Containerfile changes so existing installs rebuild.
-    image: localhost/myforge-worker:1
+    image: localhost/myforge-worker:2
     build:
       context: .
       dockerfile: worker.Containerfile
@@ -127,6 +127,7 @@ services:
       MYFORGE_WORKER_ID: local
       MYFORGE_API_TOKEN: "${MYFORGE_API_TOKEN:?MYFORGE_API_TOKEN is required}"
       MYFORGE_REPOSITORIES_DIR: /repositories
+      MYFORGE_HARNESS_CREDENTIALS_FILE: /run/myforge/harness-grants/grants.json
     # The run API is published only on loopback and requires the bearer token.
     # Registered repositories are mounted by the launcher-generated override.
     ports:
@@ -136,6 +137,9 @@ services:
       - ${MYFORGE_LAUNCHER_NODE_MODULES:?MYFORGE_LAUNCHER_NODE_MODULES is required}:/opt/myforge/tools/dapr-engine/node_modules:ro,Z
       - ${MYFORGE_TEMPLATES_DIR:?MYFORGE_TEMPLATES_DIR is required}:/opt/myforge/templates:ro,Z
       - runtime_data:/var/lib/myforge
+      # Operator-granted harness credentials, re-read per attempt and passed
+      # only to the selected harness ("forge-launcher runtime harness grant").
+      - ${MYFORGE_HARNESS_GRANTS_DIR:?MYFORGE_HARNESS_GRANTS_DIR is required}:/run/myforge/harness-grants:ro,Z
     depends_on:
       postgres:
         condition: service_healthy

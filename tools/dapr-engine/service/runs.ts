@@ -16,7 +16,8 @@ import {
   type TrustedPrincipalV1,
 } from "../contract/v1/index.ts";
 import { StubAdapter } from "../execution/harness/stub-adapter.ts";
-import type { AgentDescriptor, HarnessAdapter, ManifestTask } from "../execution/types.ts";
+import { harnessUnavailableDetail, type ServiceHarnessV1 } from "./harnesses.ts";
+import type { AgentDescriptor, ManifestTask } from "../execution/types.ts";
 import {
   executionHostRunFromSubmission,
   type ExecutionHostRunV1,
@@ -46,19 +47,11 @@ const API_CONTROL_ACTIONS: ReadonlySet<ControlAction> = new Set([
   "pause", "resume", "stop", "cancel", "replay-task", "approve-task",
 ]);
 
-export interface ServiceHarnessV1 {
-  readonly adapterVersions: readonly string[];
-  create(): HarnessAdapter;
-}
-
-/**
- * Harnesses the containerized worker can execute. Real CLI harnesses need a
- * provisioned binary and an explicit credential grant inside the worker, which
- * the local profile does not provide yet; they are rejected at submission.
- */
-export function defaultServiceHarnesses(): ReadonlyMap<string, ServiceHarnessV1> {
-  return new Map([["stub", { adapterVersions: ["1"], create: () => new StubAdapter() }]]);
-}
+export {
+  defaultServiceHarnesses,
+  HARNESS_CREDENTIAL_VARIABLES,
+  type ServiceHarnessV1,
+} from "./harnesses.ts";
 
 /** Resolves a registered repository to its mount: `<root>/<id>` with a real `.git` directory. */
 export function mountedRepositoryResolver(root: string): (repositoryId: string) => string | undefined {
@@ -123,7 +116,18 @@ export class ServiceRunRegistry {
   constructor(private readonly harnesses: ReadonlyMap<string, ServiceHarnessV1>) {}
 
   harnessAvailable(harness: RunSubmissionV1["harness"]): boolean {
-    return this.harnesses.get(harness.id)?.adapterVersions.includes(harness.adapterVersion) === true;
+    return this.harnessUnavailable(harness) === undefined;
+  }
+
+  /** Undefined when the harness can be admitted; otherwise an operator-facing reason. */
+  harnessUnavailable(harness: RunSubmissionV1["harness"]): string | undefined {
+    const id = String(harness?.id);
+    const version = String(harness?.adapterVersion);
+    const entry = this.harnesses.get(id);
+    if (!entry) return harnessUnavailableDetail(id, version, "unknown-harness");
+    if (!entry.adapterVersions.includes(version)) return harnessUnavailableDetail(id, version, "unsupported-adapter-version");
+    const reason = entry.unavailable?.();
+    return reason ? harnessUnavailableDetail(id, version, reason) : undefined;
   }
 
   /** Throws when the snapshot cannot be executed by this worker. */
@@ -136,6 +140,7 @@ export class ServiceRunRegistry {
     const run = executionHostRunFromSubmission(runId, submission, {
       agentFor: (task: ManifestTask) => agents.get(task.ownerAgent ?? "") ?? fallbackAgent(task.ownerAgent ?? "forge-agent"),
       harness: harness.create(),
+      ...(harness.credentials ? { credentials: harness.credentials } : {}),
     });
     this.runs.set(runId, run);
     return run;
@@ -271,10 +276,8 @@ export class RunService {
     if (utf8JsonBytes(submission) > RUN_LIMITS_V1.maxWorkflowInputBytes) {
       return reject(413, "run-limit-exceeded", `Submission exceeds ${RUN_LIMITS_V1.maxWorkflowInputBytes} bytes`);
     }
-    if (!this.dependencies.registry.harnessAvailable(submission.harness)) {
-      return reject(422, "harness-unavailable",
-        `Harness '${String(submission.harness.id)}@${String(submission.harness.adapterVersion)}' is not available in the local service worker`);
-    }
+    const harnessProblem = this.dependencies.registry.harnessUnavailable(submission.harness);
+    if (harnessProblem) return reject(422, "harness-unavailable", harnessProblem);
     const repositoryRoot = this.dependencies.repositoryRoot(submission.repositoryId);
     if (!repositoryRoot) {
       return reject(422, "repository-unavailable",

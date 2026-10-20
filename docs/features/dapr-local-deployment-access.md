@@ -54,6 +54,7 @@ manifest.
 | DAPR-DEPLOY-02, -03 | P5-03 service run API ([ADR-069](../adr/069-service-run-submission-and-repository-binding.md)) | implemented by |
 | DAPR-DEPLOY-04 | P5-02 and P5-05 in [plan.md](../../plan.md) | implemented by |
 | DAPR-DEPLOY-04 | P5-05 local operator session and sidecar token ([ADR-070](../adr/070-local-operator-session-and-sidecar-token.md)) | implemented by |
+| DAPR-DEPLOY-03, -04 | P5-03 service harnesses and entry points, P5-04 Console routing ([ADR-071](../adr/071-service-harnesses-and-execution-entry-points.md)) | implemented by |
 | DAPR-DEPLOY-05 | P8-02 in [plan.md](../../plan.md) | implemented by |
 | DAPR-C-03 | [Foundation vision](../PRD.md) | constrained by (loopback host-tools exception recorded in ADR-068) |
 | Trusted-principal approvals | [Contract v1](../contracts/dapr-execution-v1.md) | consumes |
@@ -110,21 +111,25 @@ manifest.
 {
   "id":"P5-03",
   "title":"Submit and control runs through the local service",
-  "description":"Serve a loopback-only, token-authenticated run API from the worker with durable idempotent submissions, restart rebinding, sequenced events, and contract v1 controls. Register repositories explicitly and mount only their .git directories; integrate into forge/<base> refs, never a checked-out branch. Add launcher service commands. Real-harness provisioning in the worker is a separate decision; until then legacy engine-run remains the real-harness path.",
+  "description":"Serve a loopback-only, token-authenticated run API from the worker with durable idempotent submissions, restart rebinding, sequenced events, and contract v1 controls. Register repositories explicitly and mount only their .git directories; integrate into forge/<base> refs, never a checked-out branch. Add launcher service commands. Provision pinned harness CLIs in the worker image with operator-granted, per-harness allowlisted credentials, and route engine-run, resume, feature-increment, and auto-build runs for registered repositories through the service, selected by local versus hosted deployment (ADR-071).",
   "ownerAgent":"forge-runtime-engineer",
   "dependencies":["P5-02"],
-  "expectedOutputs":["tools/dapr-engine/service/api.ts","tools/dapr-engine/service/runs.ts","tools/dapr-engine/storage/postgres/run-submissions.sql","scripts/forge-launcher/scripts/service-client.ts","scripts/forge-launcher/scripts/runtime-repositories.ts"],
+  "expectedOutputs":["tools/dapr-engine/service/api.ts","tools/dapr-engine/service/runs.ts","tools/dapr-engine/service/harnesses.ts","tools/dapr-engine/storage/postgres/run-submissions.sql","scripts/forge-launcher/scripts/service-client.ts","scripts/forge-launcher/scripts/service-run.ts","scripts/forge-launcher/scripts/runtime-harnesses.ts","scripts/forge-launcher/scripts/runtime-repositories.ts"],
   "validationCommands":["npm test --prefix tools/dapr-engine","npm run typecheck --prefix tools/dapr-engine","npm test --prefix scripts/forge-launcher","npm run typecheck --prefix scripts/forge-launcher"],
   "contract":{
     "version":2,"kind":"implementation",
     "requirements":[],
     "requirementRefs":["docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-02","docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-03"],
-    "acceptanceCriteria":["The run API is published only on loopback and rejects missing or wrong tokens, non-loopback Host headers, and browser Origin headers.","Resubmitting a key returns the same run; a different snapshot under the same key is a conflict.","Runs are rebound after a worker restart without manual state edits.","Only registered .git directories are mounted; the host home and container sockets are never mounted.","Runs never advance a checked-out branch."],
+    "acceptanceCriteria":["The run API is published only on loopback and rejects missing or wrong tokens, non-loopback Host headers, and browser Origin headers.","Resubmitting a key returns the same run; a different snapshot under the same key is a conflict.","Runs are rebound after a worker restart without manual state edits.","Only registered .git directories are mounted; the host home and container sockets are never mounted.","Runs never advance a checked-out branch.","Harness credentials come only from explicit per-harness grants, reach only their harness, are never passed in submissions or persisted with runs, and a run for an ungranted harness is rejected at submission.","Human-review tasks are never sent to a model; they wait for an approval bound to published review evidence.","engine-run and resume use the service for registered repositories; unregistered repositories keep the legacy engine and FORGE_DEPLOYMENT=hosted fails clearly."],
     "constraints":[],
     "constraintRefs":["docs/PRD.md#DAPR-C-03","docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-C-01"],
-    "references":["plan.md","docs/adr/069-service-run-submission-and-repository-binding.md","docs/contracts/dapr-execution-v1.md"]
+    "references":["plan.md","docs/adr/069-service-run-submission-and-repository-binding.md","docs/adr/071-service-harnesses-and-execution-entry-points.md","docs/contracts/dapr-execution-v1.md"]
   }
 }
+```
+
+```forge-task
+{"id":"P5-04","title":"Route Console controls through the local service","description":"For registered repositories, route Console Overview builds, pause, stop, replay, and human-review approval to the repository's service run with acknowledged outcomes, monitor runs from sequenced service events, and show the selected execution deployment. The Console server holds the service token; the browser never receives it. Unregistered repositories keep the legacy file/PID controls until P7.","ownerAgent":"forge-runtime-engineer","dependencies":["P5-03","P5-05"],"expectedOutputs":["scripts/forge-launcher/scripts/console/service-runs.ts","scripts/forge-launcher/scripts/console/server.ts","scripts/forge-launcher/scripts/console/dashboard/views/overview.ts"],"validationCommands":["npm test --prefix scripts/forge-launcher","npm run typecheck --prefix scripts/forge-launcher"],"contract":{"version":2,"kind":"implementation","requirements":[],"requirementRefs":["docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-04"],"acceptanceCriteria":["Console controls for a registered repository reach only that repository's service runs and return the service acknowledgement or rejection.","A human-review approval from the Console is bound to the service's review evidence and keeps the reviewer's notes in a readable record.","Unregistered repositories keep the legacy control path unchanged."],"constraints":[],"constraintRefs":["docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-C-01"],"references":["plan.md","docs/adr/071-service-harnesses-and-execution-entry-points.md","docs/forge-console.md"]}}
 ```
 
 ```forge-task

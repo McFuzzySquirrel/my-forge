@@ -4,6 +4,41 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.123
+
+### P5-03/P5-04 builds run through the local execution service
+
+- The worker image (`localhost/myforge-worker:2`) now includes pinned
+  `copilot`, `claude`, and `opencode` CLIs. `runtime start` rebuilds it once.
+- New `forge-launcher runtime harness grant|list|revoke` gives each harness
+  explicitly granted credentials. Values are read from stdin or the
+  environment and stored owner-only. Each harness accepts only its own
+  variables, and changes apply from the next task attempt. A run for a harness
+  with no grant is rejected at submission with a hint.
+- For repositories registered with `runtime repo add`, `engine-run`, `resume`,
+  feature-increment runs, and Console builds use the local service:
+  - `engine-run` submits a new run or resumes and attaches to the active one,
+    then streams events to the terminal and `docs/engine-run.log`.
+  - When the run completes, it fast-forwards the checked-out branch to
+    `forge/<branch>`.
+  - `--stop` and `--pause` send service controls.
+  - Unregistered repositories keep the legacy engine.
+  - `FORGE_DEPLOYMENT=hosted` fails clearly until hosted access is qualified.
+- Human-review tasks now run in the service. They are never sent to a model.
+  The service publishes review evidence for the task and target commit, waits
+  for an approval of exactly that evidence, and then completes the task
+  without a repository change.
+- The Console routes Pause, Stop, Replay, and human-review approval to the
+  repository's service run. A Console review approval also writes
+  `docs/reviews/<task-id>-console-review.md` with your notes and the run and
+  control IDs. The Overview shows which execution deployment the repository
+  uses.
+- See [ADR-071](adr/071-service-harnesses-and-execution-entry-points.md),
+  [Service runs](forge-launcher.md#service-runs), and the Console's
+  [Service runs](forge-console.md#service-runs).
+
+---
+
 ## October 2026 - v3.122
 
 ### P5-04 Console service runs (partial)

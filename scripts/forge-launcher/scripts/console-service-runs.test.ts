@@ -67,7 +67,7 @@ async function withConsole(
     headers: { "content-type": "application/json", "x-forge-token": token },
     body: JSON.stringify(body),
   });
-  return { server, post };
+  return { server, post, repo };
 }
 
 test("the Console lists, monitors, and controls the current repository's service runs", async (t) => {
@@ -123,4 +123,73 @@ test("the Console explains an unregistered repository or an unavailable service"
   assert.equal(downList.reason, "unavailable");
   assert.match(downList.message, /not reachable/);
   assert.equal((await signedFetch(`${down.server.url}/api/service/run?id=${RUN}`)).status, 503);
+});
+
+test("Console build controls route to the service run for a registered repository", async (t) => {
+  const { deps, controls } = fakeService();
+  const { post, repo } = await withConsole(t, deps, 44974);
+  fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify({
+    version: 1,
+    phases: [{ id: "phase-1", name: "Phase 1", tasks: [{
+      id: "T2",
+      title: "Review the build",
+      description: "Review the build.",
+      dependencies: [],
+      expectedOutputs: [],
+      validationCommands: [],
+      contract: {
+        version: 1,
+        kind: "human-review",
+        requirements: ["Review the build."],
+        acceptanceCriteria: ["The reviewer approves."],
+        constraints: [],
+        references: ["README.md"],
+        reviewFile: "docs/review.json",
+      },
+    }] }],
+  }));
+
+  const paused = await post("/api/control", { action: "pause" });
+  assert.equal(paused.status, 200);
+  assert.match((await paused.json() as { message: string }).message, /Pause requested for service run run_0123456789abcdef/);
+  assert.equal((await post("/api/control", { action: "stop" })).status, 200);
+  assert.equal((await post("/api/control", { action: "replay", taskId: "T1" })).status, 200);
+  assert.equal((await post("/api/control", { action: "replay" })).status, 400);
+
+  const tooShort = await post("/api/tasks/human-review", { taskId: "T2", reviewer: "me", notes: "looks good" });
+  assert.equal(tooShort.status, 400);
+  const notes = "Exercised the primary journey end to end and found no defects.";
+  const approved = await post("/api/tasks/human-review", { taskId: "T2", reviewer: "me", notes });
+  assert.equal(approved.status, 200);
+  const body = await approved.json() as { ok: boolean; resumed: boolean; message: string; reviewRecord: string };
+  assert.equal(body.ok, true);
+  assert.equal(body.resumed, false);
+  assert.match(body.message, /T2 approved for service run/);
+  assert.equal(body.reviewRecord, "docs/reviews/T2-console-review.md", body.message);
+  const record = fs.readFileSync(path.join(repo, body.reviewRecord), "utf8");
+  assert.match(record, /Reviewer: me/);
+  assert.ok(record.includes(notes));
+  assert.match(record, /Run: run_0123456789abcdef\nControl: c-1/);
+  assert.ok(!fs.existsSync(path.join(repo, "docs", "review.json")), "the service path writes no legacy attestation");
+  assert.deepEqual(controls, [
+    [RUN, "pause", {}],
+    [RUN, "stop", {}],
+    [RUN, "replay-task", { taskId: "T1" }],
+    [RUN, "approve-task", { taskId: "T2" }],
+  ]);
+});
+
+test("Console build controls keep the legacy engine path for unregistered repositories", async (t) => {
+  const { deps, controls } = fakeService({ registered: false });
+  const { post, repo } = await withConsole(t, deps, 44975);
+  const paused = await post("/api/control", { action: "pause" });
+  assert.equal(paused.status, 200);
+  assert.match((await paused.json() as { message: string }).message, /engine will stop after the current task/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(repo, "docs", "engine-control.json"), "utf8")).request, "pause");
+  assert.deepEqual(controls, []);
+
+  const down = await withConsole(t, fakeService({ unreachable: true }).deps, 44976);
+  const unavailable = await down.post("/api/control", { action: "stop" });
+  assert.equal(unavailable.status, 503);
 });

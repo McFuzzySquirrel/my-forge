@@ -31,7 +31,7 @@ import { harnessCliForHarness } from "./dashboard/harness-rules.ts";
 import * as repo from "./repo.ts";
 import { removeProjects, sameProjectPath } from "./remove-projects.ts";
 import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
-import { controlServiceRun, defaultServiceRunsDeps, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
+import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
 import type { ControlAction, CreateProjectRequest, ManifestTask } from "./types.ts";
 
 const CLIENT_DIR = fileURLToPath(new URL("../../resources/console/client", import.meta.url));
@@ -178,6 +178,30 @@ async function approveConsoleHumanReview(repoRoot: string, taskId: string, revie
   const generatedEvidence = context.writeHumanReviewEvidence(repoRoot, task, reviewer, notes);
   context.approveHumanTask(repoRoot, task, reviewer, [generatedEvidence]);
   return task.contract.reviewFile!;
+}
+
+/**
+ * Keeps the reviewer's notes for a human review approved through the service:
+ * the service binds the approval to its own evidence, and this readable
+ * record names the run and control that carried it.
+ */
+async function writeServiceReviewRecord(
+  repoRoot: string,
+  taskId: string,
+  reviewer: string,
+  notes: string,
+  approval: { runId?: unknown; controlId?: unknown },
+  engineScriptsDir?: string,
+): Promise<string> {
+  const engineScripts = engineScriptsDir ?? path.join(resolveResources().templatesDir, "skills", "forge-workflow-engine", "scripts");
+  const context = await tsImport(pathToFileURL(path.join(engineScripts, "task-context.ts")).href, import.meta.url) as {
+    writeHumanReviewEvidence: (repoRoot: string, task: ManifestTask, reviewer: string, notes: string) => string;
+  };
+  const task = repo.loadManifest(repoPaths(repoRoot))?.phases.flatMap((phase) => phase.tasks).find((entry) => entry.id === taskId);
+  if (!task) throw new Error(`Unknown task '${taskId}'.`);
+  const record = context.writeHumanReviewEvidence(repoRoot, task, reviewer, notes);
+  fs.appendFileSync(path.join(repoRoot, record), `\n## Service approval\n\nRun: ${String(approval.runId)}\nControl: ${String(approval.controlId)}\n`);
+  return record;
 }
 
 async function findFreePort(start: number, onLog: (m: string) => void): Promise<number> {
@@ -663,6 +687,11 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             if (!prompt) return sendJson(res, 400, { ok: false, message: "prompt is required" });
             return sendJson(res, 200, controller.featureIncrement());
           }
+          if (action === "pause" || action === "stop" || action === "replay") {
+            // Registered repositories build in the local execution service.
+            const routed = await routeServiceControl(serviceRuns(), currentRepo, action, taskId);
+            if (routed) return sendJson(res, routed.status, routed.body);
+          }
           return sendJson(res, 200, controller.dispatch(action, taskId, from));
         }
         if (urlPath === "/api/tasks/reset-changed") {
@@ -695,6 +724,23 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           const reviewer = typeof body.reviewer === "string" ? body.reviewer.trim() : "";
           const notes = typeof body.notes === "string" ? body.notes.trim() : "";
           if (!taskId || !reviewer || !notes) return sendJson(res, 400, { ok: false, message: "taskId, reviewer, and review notes are required." });
+          // Mirrors the engine's MIN_REVIEW_NOTES_LENGTH so a service approval is never sent with notes the record would refuse.
+          if (notes.length < 40) return sendJson(res, 400, { ok: false, message: "Review notes must describe what was exercised and found (at least 40 characters)." });
+          // Service runs record the approval as an acknowledged control from
+          // the local operator; the run is already following, so no resume job.
+          const routed = await routeServiceControl(serviceRuns(), currentRepo, "approve", taskId);
+          if (routed) {
+            if (!routed.body.ok) return sendJson(res, routed.status, { ...routed.body, resumed: false });
+            let reviewRecord: string | undefined;
+            let message = String(routed.body.message ?? "");
+            try {
+              reviewRecord = await writeServiceReviewRecord(currentRepo, taskId, reviewer, notes, routed.body, options.engineScriptsDir);
+            } catch (error) {
+              message += ` The review record was not written: ${error instanceof Error ? error.message : String(error)}`;
+            }
+            broadcast("snapshot", snapshotEvent());
+            return sendJson(res, routed.status, { ...routed.body, message, reviewRecord, resumed: false });
+          }
           try {
             const reviewFile = await approveConsoleHumanReview(currentRepo, taskId, reviewer, notes, options.engineScriptsDir);
             let job;

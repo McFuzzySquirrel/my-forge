@@ -249,6 +249,15 @@ echo "Engine started detached. Log: docs/engine-run.log"
 - `--yes` skips the engine's pre-run gate (required here because the engine has no TTY).
 - `FORGE_ENGINE_HARNESS` picks the per-task harness; default `opencode`, or set it to `copilot` to drive per-task `copilot -p --yolo` calls.
 
+**Local execution service (registered repositories).** If `forge-launcher runtime repo list` lists this repository, run the build through the service instead of Step 3b:
+
+```bash
+nohup forge-launcher engine-run --repo . --harness "${FORGE_ENGINE_HARNESS:-opencode}" --yes \
+  >> docs/engine-run.log 2>&1 &
+```
+
+The service owns the run: it commits each task to `forge/<branch>` and fast-forwards the checked-out branch when the run completes. Poll with `forge-launcher service runs --json` (the newest run's `status`) or follow `forge-launcher service events <run-id> --follow`; a run is finished when its status is `complete`, `failed`, or `cancelled`. Use `forge-launcher service control <run-id> replay-task --task <id>` instead of the engine's `replay`. CLI harnesses need a credential grant (`forge-launcher runtime harness grant <harness> <VARIABLE>`); the run is rejected with a `harness-unavailable` hint otherwise.
+
 **Step 3c: Poll to completion**
 
 Poll `docs/WORKFLOW-STATE.json` until its `status` is `"complete"` or `"failed"` (suggested: check every 30s). You may also tail `docs/engine-run.log` and `docs/PROGRESS.md` while the build runs. Do not start the engine a second time while one is already running.
@@ -313,7 +322,7 @@ If this skill is invoked in a repo that has an incomplete auto-build (detected b
    - If interrupted mid-Stage 1: re-invoke `forge-build-agent-team`.
    - If interrupted mid-Stage 2: re-run the affected stage from the beginning.
    - If interrupted mid-Stage 3 on the prompt-driven path: invoke `forge-orchestrate-build` with `resume from last checkpoint`.
-   - If interrupted mid-Stage 3 on the workflow-engine path: run `npm run workflow-engine -- run --harness opencode --yes` in the `forge-workflow-engine` skill directory (pass the same harness that was used before; the engine resumes from `docs/WORKFLOW-STATE.json`).
+   - If interrupted mid-Stage 3 on the workflow-engine path: run `npm run workflow-engine -- run --harness opencode --yes` in the `forge-workflow-engine` skill directory (pass the same harness that was used before; the engine resumes from `docs/WORKFLOW-STATE.json`). For a repository registered with the local execution service, run `forge-launcher engine-run --repo .` instead; it resumes or attaches to the active service run.
 3. Report to the user: "Resuming auto-build from Stage N, last completed: [task description]."
 4. Do not re-run stages whose outputs are already committed and verified.
 

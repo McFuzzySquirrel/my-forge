@@ -50,6 +50,19 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
         manifestTask({ id: "T-4", ownerAgent: "gamma", expectedOutputs: ["four.txt"], validationCommands: ["grep -qx four four.txt"] }),
         manifestTask({ id: "T-5", ownerAgent: "delta", expectedOutputs: ["five.txt"], validationCommands: ["grep -qx five five.txt"], approvalRequired: true }),
         manifestTask({ id: "T-6", ownerAgent: "epsilon", expectedOutputs: ["six.txt"], validationCommands: ["grep -qx six six.txt"] }),
+        {
+          ...manifestTask({ id: "T-7", ownerAgent: "unowned", expectedOutputs: [], validationCommands: [] }),
+          ownerAgent: undefined,
+          contract: {
+            version: 1,
+            kind: "human-review",
+            requirements: ["Review the integrated outputs."],
+            acceptanceCriteria: ["The reviewer approves the evidence."],
+            constraints: [],
+            references: ["README.md"],
+            reviewFile: "docs/review.json",
+          },
+        },
       ],
     }],
     settings: { maxRetries: 1 },
@@ -204,6 +217,58 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
   assert.equal(git(fixture.target, ["rev-parse", `${head()}^`]), parallelHead);
   assert.deepEqual(changed(head()), ["five.txt"]);
   assert.equal((await fixture.controls.get(controlId))?.state, "applied");
+
+  // Human review: no harness runs and no target change; approval completes the task.
+  const invocationsBeforeReview = harness.invocations.length;
+  const reviewHead = head();
+  const reviewWait = await host.executeTask(input("T-7"));
+  assert.equal(reviewWait.status, "waiting", JSON.stringify(reviewWait));
+  assert.deepEqual(await host.executeTask(input("T-7")), reviewWait);
+  const reviewWaitId = (reviewWait as Extract<TaskActivityOutcomeV1, { status: "waiting" }>).waitId;
+  const reviewInstance = taskAttemptWorkflowIdForAttempt(runId, "T-7", 1);
+  for (const [suffix, eventType, status] of [
+    ["started", "attempt.started", "running"],
+    ["wait:1", "attempt.waiting-for-approval", "waiting-for-approval"],
+  ] as const) {
+    await fixture.status.appendEvent({
+      schemaVersion: 1,
+      runId,
+      eventKey: `task:T-7:attempt:1:${suffix}`,
+      eventType,
+      taskId: "T-7",
+      logicalAttempt: 1,
+      taskStatus: status,
+      attemptStatus: status,
+      ...(eventType === "attempt.waiting-for-approval" ? { detail: { waitId: reviewWaitId, taskWorkflowInstanceId: reviewInstance } } : {}),
+    });
+  }
+  const reviewContext = await host.approvalContext(runId, "T-7");
+  assert.ok(reviewContext);
+  assert.equal(reviewContext.evidenceDigests.length, 1);
+  const reviewControlId = randomUUID();
+  const reviewApproved = await coordinator.approve({
+    schemaVersion: 1,
+    controlId: reviewControlId,
+    runId,
+    action: "approve-task",
+    payload: { taskId: "T-7", evidenceDigests: [...reviewContext.evidenceDigests] },
+  } as ControlRequestV1, { subject: "reviewer@example.invalid", roles: ["operator"] }, reviewContext);
+  assert.equal(reviewApproved.ok, true, JSON.stringify(reviewApproved));
+  const reviewed = await host.resumeTaskActivity()(undefined, {
+    ...input("T-7"),
+    waitId: reviewWaitId,
+    controlId: reviewControlId,
+    operationId: taskOperationId(runId, "T-7", 1, `resume:${reviewWaitId}`),
+    taskWorkflowInstanceId: reviewInstance,
+  });
+  assert.equal(reviewed.status, "complete", JSON.stringify(reviewed));
+  const reviewEvidence = (reviewed as Extract<TaskActivityOutcomeV1, { status: "complete" }>).evidence;
+  assert.deepEqual(reviewEvidence.outputFiles, []);
+  assert.equal(reviewEvidence.handoffDigest, reviewContext.evidenceDigests[0]);
+  assert.match(reviewEvidence.gates.harness.evidence?.[0] ?? "", /human review approved/);
+  assert.ok((await fixture.checkpoints.resolveArtifact(reviewEvidence.artifactRefs[0]!)).ok);
+  assert.equal(head(), reviewHead);
+  assert.equal(harness.invocations.length, invocationsBeforeReview);
 
   // Every completed outcome carries validation and checkpoint evidence resolvable from the store.
   for (const outcome of [first, second, retried, p1, p2, resumed]) {

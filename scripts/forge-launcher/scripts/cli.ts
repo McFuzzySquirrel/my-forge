@@ -13,6 +13,7 @@ import { PromptCancelled, prompts } from "./prompts.ts";
 import { checkForUpdate, printUpdateNotice } from "./update-check.ts";
 import { runtimeCli } from "./runtime.ts";
 import { serviceCli } from "./service-client.ts";
+import { serviceEngineRun, serviceResume } from "./service-run.ts";
 
 const USAGE = `forge-launcher - One command from zero to auto-build
 
@@ -24,6 +25,7 @@ Usage:
   forge-launcher console [--repo <path>] [--port <n>] [--no-open]
   forge-launcher runtime <start|status|stop|reset> [--host-tools] [--postgres-port <n>] [--confirm]
   forge-launcher runtime repo <add <path> [--id <id>]|list|remove <id>>
+  forge-launcher runtime harness <list|grant <harness> <VARIABLE>|revoke <harness> [VARIABLE]>
   forge-launcher service <submit|runs|status|events|control|merge> ...  # local execution service API
   forge-launcher engine-run [--repo <path>] [--harness <h>] [--granularity <fine|coarse>]
                             [--concurrency <n>] [--task-timeout-ms <ms>] [--max-retries <n>]
@@ -34,7 +36,6 @@ Usage:
                             [--auto-commit|--no-auto-commit] [--commit-message-template <tmpl>]
                             [--execution-mode <auto|manual>] [--selection-scope <single|range|list>]
                             [--selected-tasks <id,id,...>] [--stop] [--pause]
-                            [--stop] [--pause]
   forge-launcher resume [--repo <path>] [--non-interactive] [--dry-run]
   forge-launcher draft-prd [--repo <path>]      # reports the interactive PRD handoff (ADR-060)
   forge-launcher draft-existing-prd [--repo <path>] # reports the interactive PRD handoff
@@ -71,10 +72,19 @@ Launcher options:
 Model and runner flags are saved to docs/authoring-config.json when creating a project.
 On draft/feature/resume subcommands they override only that invocation.
 
+Deployment:
+  engine-run and resume use the local execution service for repositories registered
+  with "forge-launcher runtime repo add"; other repositories use the legacy in-process
+  engine until it is retired. Service runs integrate into forge/<branch> and fast-forward
+  the checked-out branch when they complete. FORGE_DEPLOYMENT=hosted is not available yet.
+  Service runs ignore --task-timeout-ms, --heartbeat-ms, --viz, --run-validation,
+  harness-activity, and auto-commit options (the service owns those behaviors).
+
 engine-run control:
   --stop              Stop a running detached engine after the current task
                       (writes docs/engine-control.json + SIGTERMs docs/engine.pid).
   --pause             Pause a running engine after the current task (same, no signal).
+                      For service runs, both send an acknowledged control to the active run.
 
 engine-run auto-commit:
   --auto-commit       Commit the working tree after each completed task (default: on).
@@ -178,7 +188,12 @@ async function main(): Promise<number> {
   if (args[0] === "console") return consoleCli(args.slice(1));
   if (args[0] === "runtime") return runtimeCli(args.slice(1));
   if (args[0] === "service") return serviceCli(args.slice(1));
-  if (args[0] === "engine-run") return engineRunCli(args.slice(1));
+  if (args[0] === "engine-run") {
+    // Registered repositories run in the local execution service.
+    const rest = args.slice(1);
+    if (rest.includes("-h") || rest.includes("--help")) { process.stdout.write(USAGE); return 0; }
+    return (await serviceEngineRun(rest)) ?? engineRunCli(rest);
+  }
   if (args[0] === "draft-prd" || args[0] === "draft-existing-prd" || args[0] === "draft-team" || args[0] === "draft-skills" || args[0] === "compile-manifest" || args[0] === "rederive" || args[0] === "feature-prd" || args[0] === "feature-increment" || args[0] === "feature-increment-continue") {
     let repo: string | undefined;
     let featurePrompt: string | undefined;
@@ -240,7 +255,7 @@ async function main(): Promise<number> {
         return 1;
       }
     }
-    return runResume({ ...opts, ...authoringOptions });
+    return (await serviceResume(opts)) ?? runResume({ ...opts, ...authoringOptions });
   }
   if (args[0] === "help" || args[0] === "-h" || args[0] === "--help") {
     process.stdout.write(USAGE);

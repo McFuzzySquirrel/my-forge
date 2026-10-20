@@ -9,7 +9,7 @@ import { resolveResources } from "./resources.ts";
 import { getRuntimeDataDir, readRuntimeApiAccess } from "./runtime.ts";
 import { findRegisteredRepository } from "./runtime-repositories.ts";
 
-const TERMINAL_STATUSES = new Set(["complete", "failed", "cancelled"]);
+export const TERMINAL_STATUSES = new Set(["complete", "failed", "cancelled"]);
 export const CONTROL_ACTIONS = new Set(["pause", "resume", "stop", "cancel", "replay-task", "approve-task"]);
 const FORGE_BRANCH_PREFIX = "forge/";
 
@@ -129,7 +129,7 @@ export function buildRunSubmission(
   };
 }
 
-function git(repoRoot: string, args: readonly string[]): { ok: boolean; stdout: string; stderr: string } {
+export function git(repoRoot: string, args: readonly string[]): { ok: boolean; stdout: string; stderr: string } {
   const result = spawnSync("git", ["-C", repoRoot, ...args], { encoding: "utf8" });
   return { ok: result.status === 0, stdout: (result.stdout ?? "").trim(), stderr: (result.stderr ?? "").trim() };
 }
@@ -170,12 +170,12 @@ export function prepareForgeBranch(repoRoot: string, branch?: string): { targetR
   return { targetRef, created: false, note: `${forgeBranch} has unmerged Forge commits; the run continues from them.` };
 }
 
-interface ExecutionModules {
+export interface ExecutionModules {
   computeManifestDigest(snapshot: unknown): string;
   discoverForgeRepo(start: string, harnessRoot?: string): { agents: Record<string, unknown>[] };
 }
 
-async function loadExecutionModules(): Promise<ExecutionModules> {
+export async function loadExecutionModules(): Promise<ExecutionModules> {
   const { executionDir, templatesDir } = resolveResources();
   const contract = await tsImport(
     pathToFileURL(path.join(path.dirname(executionDir), "contract", "v1", "index.ts")).href, import.meta.url,
@@ -215,7 +215,7 @@ function integerFlag(flags: Map<string, string>, name: string): number | undefin
   return Number(value);
 }
 
-async function repositoryIdFor(repoRoot: string): Promise<string> {
+export async function repositoryIdFor(repoRoot: string): Promise<string> {
   const entry = await findRegisteredRepository(getRuntimeDataDir(), repoRoot);
   if (!entry) {
     throw new Error(`${repoRoot} is not registered; run "forge-launcher runtime repo add ${repoRoot}" and restart the runtime.`);
@@ -223,7 +223,7 @@ async function repositoryIdFor(repoRoot: string): Promise<string> {
   return entry.id;
 }
 
-function formatEvent(event: Record<string, unknown>): string {
+export function formatEvent(event: Record<string, unknown>): string {
   const parts = [`#${event.sequence}`, String(event.eventType)];
   if (event.taskId) parts.push(`task=${event.taskId}`);
   if (event.logicalAttempt) parts.push(`attempt=${event.logicalAttempt}`);
@@ -233,8 +233,116 @@ function formatEvent(event: Record<string, unknown>): string {
   return parts.join(" ");
 }
 
+type RunClient = Pick<ServiceClient, "submit" | "list" | "get" | "events" | "control">;
+
+export interface FollowOptions {
+  readonly after?: number;
+  readonly json?: boolean;
+  /** Stop following once the run pauses (a pause/stop seen while following). */
+  readonly returnOnPause?: boolean;
+  readonly pollMs?: number;
+}
+
+/**
+ * Prints sequenced events until the run is terminal (exit 0 only when
+ * complete) or, with returnOnPause, until it pauses after a pause/stop event.
+ */
+export async function followRun(
+  client: RunClient,
+  runId: string,
+  write: (text: string) => void,
+  options: FollowOptions = {},
+): Promise<number> {
+  let cursor = options.after ?? 0;
+  let paused = false;
+  for (;;) {
+    const page = await client.events(runId, cursor);
+    for (const event of page.events) {
+      write(`${options.json ? JSON.stringify(event) : formatEvent(event)}\n`);
+      if (event.eventType === "run.paused" || event.eventType === "run.stopped") paused = true;
+      else if (event.eventType === "run.resumed" || event.runStatus === "running") paused = false;
+    }
+    cursor = page.cursor;
+    if (page.hasMore) continue;
+    const run = await client.get(runId);
+    if (TERMINAL_STATUSES.has(String(run.status))) {
+      if (!options.json) write(`Run ${runId} is ${run.status}.\n`);
+      return run.status === "complete" ? 0 : 1;
+    }
+    if (options.returnOnPause && paused && run.status === "paused") {
+      if (!options.json) write(`Run ${runId} is paused.\n`);
+      return 0;
+    }
+    await new Promise((resolve) => setTimeout(resolve, options.pollMs ?? 1_000));
+  }
+}
+
+/** The cursor after the run's last recorded event, for attaching without replaying history. */
+export async function latestEventCursor(client: RunClient, runId: string): Promise<number> {
+  let cursor = 0;
+  for (;;) {
+    const page = await client.events(runId, cursor, 500);
+    cursor = page.cursor;
+    if (!page.hasMore) return cursor;
+  }
+}
+
+/** The repository's newest run that is not terminal, if any. */
+export async function latestActiveRun(client: RunClient, repositoryId: string): Promise<Record<string, unknown> | undefined> {
+  const { runs } = await client.list(repositoryId);
+  return runs
+    .filter((run) => !TERMINAL_STATUSES.has(String(run.status)))
+    .sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)))[0];
+}
+
+export interface RepositoryRunInput {
+  readonly repoRoot: string;
+  readonly repositoryId: string;
+  readonly harness: string;
+  readonly branch?: string;
+  readonly settings: Readonly<Record<string, number | boolean>>;
+  readonly requestedTaskIds: readonly string[];
+  readonly submissionKey?: string;
+}
+
+/** Freezes the repository's manifest and agents into a submission and submits it. */
+export async function submitRepositoryRun(
+  client: RunClient,
+  input: RepositoryRunInput,
+  write: (text: string) => void,
+): Promise<{ runId: string; forgeBranch: string; reused: boolean; status: string }> {
+  const manifestPath = path.join(input.repoRoot, "docs", "EXECUTION-MANIFEST.json");
+  let manifest: SubmissionInput["manifest"];
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  } catch {
+    throw new Error(`${manifestPath} is missing or invalid; run "forge-launcher compile-manifest" first.`);
+  }
+  const modules = await loadExecutionModules();
+  const { agents } = modules.discoverForgeRepo(input.repoRoot, manifest.harnessRoot as string | undefined);
+  const branch = prepareForgeBranch(input.repoRoot, input.branch);
+  if (branch.note) write(`${branch.note}\n`);
+  const submission = buildRunSubmission({
+    manifest,
+    agents,
+    repositoryId: input.repositoryId,
+    targetRef: branch.targetRef,
+    harness: input.harness,
+    settings: input.settings,
+    requestedTaskIds: input.requestedTaskIds,
+    ...(input.submissionKey ? { submissionKey: input.submissionKey } : {}),
+  }, modules.computeManifestDigest);
+  const result = await client.submit(submission);
+  return {
+    runId: String(result.runId),
+    forgeBranch: branch.targetRef.slice("refs/heads/".length),
+    reused: Boolean(result.reused),
+    status: String(result.status),
+  };
+}
+
 const SERVICE_USAGE = `Usage:
-  forge-launcher service submit [--repo <path>] [--harness stub] [--branch <base>] [--tasks <id,id>]
+  forge-launcher service submit [--repo <path>] [--harness <h>] [--branch <base>] [--tasks <id,id>]
                                 [--concurrency <n>] [--max-retries <n>] [--retry-delay-ms <ms>]
                                 [--allow-noop] [--key <submission-key>] [--follow]
   forge-launcher service runs [--repo <path>] [--json]
@@ -247,8 +355,9 @@ Submits runs to the local execution service ("forge-launcher runtime start").
 The repository must be registered with "forge-launcher runtime repo add".
 Runs integrate into forge/<base>, never the checked-out branch; "merge"
 fast-forwards the checked-out branch to the run's forge branch.
-The containerized worker currently provides only the stub harness; real
-harness runs still use "forge-launcher engine-run".
+The worker runs the stub (default here), copilot, claude, and opencode harnesses;
+a CLI harness needs a credential grant ("forge-launcher runtime harness grant").
+"forge-launcher engine-run" and "resume" use the service for registered repositories.
 --json prints the service API records unchanged: one JSON document for runs and
 status, and one JSON event per line (NDJSON) for events.
 `;
@@ -268,21 +377,8 @@ export async function serviceCli(
     return new ServiceClient(access.baseUrl, access.token);
   })();
 
-  const follow = async (runId: string, after = 0, json = false): Promise<number> => {
-    let cursor = after;
-    for (;;) {
-      const page = await client.events(runId, cursor);
-      for (const event of page.events) write(`${json ? JSON.stringify(event) : formatEvent(event)}\n`);
-      cursor = page.cursor;
-      if (page.hasMore) continue;
-      const run = await client.get(runId);
-      if (TERMINAL_STATUSES.has(String(run.status))) {
-        if (!json) write(`Run ${runId} is ${run.status}.\n`);
-        return run.status === "complete" ? 0 : 1;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-    }
-  };
+  const follow = (runId: string, after = 0, json = false): Promise<number> =>
+    followRun(client, runId, write, { after, json });
 
   switch (command) {
     case "submit": {
@@ -294,35 +390,22 @@ export async function serviceCli(
       if (positional.length) throw new Error(`Unexpected argument: ${positional[0]}`);
       const repoRoot = detectRepoRoot(path.resolve(flags.get("--repo") ?? process.cwd()));
       const repositoryId = await repositoryIdFor(repoRoot);
-      const manifestPath = path.join(repoRoot, "docs", "EXECUTION-MANIFEST.json");
-      let manifest: SubmissionInput["manifest"];
-      try {
-        manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-      } catch {
-        throw new Error(`${manifestPath} is missing or invalid; run "forge-launcher compile-manifest" first.`);
-      }
-      const modules = await loadExecutionModules();
-      const { agents } = modules.discoverForgeRepo(repoRoot, manifest.harnessRoot as string | undefined);
-      const branch = prepareForgeBranch(repoRoot, flags.get("--branch"));
-      if (branch.note) write(`${branch.note}\n`);
       const settings: Record<string, number | boolean> = {};
       for (const [flag, key] of [["--concurrency", "concurrency"], ["--max-retries", "maxRetries"], ["--retry-delay-ms", "retryDelayMs"]] as const) {
         const value = integerFlag(flags, flag);
         if (value !== undefined) settings[key] = value;
       }
       if (flags.has("--allow-noop")) settings.allowNoop = true;
-      const submission = buildRunSubmission({
-        manifest,
-        agents,
+      const result = await submitRepositoryRun(client, {
+        repoRoot,
         repositoryId,
-        targetRef: branch.targetRef,
         harness: flags.get("--harness") ?? "stub",
+        ...(flags.has("--branch") ? { branch: flags.get("--branch")! } : {}),
         settings,
         requestedTaskIds: (flags.get("--tasks") ?? "").split(",").map((id) => id.trim()).filter(Boolean),
         ...(flags.has("--key") ? { submissionKey: flags.get("--key")! } : {}),
-      }, modules.computeManifestDigest);
-      const result = await client.submit(submission);
-      write(`${result.reused ? "Reused" : "Submitted"} run ${result.runId} -> ${branch.targetRef.slice("refs/heads/".length)} (${result.status}).\n`);
+      }, write);
+      write(`${result.reused ? "Reused" : "Submitted"} run ${result.runId} -> ${result.forgeBranch} (${result.status}).\n`);
       return flags.has("--follow") ? follow(String(result.runId)) : 0;
     }
     case "runs": {

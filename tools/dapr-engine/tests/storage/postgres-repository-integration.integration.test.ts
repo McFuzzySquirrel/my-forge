@@ -243,6 +243,26 @@ test("PostgreSQL fencing rejects held, expired, stale, and conflicting integrati
   });
 });
 
+test("terminal runs release their leases without reviving released fencing tokens", {
+  skip: !connectionString,
+}, async () => {
+  await withAuthority(async (harness) => {
+    const { authority, fixture } = harness;
+    const request = await leasedRequest(harness);
+    assert.deepEqual(await authority.acquire("repo_fixture", "refs/heads/main", "run_b", 10_000), { ok: false, code: "lease-held" });
+    assert.equal(await authority.releaseRun("run_b"), 0);
+    assert.equal(await authority.releaseRun("run_a"), 1);
+    assert.equal(await authority.releaseRun("run_a"), 0);
+    assert.deepEqual(await authority.integrate(request), { ok: false, code: "no-lease" });
+
+    const next = await authority.acquire("repo_fixture", "refs/heads/main", "run_b", 10_000);
+    assert.ok(next.ok);
+    assert.ok(next.lease.fencingToken > request.fencingToken);
+    assert.deepEqual(await authority.integrate(request), { ok: false, code: "stale-fencing-token" });
+    assert.equal(git(fixture.root, ["rev-parse", "refs/heads/main"]), fixture.base);
+  });
+});
+
 test("integration requires a verified checkpoint bound to the commit", {
   skip: !connectionString,
 }, async () => {

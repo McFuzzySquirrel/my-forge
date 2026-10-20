@@ -7,9 +7,17 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveResources } from "./resources.ts";
+import {
+  listRegisteredRepositories,
+  registerRepository,
+  unregisterRepository,
+  writeRepositoryOverride,
+} from "./runtime-repositories.ts";
 
 const CREDENTIALS_FILE = "runtime.env";
-const KEYS = ["POSTGRES_SUPERUSER_PASSWORD", "DAPR_DB_PASSWORD", "APP_DB_PASSWORD"] as const;
+const LEGACY_KEYS = ["POSTGRES_SUPERUSER_PASSWORD", "DAPR_DB_PASSWORD", "APP_DB_PASSWORD"] as const;
+const KEYS = [...LEGACY_KEYS, "MYFORGE_API_TOKEN"] as const;
+export const DEFAULT_API_PORT = 8483;
 const OUTPUT_LIMIT = 2 * 1024 * 1024;
 
 type RuntimeAction = "start" | "status" | "stop" | "reset";
@@ -120,6 +128,48 @@ async function readRuntimeEnvironment(directory: string): Promise<RuntimeEnviron
   throw new Error(`Timed out reading runtime credentials: ${file}`);
 }
 
+/**
+ * Installations created before the service API hold only the database
+ * secrets; add a generated API token once, atomically, without touching them.
+ */
+async function upgradeLegacyCredentials(file: string): Promise<void> {
+  let contents: string;
+  try {
+    const stat = await lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) return;
+    contents = await readFile(file, "utf8");
+  } catch {
+    return;
+  }
+  const lines = contents.split(/\r?\n/).filter(Boolean);
+  const legacy = lines.length === LEGACY_KEYS.length && LEGACY_KEYS.every((key) =>
+    lines.some((line) => new RegExp(`^${key}=[0-9a-f]{64}$`).test(line)));
+  if (!legacy) return;
+  const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(`${lines.join("\n")}\nMYFORGE_API_TOKEN=${randomBytes(32).toString("hex")}\n`, "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close();
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+  await rename(temporary, file);
+}
+
+/** Bearer token and loopback port of the local service API. */
+export async function readRuntimeApiAccess(
+  directory = getRuntimeDataDir(),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ readonly token: string; readonly baseUrl: string }> {
+  const environment = await requireRuntimeEnvironment(directory);
+  const port = env.MYFORGE_API_PORT ? Number(env.MYFORGE_API_PORT) : DEFAULT_API_PORT;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) throw new Error("MYFORGE_API_PORT must be from 1 to 65535.");
+  return { token: environment.values.MYFORGE_API_TOKEN, baseUrl: `http://127.0.0.1:${port}` };
+}
+
 async function requireRuntimeEnvironment(directory = getRuntimeDataDir()): Promise<RuntimeEnvironment> {
   const file = path.join(directory, CREDENTIALS_FILE);
   try {
@@ -130,6 +180,7 @@ async function requireRuntimeEnvironment(directory = getRuntimeDataDir()): Promi
     }
     throw error;
   }
+  await upgradeLegacyCredentials(file);
   return readRuntimeEnvironment(directory);
 }
 
@@ -160,6 +211,7 @@ export async function ensureRuntimeCredentials(directory = getRuntimeDataDir()):
     if (process.platform !== "win32") await chmod(file, 0o600);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    await upgradeLegacyCredentials(file);
   }
   return (await readRuntimeEnvironment(directory)).file;
 }
@@ -320,7 +372,7 @@ function redact(output: string, values: RuntimeEnvironment["values"]): string {
   }
   return safe
     .replace(/(password=)[^\s]+/gi, "$1[REDACTED]")
-    .replace(/((?:POSTGRES|DAPR|APP)_DB_PASSWORD|POSTGRES_SUPERUSER_PASSWORD)=([^\s]+)/g, "$1=[REDACTED]");
+    .replace(/((?:POSTGRES|DAPR|APP)_DB_PASSWORD|POSTGRES_SUPERUSER_PASSWORD|MYFORGE_API_TOKEN)=([^\s]+)/g, "$1=[REDACTED]");
 }
 
 async function runtimeDiagnostics(
@@ -355,6 +407,8 @@ async function compose(
   if (action === "up" && options.hostTools) {
     args.push("-f", path.join(deploymentDir, "compose.host-tools.yaml"));
   }
+  const repositoryOverride = await writeRepositoryOverride(path.dirname(environment.file));
+  if (repositoryOverride) args.push("-f", repositoryOverride);
   args.push(action);
   if (action === "up") args.push("-d");
   if (action === "down" && options.confirm) args.push("-v");
@@ -362,6 +416,7 @@ async function compose(
   delete env.POSTGRES_SUPERUSER_PASSWORD;
   delete env.DAPR_DB_PASSWORD;
   delete env.APP_DB_PASSWORD;
+  delete env.MYFORGE_API_TOKEN;
   env.MYFORGE_ENGINE_DIR = engineDir;
   env.MYFORGE_LAUNCHER_NODE_MODULES = launcherNodeModules;
   env.MYFORGE_TEMPLATES_DIR = templatesDir;
@@ -384,6 +439,9 @@ const RUNTIME_USAGE = `Usage:
   forge-launcher runtime reset --confirm
   forge-launcher runtime backup --output <new-directory>
   forge-launcher runtime restore --from <backup-directory> --confirm
+  forge-launcher runtime repo add <repository> [--id <id>]
+  forge-launcher runtime repo list
+  forge-launcher runtime repo remove <id>
 
 Starts the local Forge execution service and its PostgreSQL/Dapr infrastructure.
 Infrastructure ports remain private. --host-tools publishes PostgreSQL on loopback (default 127.0.0.1:55432).
@@ -391,6 +449,9 @@ Stop preserves persistent data; reset removes volumes and requires --confirm.
 Backup quiesces the runtime and exports PostgreSQL, Scheduler, and Forge data volumes.
 Backups exclude target repositories, Git refs, and the installation credential file.
 Restore verifies the archive, replaces those volumes, and restarts privately.
+The service API listens on 127.0.0.1:\${MYFORGE_API_PORT:-8483} and requires the generated bearer token.
+"repo add" registers a repository's .git directory for the service; restart the runtime
+(stop, then start) to apply registration changes. Worktrees and submodules are rejected.
 `;
 
 export async function runtimeCli(args: readonly string[]): Promise<number> {
@@ -399,6 +460,7 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
     process.stdout.write(RUNTIME_USAGE);
     return actionValue ? 0 : 1;
   }
+  if (actionValue === "repo") return repositoryCli(rest);
   if (
     actionValue !== "start" && actionValue !== "status" && actionValue !== "stop" && actionValue !== "reset" &&
     actionValue !== "backup" && actionValue !== "restore"
@@ -445,6 +507,33 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
     );
   }
   return 0;
+}
+
+async function repositoryCli(args: readonly string[]): Promise<number> {
+  const [command, ...rest] = args;
+  const dataDir = getRuntimeDataDir();
+  if (command === "list" && rest.length === 0) {
+    const repositories = await listRegisteredRepositories(dataDir);
+    process.stdout.write(repositories.length
+      ? `${repositories.map((entry) => `${entry.id}\t${entry.path}`).join("\n")}\n`
+      : "No repositories are registered.\n");
+    return 0;
+  }
+  if (command === "add" && rest[0] && !rest[0].startsWith("--")) {
+    let id: string | undefined;
+    if (rest.length === 3 && rest[1] === "--id") id = rest[2];
+    else if (rest.length !== 1) throw new Error("Usage: forge-launcher runtime repo add <repository> [--id <id>]");
+    await ensureRuntimeCredentials(dataDir);
+    const entry = await registerRepository(dataDir, rest[0], id);
+    process.stdout.write(`Registered '${entry.id}' -> ${entry.path}. Restart the runtime to mount it.\n`);
+    return 0;
+  }
+  if (command === "remove" && rest.length === 1) {
+    if (!await unregisterRepository(dataDir, rest[0]!)) throw new Error(`Repository '${rest[0]}' is not registered.`);
+    process.stdout.write(`Unregistered '${rest[0]}'. Restart the runtime to unmount it.\n`);
+    return 0;
+  }
+  throw new Error("Usage: forge-launcher runtime repo add <repository> [--id <id>] | list | remove <id>");
 }
 
 async function sha256File(file: string): Promise<string> {

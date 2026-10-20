@@ -4,6 +4,29 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.119
+
+### P5-03 service run submission (stub harness)
+
+- The local Forge worker now serves a run API on `127.0.0.1:8483`. Requests
+  need the installation's `MYFORGE_API_TOKEN`, which existing installations
+  gain automatically. Non-loopback hosts and browser origins are rejected.
+- `forge-launcher runtime repo add <path>` registers a repository. After a
+  runtime restart, only its `.git` directory is mounted into the worker.
+- `forge-launcher service submit --follow` submits the compiled manifest. Runs
+  integrate into `forge/<branch>` and never the checked-out branch;
+  `service merge <run-id>` fast-forwards the branch when the run finishes.
+  `service runs|status|events|control` list, monitor, and control runs.
+- Submissions are durable and idempotent by key. Runs are rebound after a
+  worker restart. Replay allocates one new attempt per control, and finished
+  runs release their repository leases.
+- The worker image is now built locally with Git. The stub harness emits the
+  structured handoff that verified tasks require.
+- Real harnesses are not yet available in the worker; use `engine-run` for
+  them. See [ADR-069](adr/069-service-run-submission-and-repository-binding.md).
+
+---
+
 ## October 2026 - v3.118
 
 ### P5-02 local execution service lifecycle

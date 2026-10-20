@@ -109,3 +109,17 @@ test("application migrations require contiguous version numbers", async () => {
   );
   assert.equal(database.released, false);
 });
+
+test("bundled application migrations append run submissions as version 6", async () => {
+  const database = new MemoryDatabase();
+  const { migrateApplicationDatabase } = await import("../../service/migrations.ts");
+  await migrateApplicationDatabase(database);
+  assert.deepEqual(database.applied.map((entry) => [entry.version, entry.name]), [
+    [1, "repository-integration.sql"],
+    [2, "operation-receipts.sql"],
+    [3, "operation-executions.sql"],
+    [4, "control-records.sql"],
+    [5, "run-status.sql"],
+    [6, "run-submissions.sql"],
+  ]);
+});

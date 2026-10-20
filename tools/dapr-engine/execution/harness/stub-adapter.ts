@@ -15,6 +15,11 @@ import type { HarnessAdapter, TaskAttemptRequest, TaskResult } from "../types.ts
  *
  * Set STUB_DELAY_MS env var to simulate latency (default: 0).
  */
+/** Contract tasks require a structured handoff; the stub reports nothing unresolved. */
+function stubHandoff(taskId: string): string {
+  return `\n\`\`\`forge-result\n${JSON.stringify({ summary: `[stub] synthetic completion of ${taskId}.`, unresolved: [] })}\n\`\`\`\n`;
+}
+
 export class StubAdapter implements HarnessAdapter {
   readonly name = "stub";
   readonly supportsConcurrency = true;
@@ -59,7 +64,7 @@ export class StubAdapter implements HarnessAdapter {
     return {
       success: true,
       outputFiles,
-      stdout: `[stub] ${agentLabel} completed task ${task.id}: ${task.title}`,
+      stdout: `[stub] ${agentLabel} completed task ${task.id}: ${task.title}${task.contract ? stubHandoff(task.id) : ""}`,
       stderr: "",
       durationMs: Date.now() - start,
     };

@@ -282,6 +282,32 @@ export class PostgresExecutionOwnershipStore implements ExecutionOwnershipStore 
    * Records a cancellation request. Acceptance is not evidence that the
    * process stopped: the owner observes it on its next heartbeat and reports exit.
    */
+  /** Keys of a run's executions that still own a live process or await cleanup. */
+  async listActive(runId: string): Promise<readonly OperationKeyV1[]> {
+    if (!runId) throw new TypeError("Active execution lookup requires a runId");
+    const connection = await this.database.connect();
+    let result;
+    try {
+      result = await connection.query<{
+        run_id: string; task_id: string; logical_attempt: number; operation_id: string;
+      }>(
+        `SELECT run_id, task_id, logical_attempt, operation_id
+         FROM forge_operation_executions
+         WHERE run_id = $1 AND state IN ('running', 'cancel-requested')
+         ORDER BY task_id, logical_attempt, operation_id`,
+        [runId],
+      );
+    } finally {
+      connection.release();
+    }
+    return result.rows.map((row) => ({
+      runId: row.run_id,
+      taskId: row.task_id,
+      logicalAttempt: Number(row.logical_attempt),
+      operationId: row.operation_id,
+    }));
+  }
+
   async requestCancel(key: OperationKeyV1, reason: string): Promise<ExecutionCancelResult> {
     return transaction<ExecutionCancelResult>(this.database, async (connection) => {
       const decision = decideCancel(await lockExecution(connection, key), reason);

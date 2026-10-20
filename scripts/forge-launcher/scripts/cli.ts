@@ -12,6 +12,7 @@ import { detectRepoRoot } from "./paths.ts";
 import { PromptCancelled, prompts } from "./prompts.ts";
 import { checkForUpdate, printUpdateNotice } from "./update-check.ts";
 import { runtimeCli } from "./runtime.ts";
+import { serviceCli } from "./service-client.ts";
 
 const USAGE = `forge-launcher - One command from zero to auto-build
 
@@ -22,6 +23,8 @@ Usage:
                            [--runner copilot|opencode|claude|inherit]
   forge-launcher console [--repo <path>] [--port <n>] [--no-open]
   forge-launcher runtime <start|status|stop|reset> [--host-tools] [--postgres-port <n>] [--confirm]
+  forge-launcher runtime repo <add <path> [--id <id>]|list|remove <id>>
+  forge-launcher service <submit|runs|status|events|control|merge> ...  # local execution service API
   forge-launcher engine-run [--repo <path>] [--harness <h>] [--granularity <fine|coarse>]
                             [--concurrency <n>] [--task-timeout-ms <ms>] [--max-retries <n>]
                             [--retry-delay-ms <ms>] [--heartbeat-ms <ms>] [--yes] [--dry-run]
@@ -168,6 +171,7 @@ async function main(): Promise<number> {
   }
   if (args[0] === "console") return consoleCli(args.slice(1));
   if (args[0] === "runtime") return runtimeCli(args.slice(1));
+  if (args[0] === "service") return serviceCli(args.slice(1));
   if (args[0] === "engine-run") return engineRunCli(args.slice(1));
   if (args[0] === "draft-prd" || args[0] === "draft-existing-prd" || args[0] === "draft-team" || args[0] === "draft-skills" || args[0] === "compile-manifest" || args[0] === "rederive" || args[0] === "feature-prd" || args[0] === "feature-increment" || args[0] === "feature-increment-continue") {
     let repo: string | undefined;

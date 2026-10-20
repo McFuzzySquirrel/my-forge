@@ -21,6 +21,7 @@ const MIGRATION_FILES = [
   "operation-executions.sql",
   "control-records.sql",
   "run-status.sql",
+  "run-submissions.sql",
 ] as const;
 
 function checksum(sql: string): string {

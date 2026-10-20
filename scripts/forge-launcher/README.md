@@ -41,6 +41,9 @@ the queued command it prints.
 | `forge-launcher runtime reset --confirm` | Stop the runtime and remove its persistent volumes after explicit confirmation. |
 | `forge-launcher runtime backup --output <new-directory>` | Quiesce the runtime and write checksummed PostgreSQL, Scheduler, and Forge volume archives. |
 | `forge-launcher runtime restore --from <backup-directory> --confirm` | Verify an archive, replace runtime volumes, and restart the service. |
+| `forge-launcher runtime repo add <path> [--id <id>] \| list \| remove <id>` | Register repositories whose `.git` directory the service may mount; restart the runtime to apply. |
+| `forge-launcher service submit [--repo <path>] [--follow] ...` | Submit the compiled manifest to the local service; it integrates into `forge/<branch>`. |
+| `forge-launcher service runs \| status \| events \| control \| merge` | List, monitor, control, and fast-forward-merge service runs. |
 | `forge-launcher draft-team \| draft-skills [--repo <path>]` | Headless derivation stages (PRD → agent team → project skills). |
 | `forge-launcher draft-prd \| draft-existing-prd [--repo <path>]` | Report the interactive requirements handoff. The PRD is never authored headlessly — see [ADR-060](../../docs/adr/060-interactive-requirements-authoring.md). |
 | `forge-launcher compile-manifest [--repo <path>]` | Headless build-prep stage: install the adapter if needed and write `docs/EXECUTION-MANIFEST.json` without starting the engine. |
@@ -50,8 +53,10 @@ library so the existing engine remains runnable. It does not install the
 launcher-managed Dapr workflow service or a second scheduler in the target
 repository.
 
-The `runtime` commands manage local infrastructure, not the Dapr execution
-service or authenticated Console path, which remain in progress.
+The `runtime` commands manage the local service and its infrastructure. The
+`service` commands use its loopback, token-authenticated run API. The worker
+currently offers only the `stub` harness; real harness runs still use
+`engine-run`, and the authenticated Console path is still in progress.
 
 In the Console's **Projects** view, use **Remove from Forge** for one project or
 **Remove selected (N)** for several. Confirmation is required. Only Forge

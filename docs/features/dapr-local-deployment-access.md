@@ -51,6 +51,7 @@ manifest.
 |---|---|---|
 | DAPR-DEPLOY-01 through DAPR-DEPLOY-05 | This feature | owns |
 | DAPR-DEPLOY-01, -02, -03 | P5-01 in [plan.md](../../plan.md) | implemented by |
+| DAPR-DEPLOY-02, -03 | P5-03 service run API ([ADR-069](../adr/069-service-run-submission-and-repository-binding.md)) | implemented by |
 | DAPR-DEPLOY-04 | P5-02 and P5-05 in [plan.md](../../plan.md) | implemented by |
 | DAPR-DEPLOY-05 | P8-02 in [plan.md](../../plan.md) | implemented by |
 | DAPR-C-03 | [Foundation vision](../PRD.md) | constrained by (loopback host-tools exception recorded in ADR-068) |
@@ -100,6 +101,27 @@ manifest.
     "constraints":[],
     "constraintRefs":["docs/PRD.md#DAPR-C-03","docs/PRD.md#DAPR-C-04"],
     "references":["plan.md","docs/adr/068-local-deployment-and-access-profiles.md"]
+  }
+}
+```
+
+```forge-task
+{
+  "id":"P5-03",
+  "title":"Submit and control runs through the local service",
+  "description":"Serve a loopback-only, token-authenticated run API from the worker with durable idempotent submissions, restart rebinding, sequenced events, and contract v1 controls. Register repositories explicitly and mount only their .git directories; integrate into forge/<base> refs, never a checked-out branch. Add launcher service commands. Real-harness provisioning in the worker is a separate decision; until then legacy engine-run remains the real-harness path.",
+  "ownerAgent":"forge-runtime-engineer",
+  "dependencies":["P5-02"],
+  "expectedOutputs":["tools/dapr-engine/service/api.ts","tools/dapr-engine/service/runs.ts","tools/dapr-engine/storage/postgres/run-submissions.sql","scripts/forge-launcher/scripts/service-client.ts","scripts/forge-launcher/scripts/runtime-repositories.ts"],
+  "validationCommands":["npm test --prefix tools/dapr-engine","npm run typecheck --prefix tools/dapr-engine","npm test --prefix scripts/forge-launcher","npm run typecheck --prefix scripts/forge-launcher"],
+  "contract":{
+    "version":2,"kind":"implementation",
+    "requirements":[],
+    "requirementRefs":["docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-02","docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-03"],
+    "acceptanceCriteria":["The run API is published only on loopback and rejects missing or wrong tokens, non-loopback Host headers, and browser Origin headers.","Resubmitting a key returns the same run; a different snapshot under the same key is a conflict.","Runs are rebound after a worker restart without manual state edits.","Only registered .git directories are mounted; the host home and container sockets are never mounted.","Runs never advance a checked-out branch."],
+    "constraints":[],
+    "constraintRefs":["docs/PRD.md#DAPR-C-03","docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-C-01"],
+    "references":["plan.md","docs/adr/069-service-run-submission-and-repository-binding.md","docs/contracts/dapr-execution-v1.md"]
   }
 }
 ```

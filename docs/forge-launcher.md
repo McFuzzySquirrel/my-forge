@@ -115,6 +115,15 @@ npx forge-launcher@beta runtime stop
 npx forge-launcher@beta runtime reset --confirm
 npx forge-launcher@beta runtime backup --output <new-directory>
 npx forge-launcher@beta runtime restore --from <backup-directory> --confirm
+npx forge-launcher@beta runtime repo add <path> [--id <id>] | list | remove <id>
+npx forge-launcher@beta service submit [--repo <path>] [--harness stub] [--branch <base>]
+                              [--tasks <id,id>] [--concurrency <n>] [--max-retries <n>]
+                              [--retry-delay-ms <ms>] [--allow-noop] [--key <key>] [--follow]
+npx forge-launcher@beta service runs [--repo <path>]
+npx forge-launcher@beta service status <run-id>
+npx forge-launcher@beta service events <run-id> [--after <n>] [--follow]
+npx forge-launcher@beta service control <run-id> <pause|resume|stop|cancel|replay-task|approve-task> [--task <id>]
+npx forge-launcher@beta service merge <run-id> [--repo <path>]
 npx forge-launcher@beta draft-prd --repo <path> [model flags]
 npx forge-launcher@beta draft-existing-prd --repo <path> [model flags]
 npx forge-launcher@beta draft-team --repo <path> [model flags]
@@ -140,9 +149,7 @@ platform's user data directory (Linux: `$XDG_DATA_HOME/MyForge/runtime`, or
 `~/.local/share/MyForge/runtime`; macOS: `~/Library/Application Support/MyForge/runtime`;
 Windows: `%LOCALAPPDATA%\MyForge\runtime`) with owner-only permissions where
 supported. The service runs database migrations, registers the Dapr workflows,
-and reports ready only after a workflow-admission probe succeeds. User
-submission and control entry points are migrated separately in P5-03/P5-04;
-until then this runtime does not accept launcher execution requests. Startup
+and reports ready only after a workflow-admission probe succeeds. Startup
 reports success only after every container is running, PostgreSQL accepts
 connections, and the service health check passes. Failure diagnostics include
 recent service logs with credentials redacted; `runtime status` also shows
@@ -175,6 +182,36 @@ migrations and fails closed on checksum drift, version gaps, or a database
 schema newer than the installed service. Updating the launcher package and
 running `runtime start` applies compatible migrations; schema downgrade and
 cross-version workflow-history compatibility are not promised.
+
+#### Service runs
+
+The runtime serves a run API on `127.0.0.1:8483` (override with
+`MYFORGE_API_PORT`). It requires the `MYFORGE_API_TOKEN` bearer token from the
+runtime credential file and rejects non-loopback `Host` headers and browser
+`Origin` headers. Installations created before this API gain a token on the
+next `runtime` command. See
+[ADR-069](adr/069-service-run-submission-and-repository-binding.md).
+
+1. Register the repository, then restart the runtime so it is mounted:
+   `runtime repo add <path>`, `runtime stop`, `runtime start`. Only the
+   repository's `.git` directory is mounted. Linked worktrees and submodules
+   cannot be registered. On SELinux hosts the directory is relabeled for
+   container access.
+2. Compile the manifest (`compile-manifest`), then run
+   `service submit --follow` from the repository. The run integrates commits
+   into `forge/<current-branch>`, which is created at `HEAD` or fast-forwarded
+   when behind. A diverged forge branch is kept, so unmerged Forge commits
+   continue.
+3. `service merge <run-id>` fast-forwards the checked-out branch to the forge
+   branch once the run has finished.
+
+Resubmitting with the same `--key` returns the existing run. `service control`
+accepts pause, resume, stop, cancel, replay-task, and approve-task.
+
+The worker currently provides only the deterministic `stub` harness, which
+needs `--allow-noop` when tasks make no changes. Real harness runs still use
+`engine-run`, `resume`, and the Console until harness CLIs and credentials can
+be supplied to the worker.
 
 `bootstrap` takes these options:
 

@@ -588,6 +588,25 @@ export class PostgresRepositoryIntegrationAuthority {
     });
   }
 
+  /**
+   * Releases every lease a run still owns once it is terminal, so the next run
+   * on the same target ref need not wait for the TTL. The fencing token is kept,
+   * so tokens issued to the released run stay stale after a later acquire.
+   */
+  async releaseRun(runId: string): Promise<number> {
+    requireText(runId, "Run ID");
+    return inTransaction(this.database, async (connection) => {
+      const released = await connection.query(
+        `UPDATE forge_repository_fences
+         SET owner_run_id = NULL, expires_at = NULL, revision = revision + 1
+         WHERE owner_run_id = $1
+         RETURNING repository_id`,
+        [runId],
+      );
+      return released.rows.length;
+    });
+  }
+
   async integrate(request: RepositoryIntegrationRequest): Promise<RepositoryIntegrationResult> {
     validateRequest(request);
     const repositoryRoot = await this.repositoryRoot(request.repositoryId);

@@ -4,6 +4,20 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.124
+
+### Fix launcher CI and Windows runtime paths
+
+- The harness allowlist parity check no longer imports the worker runtime or
+  requires its dependencies, and its module URL works on Windows.
+- Repository registration accepts Windows drive prefixes while still rejecting
+  mount delimiters elsewhere in the path. Runtime data directories use the
+  requested platform's path conventions regardless of the host platform.
+- Windows repository fixtures and detached-terminal cleanup no longer fail on
+  path escaping, invalid filenames, or a marker file still being written.
+
+---
+
 ## October 2026 - v3.123
 
 ### P5-03/P5-04 builds run through the local execution service

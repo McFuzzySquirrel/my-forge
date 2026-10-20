@@ -71,7 +71,7 @@ test("the Console can still open a terminal without a TTY", async () => {
     const isWindows = process.platform === "win32";
     const candidates = isWindows ? ["wt.cmd", "powershell.cmd"] : ["gnome-terminal"];
     const script = isWindows
-      ? `@echo off\r\necho marker>"%FORGE_TERMINAL_TEST_MARKER%"\r\n`
+      ? `@echo off\r\necho marker>"%FORGE_TERMINAL_TEST_MARKER%.tmp"\r\nmove /y "%FORGE_TERMINAL_TEST_MARKER%.tmp" "%FORGE_TERMINAL_TEST_MARKER%" >nul\r\n`
       : `#!/bin/sh\n/bin/touch "$FORGE_TERMINAL_TEST_MARKER"\n`;
     // Shadow every terminal candidate so host-installed Windows Terminal
     // cannot bypass the deterministic marker command.
@@ -89,7 +89,7 @@ test("the Console can still open a terminal without a TTY", async () => {
     try {
       const launched = await launchCliInTerminal("opencode", "/tmp/some-repo", [], { allowWithoutTty: true });
       assert.equal(launched, true, "the opt-out must reach a terminal candidate");
-      // The candidate is spawned detached, so its side effect is not synchronous.
+      // Windows publishes the marker only after closing its writer.
       for (let attempt = 0; attempt < 50 && !fs.existsSync(marker); attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 20));
       }
@@ -101,6 +101,6 @@ test("the Console can still open a terminal without a TTY", async () => {
       Object.defineProperty(process.stdin, "isTTY", { value: originalTty, configurable: true });
     }
   } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
+    await fs.promises.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 20 });
   }
 });

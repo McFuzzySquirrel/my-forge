@@ -108,6 +108,10 @@ test("runtime rejects symlink credential files", async (t) => {
 
 test("runtime data directory follows platform conventions", () => {
   assert.equal(
+    getRuntimeDataDir({}, "/home/operator", "linux"),
+    "/home/operator/.local/share/MyForge/runtime",
+  );
+  assert.equal(
     getRuntimeDataDir({ XDG_DATA_HOME: "/data" }, "/home/operator", "linux"),
     "/data/MyForge/runtime",
   );

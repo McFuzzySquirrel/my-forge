@@ -4,7 +4,7 @@ import path from "node:path";
 
 /**
  * Credential variables each worker harness may receive. Mirrors
- * tools/dapr-engine/service/harnesses.ts (a parity test keeps them aligned);
+ * tools/dapr-engine/service/harness-credentials.ts (a parity test keeps them aligned);
  * the worker re-filters grants against its own copy.
  */
 export const HARNESS_CREDENTIAL_VARIABLES: Readonly<Record<string, readonly string[]>> = Object.freeze({

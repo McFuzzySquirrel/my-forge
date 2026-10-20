@@ -61,6 +61,13 @@ export function defaultRepositoryId(repositoryPath: string): string {
   return REPOSITORY_ID_PATTERN.test(slug) ? slug : "repository";
 }
 
+export function validateRepositoryMountPath(repositoryPath: string, platform = process.platform): void {
+  const withoutDrive = platform === "win32" ? repositoryPath.replace(/^[a-z]:[\\/]/i, "") : repositoryPath;
+  if (/[:,\n\r]/.test(withoutDrive)) {
+    throw new Error(`Repository paths containing ':', ',' or newlines (except a Windows drive prefix) cannot be mounted: ${repositoryPath}`);
+  }
+}
+
 /**
  * Registers a repository for the local service. Only its `.git` directory is
  * mounted, so linked worktrees and submodules (whose `.git` is a file) are
@@ -81,9 +88,7 @@ export async function registerRepository(
   if (!gitDirectory.isDirectory()) {
     throw new Error(`${resolved}/.git is not a directory; linked worktrees and submodules cannot be registered.`);
   }
-  if (/[:,\n\r]/.test(resolved)) {
-    throw new Error(`Repository paths containing ':', ',' or newlines cannot be mounted: ${resolved}`);
-  }
+  validateRepositoryMountPath(resolved);
   const id = requestedId ?? defaultRepositoryId(resolved);
   if (!REPOSITORY_ID_PATTERN.test(id)) {
     throw new Error("Repository IDs must match ^[a-z0-9][a-z0-9_-]{0,63}$.");

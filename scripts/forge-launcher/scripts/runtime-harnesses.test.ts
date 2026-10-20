@@ -3,7 +3,6 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
 import {
   HARNESS_CREDENTIAL_VARIABLES,
   ensureHarnessGrants,
@@ -13,8 +12,6 @@ import {
   revokeHarnessCredential,
 } from "./runtime-harnesses.ts";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-
 async function dataDir(t: test.TestContext): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "forge-grants-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -22,7 +19,7 @@ async function dataDir(t: test.TestContext): Promise<string> {
 }
 
 test("the launcher allowlist matches the worker's", async () => {
-  const engine = await import(path.resolve(here, "../../../tools/dapr-engine/service/harnesses.ts"));
+  const engine = await import(new URL("../../../tools/dapr-engine/service/harness-credentials.ts", import.meta.url).href);
   assert.deepEqual(HARNESS_CREDENTIAL_VARIABLES, engine.HARNESS_CREDENTIAL_VARIABLES);
 });
 

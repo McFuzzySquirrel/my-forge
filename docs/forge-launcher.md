@@ -201,7 +201,8 @@ sidecar, so task processes in the worker cannot call the sidecar directly. See
    `runtime repo add <path>`, `runtime stop`, `runtime start`. Only the
    repository's `.git` directory is mounted. Linked worktrees and submodules
    cannot be registered. On SELinux hosts the directory is relabeled for
-   container access.
+   container access. Windows drive prefixes (for example `C:\repos\app`) are
+   accepted; other colons, commas, and newlines in repository paths are rejected.
 2. Compile the manifest (`compile-manifest`), then run
    `service submit --follow` from the repository. The run integrates commits
    into `forge/<current-branch>`, which is created at `HEAD` or fast-forwarded

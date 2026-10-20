@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -10,11 +10,12 @@ import {
   registerRepository,
   renderRepositoryOverride,
   unregisterRepository,
+  validateRepositoryMountPath,
   writeRepositoryOverride,
 } from "./runtime-repositories.ts";
 
 async function fixture(t: test.TestContext): Promise<{ dataDir: string; root: string }> {
-  const root = await mkdtemp(path.join(os.tmpdir(), "forge-repos-"));
+  const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "forge-repos-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const dataDir = path.join(root, "data");
   await mkdir(dataDir);
@@ -56,8 +57,20 @@ test("repositories without a .git directory cannot be registered", async (t) => 
   await mkdir(worktree);
   await writeFile(path.join(worktree, ".git"), "gitdir: /elsewhere\n");
   await assert.rejects(registerRepository(dataDir, worktree), /linked worktrees and submodules/);
-  const colon = await gitRepo(root, "a:b");
-  await assert.rejects(registerRepository(dataDir, colon, "colon"), /cannot be mounted/);
+  const comma = await gitRepo(root, "a,b");
+  await assert.rejects(registerRepository(dataDir, comma, "comma"), /cannot be mounted/);
+});
+
+test("repository mount paths allow Windows drive prefixes but reject mount delimiters", () => {
+  assert.doesNotThrow(() => validateRepositoryMountPath("C:\\Users\\operator\\My App", "win32"));
+  assert.doesNotThrow(() => validateRepositoryMountPath("D:/repos/My App", "win32"));
+  assert.doesNotThrow(() => validateRepositoryMountPath("\\\\server\\share\\app", "win32"));
+  assert.doesNotThrow(() => validateRepositoryMountPath("/work/My App", "linux"));
+  for (const platform of ["linux", "win32"] as const) {
+    for (const invalid of ["/work/a:b", "/work/a,b", "/work/a\nb", "/work/a\rb", "C:\\repos\\a:b"]) {
+      assert.throws(() => validateRepositoryMountPath(invalid, platform), /cannot be mounted/);
+    }
+  }
 });
 
 test("the compose override mounts only registered .git directories", async (t) => {
@@ -69,7 +82,7 @@ test("the compose override mounts only registered .git directories", async (t) =
   assert.ok(file);
   const text = await readFile(file, "utf8");
   assert.equal(text, renderRepositoryOverride([{ id: "app", path: app }]));
-  assert.match(text, new RegExp(`- "${path.join(app, ".git").replaceAll("\\", "\\\\")}:/repositories/app/\\.git:rw,z"`));
+  assert.ok(text.includes(`- ${JSON.stringify(`${path.join(app, ".git")}:/repositories/app/.git:rw,z`)}`));
   assert.doesNotMatch(text, /sock|\$HOME|~/);
 
   await unregisterRepository(dataDir, "app");

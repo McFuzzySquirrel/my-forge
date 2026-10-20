@@ -5,18 +5,8 @@ import { CopilotAdapter } from "../execution/harness/copilot-adapter.ts";
 import { OpenCodeAdapter } from "../execution/harness/opencode-adapter.ts";
 import { StubAdapter } from "../execution/harness/stub-adapter.ts";
 import type { HarnessAdapter } from "../execution/types.ts";
-
-/**
- * Credential variables each CLI harness may receive. Grants outside this
- * allowlist are ignored, so a grant for one harness never reaches another.
- */
-export const HARNESS_CREDENTIAL_VARIABLES: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  copilot: Object.freeze(["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]),
-  claude: Object.freeze(["ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"]),
-  opencode: Object.freeze([
-    "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GOOGLE_GENERATIVE_AI_API_KEY",
-  ]),
-});
+import { HARNESS_CREDENTIAL_VARIABLES } from "./harness-credentials.ts";
+export { HARNESS_CREDENTIAL_VARIABLES } from "./harness-credentials.ts";
 
 interface HarnessBinary {
   readonly env: string;

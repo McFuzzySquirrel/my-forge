@@ -64,7 +64,7 @@ export function getRuntimeDataDir(
   home = os.homedir(),
   platform = process.platform,
 ): string {
-  const pathApi = platform === "win32" ? path.win32 : path;
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
   let base: string;
   if (platform === "win32") {
     base = env.LOCALAPPDATA || pathApi.join(home, "AppData", "Local");

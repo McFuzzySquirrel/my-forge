@@ -1,9 +1,11 @@
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, unlink } from "node:fs/promises";
+import { createHash, randomBytes } from "node:crypto";
+import { chmod, lstat, mkdir, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { createReadStream } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveResources } from "./resources.ts";
 
 const CREDENTIALS_FILE = "runtime.env";
@@ -11,11 +13,27 @@ const KEYS = ["POSTGRES_SUPERUSER_PASSWORD", "DAPR_DB_PASSWORD", "APP_DB_PASSWOR
 const OUTPUT_LIMIT = 2 * 1024 * 1024;
 
 type RuntimeAction = "start" | "status" | "stop" | "reset";
+type RuntimeBackupAction = "backup" | "restore";
+const RUNTIME_VOLUMES = ["postgres_data", "scheduler_data", "runtime_data"] as const;
+const RUNTIME_PROJECT = "myforge-runtime";
+const BACKUP_FILE = "manifest.json";
+const BACKUP_VERSION = 1;
 
 interface RuntimeOptions {
   readonly hostTools: boolean;
   readonly postgresPort?: number;
   readonly confirm: boolean;
+  readonly backupPath?: string;
+}
+
+interface RuntimeBackupManifestV1 {
+  readonly version: 1;
+  readonly createdAt: string;
+  readonly volumes: readonly {
+    readonly name: (typeof RUNTIME_VOLUMES)[number];
+    readonly file: string;
+    readonly sha256: string;
+  }[];
 }
 
 interface RuntimeEnvironment {
@@ -146,8 +164,8 @@ export async function ensureRuntimeCredentials(directory = getRuntimeDataDir()):
   return (await readRuntimeEnvironment(directory)).file;
 }
 
-function parseOptions(action: RuntimeAction, args: readonly string[]): RuntimeOptions {
-  const options: { hostTools: boolean; postgresPort?: number; confirm: boolean } = {
+function parseOptions(action: RuntimeAction | RuntimeBackupAction, args: readonly string[]): RuntimeOptions {
+  const options: { hostTools: boolean; postgresPort?: number; confirm: boolean; backupPath?: string } = {
     hostTools: false,
     confirm: false,
   };
@@ -163,14 +181,24 @@ function parseOptions(action: RuntimeAction, args: readonly string[]): RuntimeOp
         throw new Error("--postgres-port must be from 1 to 65535.");
       }
       options.postgresPort = port;
-    } else if (argument === "--confirm" && action === "reset") {
+    } else if (argument === "--confirm" && (action === "reset" || action === "restore")) {
       options.confirm = true;
+    } else if ((argument === "--output" && action === "backup") || (argument === "--from" && action === "restore")) {
+      const value = args[++index];
+      if (!value || value.startsWith("--")) throw new Error(`${argument} requires a directory path.`);
+      options.backupPath = path.resolve(value);
     } else {
       throw new Error(`Unknown runtime option: ${argument}`);
     }
   }
   if (options.postgresPort !== undefined && !options.hostTools) {
     throw new Error("--postgres-port requires --host-tools.");
+  }
+  if ((action === "backup" || action === "restore") && !options.backupPath) {
+    throw new Error(`runtime ${action} requires ${action === "backup" ? "--output" : "--from"} <directory>.`);
+  }
+  if (action === "restore" && !options.confirm) {
+    throw new Error("Runtime restore replaces all persistent runtime volumes; rerun with --confirm.");
   }
   return options;
 }
@@ -222,7 +250,7 @@ export async function assertHostPortAvailable(port: number): Promise<void> {
   });
 }
 
-const SERVICES = ["postgres", "placement", "scheduler", "daprd"] as const;
+const SERVICES = ["postgres", "placement", "scheduler", "daprd", "forge"] as const;
 const READY_TIMEOUT_MS = 120_000;
 const READY_POLL_MS = 2_000;
 
@@ -230,11 +258,16 @@ export interface RuntimeContainer {
   readonly name: string;
   readonly service: string;
   readonly state: string;
+  readonly health?: string;
 }
 
 /** Returns the services that are missing or not running; empty when all are up. */
 export function unreadyServices(containers: readonly RuntimeContainer[]): string[] {
-  return SERVICES.filter((service) => !containers.some((container) => container.service === service && container.state === "running"));
+  return SERVICES.filter((service) => !containers.some((container) =>
+    container.service === service &&
+    container.state === "running" &&
+    (service !== "forge" || container.health === "healthy")
+  ));
 }
 
 async function listRuntimeContainers(): Promise<RuntimeContainer[]> {
@@ -243,12 +276,15 @@ async function listRuntimeContainers(): Promise<RuntimeContainer[]> {
   ]);
   if (result.code !== 0) throw new Error("Unable to list local runtime containers with Podman.");
   const entries = JSON.parse(result.stdout || "[]") as Array<{
-    Names?: string[]; State?: string; Labels?: Record<string, string>;
+    Names?: string[]; State?: string; Health?: string; Status?: string; Labels?: Record<string, string>;
   }>;
   return entries.map((entry) => ({
     name: entry.Names?.[0] ?? "",
     service: entry.Labels?.["com.docker.compose.service"] ?? "",
     state: entry.State ?? "unknown",
+    ...((entry.Health ?? entry.Status?.match(/\((healthy|unhealthy|starting)\)$/)?.[1])
+      ? { health: entry.Health ?? entry.Status?.match(/\((healthy|unhealthy|starting)\)$/)?.[1] }
+      : {}),
   }));
 }
 
@@ -269,14 +305,9 @@ async function waitForRuntimeReady(environment: RuntimeEnvironment): Promise<voi
     }
     await new Promise((resolve) => setTimeout(resolve, READY_POLL_MS));
   }
-  const details: string[] = [];
-  for (const container of containers.filter((entry) => entry.state !== "running")) {
-    const logs = await runCommand("podman", ["logs", "--tail", "10", container.name]).catch(() => undefined);
-    const text = logs ? redact(`${logs.stdout}${logs.stderr}`, environment.values).trim() : "";
-    details.push(`${container.service}: ${container.state}${text ? `\n${text}` : ""}`);
-  }
+  const details = await runtimeDiagnostics(containers, environment.values);
   throw new Error(
-    `Local infrastructure did not become ready: ${pending.join(", ")}.` +
+    `Local runtime did not become ready: ${pending.join(", ")}.` +
     `${details.length ? `\n${details.join("\n")}` : ""}\n` +
     `Run "forge-launcher runtime status" to inspect it and "forge-launcher runtime stop" to stop it.`,
   );
@@ -292,12 +323,33 @@ function redact(output: string, values: RuntimeEnvironment["values"]): string {
     .replace(/((?:POSTGRES|DAPR|APP)_DB_PASSWORD|POSTGRES_SUPERUSER_PASSWORD)=([^\s]+)/g, "$1=[REDACTED]");
 }
 
+async function runtimeDiagnostics(
+  containers: readonly RuntimeContainer[],
+  values: RuntimeEnvironment["values"],
+): Promise<string[]> {
+  const details: string[] = [];
+  for (const container of containers.filter((entry) =>
+    entry.state !== "running" || (entry.service === "forge" && entry.health !== "healthy")
+  )) {
+    const logs = await runCommand("podman", ["logs", "--tail", "10", container.name]).catch(() => undefined);
+    const text = logs ? redact(`${logs.stdout}${logs.stderr}`, values).trim() : "";
+    details.push(`${container.service}: ${container.state}${text ? `\n${text}` : ""}`);
+  }
+  return details;
+}
+
 async function compose(
   action: "up" | "ps" | "down",
   options: RuntimeOptions,
   environment: RuntimeEnvironment,
 ): Promise<string> {
-  const { deploymentDir } = resolveResources();
+  const { deploymentDir, executionDir, templatesDir } = resolveResources();
+  const engineDir = path.dirname(executionDir);
+  const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const launcherNodeModules = path.join(packageDir, "node_modules");
+  if (action === "up") {
+    await mkdir(path.join(engineDir, "node_modules"), { recursive: true });
+  }
   const baseFile = path.join(deploymentDir, "compose.yaml");
   const args = ["compose", "--env-file", environment.file, "-f", baseFile];
   if (action === "up" && options.hostTools) {
@@ -310,6 +362,9 @@ async function compose(
   delete env.POSTGRES_SUPERUSER_PASSWORD;
   delete env.DAPR_DB_PASSWORD;
   delete env.APP_DB_PASSWORD;
+  env.MYFORGE_ENGINE_DIR = engineDir;
+  env.MYFORGE_LAUNCHER_NODE_MODULES = launcherNodeModules;
+  env.MYFORGE_TEMPLATES_DIR = templatesDir;
   if (action === "up" && options.hostTools) {
     env.POSTGRES_PORT = String(options.postgresPort ?? 55432);
   }
@@ -327,10 +382,15 @@ const RUNTIME_USAGE = `Usage:
   forge-launcher runtime status
   forge-launcher runtime stop
   forge-launcher runtime reset --confirm
+  forge-launcher runtime backup --output <new-directory>
+  forge-launcher runtime restore --from <backup-directory> --confirm
 
-Starts the local PostgreSQL and Dapr infrastructure. Internal ports remain
-private. --host-tools publishes PostgreSQL on loopback (default 127.0.0.1:55432).
+Starts the local Forge execution service and its PostgreSQL/Dapr infrastructure.
+Infrastructure ports remain private. --host-tools publishes PostgreSQL on loopback (default 127.0.0.1:55432).
 Stop preserves persistent data; reset removes volumes and requires --confirm.
+Backup quiesces the runtime and exports PostgreSQL, Scheduler, and Forge data volumes.
+Backups exclude target repositories, Git refs, and the installation credential file.
+Restore verifies the archive, replaces those volumes, and restarts privately.
 `;
 
 export async function runtimeCli(args: readonly string[]): Promise<number> {
@@ -339,10 +399,13 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
     process.stdout.write(RUNTIME_USAGE);
     return actionValue ? 0 : 1;
   }
-  if (actionValue !== "start" && actionValue !== "status" && actionValue !== "stop" && actionValue !== "reset") {
+  if (
+    actionValue !== "start" && actionValue !== "status" && actionValue !== "stop" && actionValue !== "reset" &&
+    actionValue !== "backup" && actionValue !== "restore"
+  ) {
     throw new Error(`Unknown runtime action: ${actionValue}`);
   }
-  const action: RuntimeAction = actionValue;
+  const action = actionValue as RuntimeAction | RuntimeBackupAction;
   const options = parseOptions(action, rest);
   if (action === "reset" && !options.confirm) {
     throw new Error("Runtime reset deletes persistent data; rerun with --confirm.");
@@ -354,8 +417,19 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
   const environment = action === "start"
     ? await readRuntimeEnvironment(path.dirname(await ensureRuntimeCredentials()))
     : await requireRuntimeEnvironment();
+  if (action === "backup") {
+    await backupRuntime(options.backupPath!, options, environment);
+    process.stdout.write(`Local runtime backup created at ${options.backupPath}.\n`);
+    return 0;
+  }
+  if (action === "restore") {
+    await restoreRuntime(options.backupPath!, options, environment);
+    process.stdout.write("Local runtime backup restored; the execution service is ready.\n");
+    return 0;
+  }
   const operation = action === "start" ? "up" : action === "status" ? "ps" : "down";
   const output = await compose(operation, options, environment);
+  if (action === "reset") await removeRuntimeVolumes();
   if (action === "start") await waitForRuntimeReady(environment);
   if (action === "start") {
     process.stdout.write(`Local infrastructure is running${options.hostTools ? `; PostgreSQL is on 127.0.0.1:${options.postgresPort ?? 55432}` : ""}.\n`);
@@ -364,7 +438,170 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
   } else if (action === "reset") {
     process.stdout.write("Local infrastructure stopped and persistent volumes were removed.\n");
   } else {
-    process.stdout.write(`${output || "No runtime containers are present."}\n`);
+    const containers = await listRuntimeContainers();
+    const diagnostics = await runtimeDiagnostics(containers, environment.values);
+    process.stdout.write(
+      `${output || "No runtime containers are present."}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}\n`,
+    );
   }
   return 0;
+}
+
+async function sha256File(file: string): Promise<string> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(file)) hash.update(chunk);
+  return hash.digest("hex");
+}
+
+function volumeName(name: (typeof RUNTIME_VOLUMES)[number]): string {
+  return `${RUNTIME_PROJECT}_${name}`;
+}
+
+async function removeRuntimeVolumes(): Promise<void> {
+  for (const name of RUNTIME_VOLUMES) {
+    const volume = volumeName(name);
+    const inspected = await runCommand("podman", ["volume", "inspect", volume]);
+    if (inspected.code !== 0) continue;
+    const removed = await runCommand("podman", ["volume", "rm", volume]);
+    if (removed.code !== 0) throw new Error(`Could not remove runtime volume '${volume}'.`);
+  }
+}
+
+async function ensureBackupDirectoryDoesNotExist(directory: string): Promise<void> {
+  try {
+    await lstat(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  throw new Error(`Backup destination already exists: ${directory}`);
+}
+
+async function backupRuntime(
+  destination: string,
+  options: RuntimeOptions,
+  environment: RuntimeEnvironment,
+): Promise<void> {
+  const resolvedDestination = path.resolve(destination);
+  const relativeToRuntimeData = path.relative(path.resolve(getRuntimeDataDir()), resolvedDestination);
+  if (
+    relativeToRuntimeData === "" ||
+    (
+      relativeToRuntimeData !== ".." &&
+      !relativeToRuntimeData.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(relativeToRuntimeData)
+    )
+  ) {
+    throw new Error("Runtime backups must be stored outside the runtime data directory.");
+  }
+  await ensureBackupDirectoryDoesNotExist(resolvedDestination);
+  const running = (await listRuntimeContainers()).some((container) => container.state === "running");
+  const parent = path.dirname(resolvedDestination);
+  await mkdir(parent, { recursive: true });
+  const temporary = `${resolvedDestination}.tmp-${randomBytes(8).toString("hex")}`;
+  await mkdir(temporary, { mode: 0o700 });
+
+  let backupSucceeded = false;
+  const failures: unknown[] = [];
+  try {
+    if (running) await compose("down", options, environment);
+    const volumes: RuntimeBackupManifestV1["volumes"][number][] = [];
+    for (const name of RUNTIME_VOLUMES) {
+      const volume = volumeName(name);
+      const inspected = await runCommand("podman", ["volume", "inspect", volume]);
+      if (inspected.code !== 0) throw new Error(`Runtime volume '${volume}' is missing; cannot create a complete backup.`);
+      const file = `${name}.tar`;
+      const target = path.join(temporary, file);
+      const exported = await runCommand("podman", ["volume", "export", "--output", target, volume]);
+      if (exported.code !== 0) throw new Error(`Could not export runtime volume '${volume}'.`);
+      await chmod(target, 0o600);
+      volumes.push({ name, file, sha256: await sha256File(target) });
+    }
+    const manifest: RuntimeBackupManifestV1 = {
+      version: BACKUP_VERSION,
+      createdAt: new Date().toISOString(),
+      volumes,
+    };
+    await writeFile(path.join(temporary, BACKUP_FILE), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await rename(temporary, resolvedDestination);
+    backupSucceeded = true;
+  } catch (error) {
+    failures.push(error);
+  }
+
+  if (running) {
+    try {
+      await compose("up", options, environment);
+      await waitForRuntimeReady(environment);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (!backupSucceeded) {
+    try {
+      await rm(temporary, { recursive: true, force: true });
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) throw new AggregateError(failures, "Runtime backup or recovery failed.");
+}
+
+async function readAndVerifyBackup(directory: string): Promise<RuntimeBackupManifestV1> {
+  const root = path.resolve(directory);
+  const rootStat = await lstat(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error(`Backup path must be a real directory: ${root}`);
+  }
+  const manifestPath = path.join(root, BACKUP_FILE);
+  const manifestStat = await lstat(manifestPath);
+  if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
+    throw new Error(`Backup manifest must be a regular file: ${manifestPath}`);
+  }
+  const parsed = JSON.parse(await readFile(manifestPath, "utf8")) as Partial<RuntimeBackupManifestV1>;
+  if (parsed.version !== BACKUP_VERSION || !Array.isArray(parsed.volumes) ||
+    parsed.volumes.length !== RUNTIME_VOLUMES.length ||
+    !parsed.createdAt || !Number.isFinite(Date.parse(parsed.createdAt))) {
+    throw new Error("Runtime backup manifest has an unsupported or invalid format.");
+  }
+  const seen = new Set<string>();
+  for (const volume of parsed.volumes) {
+    if (!volume || !RUNTIME_VOLUMES.includes(volume.name) ||
+      volume.file !== `${volume.name}.tar` || !/^[0-9a-f]{64}$/.test(volume.sha256) ||
+      seen.has(volume.name)) {
+      throw new Error("Runtime backup manifest contains an invalid volume record.");
+    }
+    seen.add(volume.name);
+    const archivePath = path.join(root, volume.file);
+    const archiveStat = await lstat(archivePath);
+    if (!archiveStat.isFile() || archiveStat.isSymbolicLink() || await sha256File(archivePath) !== volume.sha256) {
+      throw new Error(`Runtime backup volume '${volume.name}' is missing or failed its integrity check.`);
+    }
+  }
+  if (seen.size !== RUNTIME_VOLUMES.length) throw new Error("Runtime backup is missing one or more persistent volumes.");
+  return parsed as RuntimeBackupManifestV1;
+}
+
+async function restoreRuntime(
+  source: string,
+  options: RuntimeOptions,
+  environment: RuntimeEnvironment,
+): Promise<void> {
+  const backup = await readAndVerifyBackup(source);
+  await compose("down", { ...options, confirm: true }, environment);
+  for (const volume of backup.volumes) {
+    const name = volumeName(volume.name);
+    const inspected = await runCommand("podman", ["volume", "inspect", name]);
+    if (inspected.code === 0) {
+      const removed = await runCommand("podman", ["volume", "rm", name]);
+      if (removed.code !== 0) throw new Error(`Could not remove existing runtime volume '${name}' for restore.`);
+    }
+    const created = await runCommand("podman", ["volume", "create", name]);
+    if (created.code !== 0) throw new Error(`Could not create runtime volume '${name}' for restore.`);
+    const imported = await runCommand("podman", ["volume", "import", name, path.join(path.resolve(source), volume.file)]);
+    if (imported.code !== 0) throw new Error(`Could not restore runtime volume '${name}'.`);
+  }
+  await compose("up", options, environment);
+  await waitForRuntimeReady(environment);
 }

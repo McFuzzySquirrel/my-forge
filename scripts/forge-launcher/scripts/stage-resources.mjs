@@ -31,12 +31,21 @@ rmSync(path.join(resourcesDir, "templates"), { recursive: true, force: true });
 rmSync(path.join(resourcesDir, "prompt-playbook.md"), { force: true });
 rmSync(path.join(resourcesDir, "tools", "dapr-engine", "execution"), { recursive: true, force: true });
 rmSync(path.join(resourcesDir, "tools", "dapr-engine", "deploy"), { recursive: true, force: true });
+for (const directory of ["contract", "orchestration", "service", "storage"]) {
+  rmSync(path.join(resourcesDir, "tools", "dapr-engine", directory), { recursive: true, force: true });
+}
 
 copyTree(path.join(repoRoot, "templates"), path.join(resourcesDir, "templates"));
 copyTree(
   path.join(repoRoot, "tools", "dapr-engine", "execution"),
   path.join(resourcesDir, "tools", "dapr-engine", "execution"),
 );
+for (const directory of ["contract", "orchestration", "service", "storage"]) {
+  copyTree(
+    path.join(repoRoot, "tools", "dapr-engine", directory),
+    path.join(resourcesDir, "tools", "dapr-engine", directory),
+  );
+}
 copyTree(
   path.join(repoRoot, "tools", "dapr-engine", "deploy"),
   path.join(resourcesDir, "tools", "dapr-engine", "deploy"),
@@ -45,5 +54,6 @@ copyFileSync(
   path.join(repoRoot, "docs", "prompt-playbook.md"),
   path.join(resourcesDir, "prompt-playbook.md"),
 );
+mkdirSync(path.join(resourcesDir, "tools", "dapr-engine", "node_modules"), { recursive: true });
 
 console.log(`Staged templates/, execution utilities, deployment resources, and prompt-playbook.md into ${resourcesDir}`);

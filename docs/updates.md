@@ -4,6 +4,28 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.118
+
+### P5-02 local execution service lifecycle
+
+- The launcher now starts the Forge worker with PostgreSQL, Dapr Placement,
+  Scheduler, and sidecar services. Readiness includes schema migrations and a
+  Dapr workflow-admission probe; status and failed startup diagnostics include
+  recent logs with credentials redacted.
+- `runtime backup --output <directory>` quiesces the stack and creates
+  checksummed archives for PostgreSQL, Scheduler, and Forge runtime/artifact
+  volumes. `runtime restore --from <directory> --confirm` verifies the archive,
+  replaces those volumes, then waits for service readiness.
+- Database migrations are append-only and reject checksum drift, version gaps,
+  and newer schemas. Updating the launcher then running `runtime start` applies
+  compatible migrations; downgrade and cross-version workflow-history
+  compatibility are not promised. Target repository Git refs and working trees
+  are not part of runtime volume backups.
+- P5-02 is complete. P5-03 is next; launcher submission and control entry points
+  are not yet wired to this service.
+
+---
+
 ## October 2026 - v3.116
 
 ### P5 deployment and access decisions recorded

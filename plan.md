@@ -277,11 +277,20 @@ server, or GitHub App is a first-class path.
   than choosing another port. Containers use service DNS, not the host port.
   `tools/dapr-engine/compose.postgres.yaml` stays the separate test database
   with its own volume.
-- [ ] **P5-02 — Add lifecycle management.** The launcher now provides
-  `runtime start/status/stop/reset` for the local infrastructure; stop preserves
-  volumes and reset requires `--confirm`. These commands do not start the
-  execution service. Complete service lifecycle, diagnostics, backup/restore,
-  and compatible upgrade operations, then record their compatibility surface.
+- [x] **P5-02 — Add lifecycle management.** The launcher manages the Forge
+  service and PostgreSQL/Dapr stack with `runtime start/status/stop/reset`;
+  readiness includes a Dapr workflow-admission probe, unhealthy containers
+  include credential-redacted log diagnostics, stop preserves volumes, and
+  reset requires `--confirm`. `runtime backup --output` quiesces the stack and
+  exports checksummed PostgreSQL, Scheduler, and Forge runtime/artifact volume
+  archives; `runtime restore --from ... --confirm` verifies and replaces those
+  volumes before restarting and reproving readiness. Append-only SQL migrations
+  fail closed on checksum drift, version gaps, and databases newer than the
+  installed service. `runtime start` applies compatible migrations after a
+  launcher update; schema downgrade and cross-version workflow-history
+  compatibility are not promised. The backup does not include target Git
+  repositories or their working trees/refs; repository backup remains separate
+  until those paths are service-managed.
 - [ ] **P5-03 — Migrate execution entry points.** Update engine-run, resume,
   launcher flow, wrappers, bootstrap/package resources, and auto-build polling
   to submit/query/control the service. Select local versus hosted deployment,
@@ -481,9 +490,10 @@ volumes, and confirmed reset removing them. An occupied host port is rejected
 before credentials or containers are created. Launcher staging and package
 contents, protected credential creation and reuse, and required-credential
 failures are tested. The flaky C26 durable-cancel fixture was fixed, and the
-full engine suite passes repeatedly. The next work package is **P5-02**: the
-execution-service entry point and its lifecycle, diagnostics, migration checks,
-and backup/restore. The `runtime` commands manage infrastructure only.
+full engine suite passes repeatedly. The next work package is **P5-03**: migrate launcher execution entry points
+to submit/query/control the service. P5-02 now provides the worker entry point,
+lifecycle, diagnostics, migration checks, and checksummed backups of
+service-owned volumes; it does not yet accept user execution submissions.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed

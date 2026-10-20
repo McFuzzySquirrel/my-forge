@@ -68,6 +68,12 @@ test("runtime requires an explicit reset confirmation", async () => {
   await assert.rejects(runtimeCli(["reset"]), /rerun with --confirm/);
 });
 
+test("runtime backup and restore require explicit paths and restore confirmation", async () => {
+  await assert.rejects(runtimeCli(["backup"]), /requires --output/);
+  await assert.rejects(runtimeCli(["restore"]), /requires --from/);
+  await assert.rejects(runtimeCli(["restore", "--from", "./backup"]), /rerun with --confirm/);
+});
+
 test("runtime rejects a host port unless host tools are enabled", async () => {
   await assert.rejects(runtimeCli(["start", "--postgres-port", "55433"]), /requires --host-tools/);
   await assert.rejects(runtimeCli(["start", "--host-tools", "--postgres-port", "65536"]), /1 to 65535/);
@@ -91,16 +97,36 @@ test("runtime reports an occupied loopback host port before starting Compose", a
 });
 
 test("runtime readiness requires every service to be running", () => {
-  const running = (service: string) => ({ name: `myforge-runtime_${service}_1`, service, state: "running" });
-  assert.deepEqual(unreadyServices(["postgres", "placement", "scheduler", "daprd"].map(running)), []);
+  const running = (service: string) => ({
+    name: `myforge-runtime_${service}_1`,
+    service,
+    state: "running",
+    ...(service === "forge" ? { health: "healthy" } : {}),
+  });
+  assert.deepEqual(unreadyServices(["postgres", "placement", "scheduler", "daprd", "forge"].map(running)), []);
   assert.deepEqual(
     unreadyServices([
       { ...running("postgres"), state: "created" },
       running("placement"),
       running("scheduler"),
+      { ...running("forge"), health: "starting" },
     ]),
-    ["postgres", "daprd"],
+    ["postgres", "daprd", "forge"],
   );
+});
+
+test("runtime readiness waits for the Forge service health check", () => {
+  const containers = ["postgres", "placement", "scheduler", "daprd"].map((service) => ({
+    name: `myforge-runtime_${service}_1`,
+    service,
+    state: "running",
+  }));
+  assert.deepEqual(unreadyServices([...containers, {
+    name: "myforge-runtime_forge_1",
+    service: "forge",
+    state: "running",
+    health: "starting",
+  }]), ["forge"]);
 });
 
 test("runtime rejects credential files carrying non-secret settings", async (t) => {

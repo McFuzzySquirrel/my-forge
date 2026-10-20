@@ -100,6 +100,45 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  forge:
+    image: docker.io/library/node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+    working_dir: /opt/myforge/tools/dapr-engine
+    command:
+      - node
+      - --import
+      - tsx
+      - service/main.ts
+    environment:
+      MYFORGE_DATABASE_URL: "postgresql://myforge_app:${APP_DB_PASSWORD:?APP_DB_PASSWORD is required}@postgres:5432/myforge_app"
+      MYFORGE_RUNTIME_DATA_DIR: /var/lib/myforge
+      DAPR_HOST: daprd
+      DAPR_GRPC_PORT: "50001"
+      DAPR_HTTP_PORT: "3500"
+      MYFORGE_SERVICE_PORT: "8083"
+      MYFORGE_WORKER_ID: local
+    volumes:
+      - ${MYFORGE_ENGINE_DIR:?MYFORGE_ENGINE_DIR is required}:/opt/myforge/tools/dapr-engine:ro,Z
+      - ${MYFORGE_LAUNCHER_NODE_MODULES:?MYFORGE_LAUNCHER_NODE_MODULES is required}:/opt/myforge/tools/dapr-engine/node_modules:ro,Z
+      - ${MYFORGE_TEMPLATES_DIR:?MYFORGE_TEMPLATES_DIR is required}:/opt/myforge/templates:ro,Z
+      - runtime_data:/var/lib/myforge
+    depends_on:
+      postgres:
+        condition: service_healthy
+      daprd:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "node service/healthcheck.mjs"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 30s
+    cpus: 1.0
+    mem_limit: 1g
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+
 volumes:
   postgres_data:
   scheduler_data:
+  runtime_data:

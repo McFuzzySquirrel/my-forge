@@ -113,6 +113,8 @@ npx forge-launcher@beta runtime start [--host-tools] [--postgres-port <n>]
 npx forge-launcher@beta runtime status
 npx forge-launcher@beta runtime stop
 npx forge-launcher@beta runtime reset --confirm
+npx forge-launcher@beta runtime backup --output <new-directory>
+npx forge-launcher@beta runtime restore --from <backup-directory> --confirm
 npx forge-launcher@beta draft-prd --repo <path> [model flags]
 npx forge-launcher@beta draft-existing-prd --repo <path> [model flags]
 npx forge-launcher@beta draft-team --repo <path> [model flags]
@@ -131,22 +133,48 @@ npx forge-launcher@beta authoring-models --repo <path>
 
 When installed globally (`npm install -g forge-launcher@beta`), drop the `npx`.
 
-`runtime start` provisions the persistent local PostgreSQL/Dapr infrastructure
-using rootless Podman. It creates installation-scoped credentials in the
+`runtime start` provisions the persistent local Forge service and
+PostgreSQL/Dapr infrastructure using rootless Podman. It creates
+installation-scoped credentials in the
 platform's user data directory (Linux: `$XDG_DATA_HOME/MyForge/runtime`, or
 `~/.local/share/MyForge/runtime`; macOS: `~/Library/Application Support/MyForge/runtime`;
 Windows: `%LOCALAPPDATA%\MyForge\runtime`) with owner-only permissions where
-supported. It does not yet start the Forge execution service. `runtime start`
-reports success only after every container is running and PostgreSQL accepts
-connections; otherwise it prints the failing services and their recent logs,
-with credentials redacted.
+supported. The service runs database migrations, registers the Dapr workflows,
+and reports ready only after a workflow-admission probe succeeds. User
+submission and control entry points are migrated separately in P5-03/P5-04;
+until then this runtime does not accept launcher execution requests. Startup
+reports success only after every container is running, PostgreSQL accepts
+connections, and the service health check passes. Failure diagnostics include
+recent service logs with credentials redacted; `runtime status` also shows
+recent logs for unhealthy or stopped services.
 
 Infrastructure ports stay private unless `--host-tools` is selected. That
 option publishes PostgreSQL on `127.0.0.1:55432`; `--postgres-port` changes the
 fixed loopback port. The port is checked before any container starts; a
 conflict is an error, not an automatic port change. Host-tools mode applies
-only to the `start` that requests it; a later plain `start` keeps PostgreSQL private.
-`runtime stop` preserves volumes. `runtime reset --confirm` removes them.
+only to the `start` that requests it; a later plain `start` keeps PostgreSQL
+private. `runtime stop` preserves volumes. `runtime reset --confirm` removes
+them.
+
+`runtime backup --output <new-directory>` stops the stack long enough to export
+the PostgreSQL (application and workflow state), Dapr Scheduler, and Forge
+artifact/runtime volumes as tar files with a checksummed manifest, then restores
+the runtime to a ready, privately networked state. A backup does not include the
+installation credential file; restore it on the same installation that created
+the backup. Keep the backup directory private; it contains runtime data.
+Backups do not include target repositories or their working trees/Git refs,
+which remain under repository backup policy.
+
+`runtime restore --from <backup-directory> --confirm` verifies the manifest and
+volume checksums before replacing the runtime volumes, then starts the runtime
+privately and waits for readiness. Restore is destructive to the currently
+installed runtime data. Re-enable optional PostgreSQL host-tools exposure with
+an explicit `runtime start --host-tools`. The migration runner applies only
+contiguous, append-only SQL
+migrations and fails closed on checksum drift, version gaps, or a database
+schema newer than the installed service. Updating the launcher package and
+running `runtime start` applies compatible migrations; schema downgrade and
+cross-version workflow-history compatibility are not promised.
 
 `bootstrap` takes these options:
 

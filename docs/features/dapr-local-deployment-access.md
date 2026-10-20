@@ -90,13 +90,13 @@ manifest.
   "description":"Compose existing orchestration, stores, status projection, and approval coordinator behind a production service entry point with launcher-owned start/status/stop and diagnostics. Stop preserves volumes; reset is a separate confirmed action. Define migration/version checks and backup/restore hooks covering all stores.",
   "ownerAgent":"forge-runtime-engineer",
   "dependencies":["P5-01"],
-  "expectedOutputs":["tools/dapr-engine/package.json","scripts/forge-launcher/scripts/cli.ts"],
+  "expectedOutputs":["tools/dapr-engine/service/main.ts","tools/dapr-engine/service/migrations.ts","scripts/forge-launcher/scripts/runtime.ts"],
   "validationCommands":["npm test --prefix tools/dapr-engine","npm run typecheck --prefix tools/dapr-engine","npm test --prefix scripts/forge-launcher","npm run typecheck --prefix scripts/forge-launcher"],
   "contract":{
     "version":2,"kind":"implementation",
     "requirements":[],
     "requirementRefs":["docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-01","docs/features/dapr-local-deployment-access.md#DAPR-DEPLOY-03"],
-    "acceptanceCriteria":["Start, status, and stop work through the launcher; restart recovery requires no manual state edits.","Reset requires explicit confirmation; stop and down preserve data."],
+    "acceptanceCriteria":["Launcher start/status/stop manage the service and infrastructure; readiness requires a successful workflow-admission probe, and unhealthy-service diagnostics redact credentials.","Restart recovery requires no manual state edits; reset and restore require explicit confirmation, while stop preserves volumes.","Backup quiesces the runtime and checksums PostgreSQL, Scheduler, and Forge runtime/artifact volumes; restore verifies the archive and restarts the service.","Migrations are append-only and fail closed on checksum drift, version gaps, or a database schema newer than the installed service."],
     "constraints":[],
     "constraintRefs":["docs/PRD.md#DAPR-C-03","docs/PRD.md#DAPR-C-04"],
     "references":["plan.md","docs/adr/068-local-deployment-and-access-profiles.md"]

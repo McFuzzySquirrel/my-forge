@@ -158,6 +158,11 @@ over automatic detection. If that path is stale, update the selected root and
 recompile the manifest explicitly; the Console will not silently switch roots.
 - **Artifacts**: structured outputs produced by the run, browsable by type and task.
 - **Timeline**: a chronological record of important events and failures.
+- **Service runs**: runs submitted with `forge-launcher service submit`. Select
+  a run to see its tasks and events, and to pause, resume, stop, cancel,
+  approve, or replay through the local execution service. Each button shows the
+  service's acknowledgement. Register the repository with
+  `forge-launcher runtime repo add` and start the runtime first.
 
 The most useful combination for day-to-day work is usually Overview + Board + Logs.
 

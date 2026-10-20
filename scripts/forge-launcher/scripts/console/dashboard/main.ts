@@ -11,6 +11,7 @@ import { renderLogs, unmountLogs } from "./views/logs.js";
 import { refreshDocuments, renderDocuments, unmountDocuments } from "./views/documents.js";
 import { renderArtifacts, unmountArtifacts } from "./views/artifacts.js";
 import { renderTimeline, unmountTimeline } from "./views/timeline.js";
+import { renderService, unmountService } from "./views/service.js";
 import { refreshProjectList, renderProjects, unmountProjects } from "./views/projects.js";
 import { renderNew, unmountNew } from "./views/new.js";
 import { openHelp } from "./views/help.js";
@@ -32,6 +33,7 @@ const views: View[] = [
   { id: "documents", label: "Plan & Team", render: renderDocuments, unmount: unmountDocuments, refresh: refreshDocuments },
   { id: "artifacts", label: "Artifacts", render: renderArtifacts, unmount: unmountArtifacts },
   { id: "timeline", label: "Timeline", render: renderTimeline, unmount: unmountTimeline },
+  { id: "service", label: "Service runs", render: renderService, unmount: unmountService },
   { id: "projects", label: "Projects", render: renderProjects, unmount: unmountProjects },
   { id: "new", label: "New project", render: renderNew, unmount: unmountNew },
 ];

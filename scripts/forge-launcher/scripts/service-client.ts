@@ -10,7 +10,7 @@ import { getRuntimeDataDir, readRuntimeApiAccess } from "./runtime.ts";
 import { findRegisteredRepository } from "./runtime-repositories.ts";
 
 const TERMINAL_STATUSES = new Set(["complete", "failed", "cancelled"]);
-const CONTROL_ACTIONS = new Set(["pause", "resume", "stop", "cancel", "replay-task", "approve-task"]);
+export const CONTROL_ACTIONS = new Set(["pause", "resume", "stop", "cancel", "replay-task", "approve-task"]);
 const FORGE_BRANCH_PREFIX = "forge/";
 
 export class ServiceApiError extends Error {

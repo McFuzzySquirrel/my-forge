@@ -31,6 +31,7 @@ import { harnessCliForHarness } from "./dashboard/harness-rules.ts";
 import * as repo from "./repo.ts";
 import { removeProjects, sameProjectPath } from "./remove-projects.ts";
 import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
+import { controlServiceRun, defaultServiceRunsDeps, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
 import type { ControlAction, CreateProjectRequest, ManifestTask } from "./types.ts";
 
 const CLIENT_DIR = fileURLToPath(new URL("../../resources/console/client", import.meta.url));
@@ -55,6 +56,8 @@ export interface ConsoleServerOptions {
   /** Injectable "launch a harness CLI in a terminal" seam (defaults to launchCliInTerminal). */
   launchCli?: (cli: string, dir: string, args: string[]) => Promise<boolean>;
   inventoryProbe?: InventoryProbe;
+  /** Execution-service access seam (defaults to the local runtime API). */
+  serviceRuns?: ServiceRunsDeps;
 }
 
 export interface ConsoleServer {
@@ -377,6 +380,8 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
   const port = await findFreePort(options.port ?? DEFAULT_PORT, onLog);
   const url = `http://127.0.0.1:${port}`;
   const sessions = new OperatorSessions({ port });
+  let serviceRunsDeps = options.serviceRuns;
+  const serviceRuns = (): ServiceRunsDeps => (serviceRunsDeps ??= defaultServiceRunsDeps());
 
   // ── SSE clients ────────────────────────────────────────────────────────────
   type Send = (event: string, data: unknown) => void;
@@ -570,6 +575,16 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
               });
         }
 
+        if (urlPath === "/api/service/runs") {
+          const result = await listServiceRuns(serviceRuns(), currentRepo);
+          return sendJson(res, result.status, result.body);
+        }
+        if (urlPath === "/api/service/run") {
+          const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");
+          const result = await serviceRunDetail(serviceRuns(), currentRepo, q.get("id"), q.get("after"));
+          return sendJson(res, result.status, result.body);
+        }
+
         if (urlPath.startsWith("/api/artifacts/")) {
           if (!p) return sendJson(res, 404, null);
           const id = decodeURIComponent(urlPath.slice("/api/artifacts/".length));
@@ -600,6 +615,11 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": sessions.revoke(req.headers.cookie), "Cache-Control": "no-store" });
           res.end(JSON.stringify({ ok: true }));
           return;
+        }
+
+        if (urlPath === "/api/service/control") {
+          const result = await controlServiceRun(serviceRuns(), currentRepo, body);
+          return sendJson(res, result.status, result.body);
         }
 
         if (urlPath === "/api/authoring-config") {

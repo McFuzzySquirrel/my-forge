@@ -4,6 +4,23 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.122
+
+### P5-04 Console service runs (partial)
+
+- New Console **Service runs** view lists the open repository's runs from the
+  local execution service, with tasks and sequenced events refreshed every two
+  seconds.
+- Pause, resume, stop, cancel, approve, and replay go through the service API,
+  and each button shows the service's acknowledgement. The Console server holds
+  the service token; the browser never sees it, and runs from other
+  repositories are refused.
+- Builds started from Overview still use the legacy engine and file-based
+  controls until real harnesses run in the worker.
+- See [Service runs](forge-console.md#service-runs).
+
+---
+
 ## October 2026 - v3.121
 
 ### P5-06 runtime diagnostics and onboarding

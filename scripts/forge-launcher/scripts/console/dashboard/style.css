@@ -202,6 +202,7 @@ th.sortable { cursor: pointer; }
 th.sortable:hover { color: var(--text); }
 tr.clickable { cursor: pointer; }
 tr.clickable:hover { background: rgba(140, 170, 255, 0.06); }
+tr.selected { background: rgba(140, 170, 255, 0.12); }
 tr.detail-row td { background: rgba(7, 11, 22, 0.4); }
 
 .detail { padding: 4px 0; }

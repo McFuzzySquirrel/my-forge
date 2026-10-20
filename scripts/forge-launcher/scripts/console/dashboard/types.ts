@@ -512,3 +512,55 @@ export interface OpenResult {
   ok: boolean;
   message?: string;
 }
+
+// ─── Local execution-service runs ─────────────────────────────────────────────
+
+export interface ServiceRunTask {
+  taskId: string;
+  status: string;
+  logicalAttempt?: number;
+}
+
+export interface ServiceRunRecord {
+  runId: string;
+  status: string;
+  repositoryId: string;
+  targetRef: string;
+  createdAt?: string;
+  harness?: { id: string };
+  tasks?: ServiceRunTask[];
+}
+
+export interface ServiceRunsResponse {
+  ok: boolean;
+  available: boolean;
+  reason?: string;
+  message?: string;
+  runs: ServiceRunRecord[];
+}
+
+export interface ServiceRunEvent {
+  sequence: number;
+  eventType: string;
+  taskId?: string;
+  logicalAttempt?: number;
+  runStatus?: string;
+  taskStatus?: string;
+  attemptStatus?: string;
+  createdAt?: string;
+}
+
+export interface ServiceRunDetail {
+  ok: boolean;
+  run: ServiceRunRecord;
+  events: ServiceRunEvent[];
+  cursor: number;
+  hasMore: boolean;
+}
+
+export interface ServiceControlResult {
+  ok: boolean;
+  action: string;
+  controlId: string;
+  state: string;
+}

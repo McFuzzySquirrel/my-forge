@@ -385,6 +385,7 @@ button shows the exact command to run manually.
 | **Plan & Team** | authoring settings and stage cards — always actionable, each stating why it is stale — plus the project documents (IDEA, PRD, features, progress, model plan) as a table that opens a document in a wide popup, and agents and skills in collapsible card sections. Requirement and task blocks render as tables. |
 | **Artifacts** | the structured outputs tasks produced (`docs/artifacts/`), browsable by type/task with previews. |
 | **Timeline** | chronological audit events, failures highlighted. |
+| **Service runs** | runs submitted to the local execution service (`forge-launcher service submit`) for the open repository: status, tasks, sequenced events, and acknowledged controls. See [Service runs](#service-runs). |
 | **Projects** | switch projects, add a folder, or remove one or more projects from Forge. |
 
 A **Help** button (top-right) explains the UI, the pipeline, each view, and key
@@ -411,6 +412,29 @@ does:
 | **Resume** | `forge-launcher engine-run --repo <path> …` (resumes from `WORKFLOW-STATE.json`). |
 | **Replay** | `workflow-engine replay <task-id> --repo <path>` for a failed task. |
 | **Create manifest** *(pipeline card, manual pre-build only)* | `forge-launcher compile-manifest --repo <path>` (installs the adapter if needed and writes `docs/EXECUTION-MANIFEST.json` without starting the engine). |
+
+### Service runs
+
+The **Service runs** view lists runs that the local execution service holds
+for the open repository, refreshing every two seconds. Selecting a run shows
+its status, tasks, and events. Events are fetched after the last sequence
+number seen, so a reload or reconnect picks up from the service's record.
+
+- **Pause**, **Resume**, **Stop**, and **Cancel** are offered as the run state
+  allows. **Approve** appears on a task that is `waiting-for-approval` and
+  **Replay** on a failed task.
+- Each control goes to the service API, and the toast shows the service's
+  acknowledgement (for example `accepted`) or its rejection.
+- The Console server calls the service with the installation token from
+  `runtime.env`; the browser never receives it. The server only shows and
+  controls runs whose repository is the one open in the Console
+  (`GET /api/service/runs`, `GET /api/service/run`, and the token-gated
+  `POST /api/service/control`).
+- When the repository is not registered (`forge-launcher runtime repo add`) or
+  the runtime is not running, the view says so.
+
+Builds started from Overview still use the legacy engine and the file-based
+controls above, because the worker provides only the stub harness so far.
 
 ### Execution mode
 

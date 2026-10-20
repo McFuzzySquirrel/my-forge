@@ -63,7 +63,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE accepted 2026-10-19 | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-GATE evidence](#p4-gate-acceptance-evidence--2026-10-19); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
-| P5 — Launcher and Console migration | P4 gate | Launcher + Console | In progress (P5-01, P5-02, P5-05, P5-06 done; P5-03 partial) | @McFuzzySquirrel |
+| P5 — Launcher and Console migration | P4 gate | Launcher + Console | In progress (P5-01, P5-02, P5-05, P5-06 done; P5-03, P5-04 partial) | @McFuzzySquirrel |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
@@ -311,6 +311,12 @@ server, or GitHub App is a first-class path.
   authenticated service requests and acknowledged outcomes; reconnect from
   sequenced status/events. Remove scheduling dependence on dynamically importing
   the legacy engine while retaining shared readiness semantics.
+  *In progress:* the Console **Service runs** view monitors service runs from
+  sequenced events and sends authenticated pause/resume/stop/cancel/approve/
+  replay requests through the Console server, showing the service's
+  acknowledgement (live approve validated). File/PID control and the legacy
+  engine import remain for Overview builds until real harnesses run in the
+  worker (see P5-03).
 - [x] **P5-05 — Harden local access.** Expose Forge API/Console only on loopback
   by default; authenticate controls, validate browser origins/CSRF protections,
   constrain repository paths, scope secrets, and redact logs. Sidecar/store APIs
@@ -528,7 +534,7 @@ and the `service` launcher commands; real-harness execution in the worker is
 blocked on a harness-provisioning decision (see P5-03). P5-05 hardened local
 access with a Console operator session and a Dapr sidecar token (ADR-070);
 P5-06 added runtime remediation hints, JSON status/audit export, and
-troubleshooting docs.
+troubleshooting docs. P5-04 has started with the Console **Service runs** view.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed

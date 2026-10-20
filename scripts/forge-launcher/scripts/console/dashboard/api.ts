@@ -32,6 +32,9 @@ import type {
   TimeoutUpdateResult,
   UploadResult,
   WorkflowState,
+  ServiceControlResult,
+  ServiceRunDetail,
+  ServiceRunsResponse,
 } from "./types.js";
 
 function token(): string {
@@ -68,6 +71,15 @@ function post<T>(url: string, body: unknown): Promise<T> {
 export const api = {
   logout(): Promise<{ ok: boolean }> {
     return post<{ ok: boolean }>("/api/session/logout", {});
+  },
+  serviceRuns(): Promise<ServiceRunsResponse> {
+    return request<ServiceRunsResponse>("/api/service/runs");
+  },
+  serviceRun(runId: string, after: number): Promise<ServiceRunDetail> {
+    return request<ServiceRunDetail>(`/api/service/run?id=${encodeURIComponent(runId)}&after=${after}`);
+  },
+  serviceControl(runId: string, action: string, taskId?: string): Promise<ServiceControlResult> {
+    return post<ServiceControlResult>("/api/service/control", { runId, action, ...(taskId ? { taskId } : {}) });
   },
   summary(): Promise<Summary | null> {
     return request<Summary | null>("/api/summary");

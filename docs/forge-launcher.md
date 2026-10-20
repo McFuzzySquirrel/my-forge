@@ -210,6 +210,7 @@ sidecar, so task processes in the worker cannot call the sidecar directly. See
 3. `service merge <run-id>` fast-forwards the checked-out branch to the forge
    branch once the run has finished.
 
+The Console's **Service runs** view monitors and controls the same runs.
 Resubmitting with the same `--key` returns the existing run. `--json` on
 `service runs`, `status`, and `events` prints the API records (events as one
 JSON object per line) for scripts and support reports. `service control`

@@ -5,7 +5,8 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { get as httpGet, request as httpRequest } from "node:http";
 
-import { startConsoleServer, type ConsoleServer } from "./console/server.ts";
+import type { ConsoleServer } from "./console/server.ts";
+import { sessionHeaders, startSignedConsoleServer as startConsoleServer } from "./console-test-session.ts";
 import type { SpawnOptions } from "./console/control.ts";
 import { writeFeatureFixture } from "./feature-fixture.ts";
 import { featureIncrementHandoffHasChange, recordFeatureIncrementHandoff } from "./authoring-state.ts";
@@ -156,7 +157,7 @@ function fakeSpawner(): FakeSpawn {
 
 function getJson(url: string): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    httpGet(url, { agent: false }, (res) => {
+    httpGet(url, { agent: false, headers: sessionHeaders(url) }, (res) => {
       let body = "";
       res.on("data", (c) => { body += c; });
       res.on("end", () => {
@@ -168,7 +169,7 @@ function getJson(url: string): Promise<unknown> {
 
 function getText(url: string): Promise<{ status: number; body: string; type: string | null }> {
   return new Promise((resolve, reject) => {
-    httpGet(url, { agent: false }, (res) => {
+    httpGet(url, { agent: false, headers: sessionHeaders(url) }, (res) => {
       let body = "";
       res.on("data", (c) => { body += c; });
       res.on("end", () => resolve({ status: res.statusCode ?? 0, body, type: res.headers["content-type"] ?? null }));
@@ -178,7 +179,7 @@ function getText(url: string): Promise<{ status: number; body: string; type: str
 
 function postJson(url: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: unknown }> {  return new Promise((resolve, reject) => {
     const data = JSON.stringify(body);
-    const req = httpRequest(url, { agent: false, method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data), ...headers } }, (res) => {
+    const req = httpRequest(url, { agent: false, method: "POST", headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(data), ...sessionHeaders(url), ...headers } }, (res) => {
       let text = "";
       res.on("data", (c) => { text += c; });
       res.on("end", () => {
@@ -193,7 +194,7 @@ function postJson(url: string, body: unknown, headers: Record<string, string> = 
 
 function collectSse(url: string) {
   const events: Array<{ type: string; data: unknown }> = [];
-  const req = httpRequest(url, { agent: false }, (res) => {
+  const req = httpRequest(url, { agent: false, headers: sessionHeaders(url) }, (res) => {
     let buffer = "";
     let eventType = "message";
     res.on("data", (chunk: Buffer) => {

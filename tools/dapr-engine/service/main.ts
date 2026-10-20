@@ -85,6 +85,7 @@ async function waitForDapr(): Promise<void> {
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`${daprHttpUrl}/v1.0/healthz/outbound`, {
+        headers: { "dapr-api-token": process.env.DAPR_API_TOKEN ?? "" },
         signal: AbortSignal.timeout(2_000),
       });
       if (response.ok) return;

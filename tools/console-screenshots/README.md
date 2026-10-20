@@ -9,7 +9,8 @@ It:
 1. builds the launcher (`dist/cli.js` + `resources/console/client`),
 2. writes a fixed fixture repository under `/tmp/ledgerly` with a seeded
    `FORGE_HOME` project registry,
-3. starts `forge-launcher console` against that fixture,
+3. starts `forge-launcher console` against that fixture and signs in with its
+   single-use link,
 4. drives the installed Chrome with `puppeteer-core`,
 5. writes the responsive captures, the numbered tour images, 640px thumbnails,
    and the walkthrough GIF.

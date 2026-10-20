@@ -287,15 +287,18 @@ test("C29: harnesses receive no host home, engine socket, or service credentials
     SSH_AUTH_SOCK: "/run/user/1000/ssh-agent",
     DAPR_API_TOKEN: "dapr-secret",
     PGPASSWORD: "pg-secret",
+    MYFORGE_API_TOKEN: "api-secret",
+    MYFORGE_DATABASE_URL: "postgresql://app:secret@postgres/app",
     GH_TOKEN: "not-bound",
   };
   const environment = buildHarnessEnvironment({ home: home.home, inherited, credentials: { GH_TOKEN: "bound-token" }, hostHome });
   assert.equal(environment["HOME"], home.home);
   assert.equal(environment["GH_TOKEN"], "bound-token");
-  for (const name of ["DOCKER_HOST", "CONTAINER_HOST", "XDG_RUNTIME_DIR", "SSH_AUTH_SOCK", "DAPR_API_TOKEN", "PGPASSWORD"]) {
+  for (const name of ["DOCKER_HOST", "CONTAINER_HOST", "XDG_RUNTIME_DIR", "SSH_AUTH_SOCK", "DAPR_API_TOKEN", "PGPASSWORD", "MYFORGE_API_TOKEN", "MYFORGE_DATABASE_URL"]) {
     assert.equal(environment[name], undefined, `${name} must not reach the harness`);
   }
   assert.throws(() => buildHarnessEnvironment({ home: home.home, credentials: { DOCKER_HOST: "tcp://x" }, hostHome }), /reserved/);
+  assert.throws(() => buildHarnessEnvironment({ home: home.home, credentials: { MYFORGE_API_TOKEN: "x" }, hostHome }), /reserved/);
   assert.throws(() => buildHarnessEnvironment({ home: join(hostHome, "work"), hostHome }), /host home/);
   await assert.rejects(createHarnessHome(join(hostHome, "scratch"), { hostHome }), /host home/);
 

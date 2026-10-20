@@ -86,6 +86,9 @@ services:
     cpus: 1.0
     mem_limit: 512m
     environment:
+      # Every sidecar API call must carry this token, so task processes in the
+      # worker (which never receive it) cannot drive workflows or state.
+      DAPR_API_TOKEN: "${DAPR_API_TOKEN:?DAPR_API_TOKEN is required}"
       MYFORGE_STATE_URL: "host=postgres port=5432 user=myforge_dapr password=${DAPR_DB_PASSWORD:?DAPR_DB_PASSWORD is required} dbname=myforge_dapr sslmode=disable"
     volumes:
       - ./components:/components:ro,Z
@@ -119,6 +122,7 @@ services:
       DAPR_HOST: daprd
       DAPR_GRPC_PORT: "50001"
       DAPR_HTTP_PORT: "3500"
+      DAPR_API_TOKEN: "${DAPR_API_TOKEN:?DAPR_API_TOKEN is required}"
       MYFORGE_SERVICE_PORT: "8083"
       MYFORGE_WORKER_ID: local
       MYFORGE_API_TOKEN: "${MYFORGE_API_TOKEN:?MYFORGE_API_TOKEN is required}"

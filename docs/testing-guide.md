@@ -331,7 +331,8 @@ From the generated repo or from anywhere with the installed launcher:
 forge-launcher console --repo /tmp/myforge-smoke/my-smoke-app --no-open
 ```
 
-This checks that the console can start and serve the local web UI.
+This checks that the console can start and serve the local web UI. Open the
+printed single-use sign-in link to view it.
 
 ## 4. Engine-run smoke test
 

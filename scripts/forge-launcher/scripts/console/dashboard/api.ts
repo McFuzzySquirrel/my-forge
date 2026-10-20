@@ -66,6 +66,9 @@ function post<T>(url: string, body: unknown): Promise<T> {
 }
 
 export const api = {
+  logout(): Promise<{ ok: boolean }> {
+    return post<{ ok: boolean }>("/api/session/logout", {});
+  },
   summary(): Promise<Summary | null> {
     return request<Summary | null>("/api/summary");
   },

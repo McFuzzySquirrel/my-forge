@@ -4,6 +4,27 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.120
+
+### P5-05 local access hardening
+
+- The Console now requires a local operator session for every page, API call,
+  and event stream. `forge-launcher console` prints a single-use sign-in link
+  (valid 10 minutes); opening it sets an `HttpOnly`, `SameSite=Strict` cookie
+  that expires after 12 hours without use. Opening the Console without a
+  session prints a fresh link in the terminal. No GitHub or harness login is
+  involved.
+- The Console rejects foreign `Host` and `Origin` headers, `GET /api/token` is
+  removed, and a **Sign out** button ends the session.
+- The runtime adds a `DAPR_API_TOKEN` to `runtime.env` (existing installations
+  gain it automatically); the Dapr sidecar rejects calls without it.
+  `forge-launcher runtime rotate-tokens` replaces the service API and sidecar
+  tokens; restart the runtime to apply them.
+- `DAPR_*` and `MYFORGE_*` variables never reach harness processes. See
+  [ADR-070](adr/070-local-operator-session-and-sidecar-token.md).
+
+---
+
 ## October 2026 - v3.119
 
 ### P5-03 service run submission (stub harness)

@@ -144,6 +144,14 @@ async function init(): Promise<void> {
     helpBtn.textContent = "Help";
     helpBtn.addEventListener("click", openHelp);
     topbar.appendChild(helpBtn);
+    const signOutBtn = document.createElement("button");
+    signOutBtn.className = "btn btn-sm sign-out-btn";
+    signOutBtn.textContent = "Sign out";
+    signOutBtn.title = "End this browser's Console session";
+    signOutBtn.addEventListener("click", () => {
+      void api.logout().finally(() => window.location.assign("/"));
+    });
+    topbar.appendChild(signOutBtn);
     topbar.appendChild(elConnectionStatus());
   }
 

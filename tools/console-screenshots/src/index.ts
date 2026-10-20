@@ -15,7 +15,7 @@ const IMAGES_ROOT = join(REPO_ROOT, "docs", "images", "forge-console");
 const CURRENT_DIR = join(IMAGES_ROOT, "current");
 const THUMB_DIR = join(IMAGES_ROOT, "thumb");
 
-function startConsole(repoRoot: string, homeDir: string): Promise<{ child: ChildProcess; url: string }> {
+function startConsole(repoRoot: string, homeDir: string): Promise<{ child: ChildProcess; url: string; signInUrl: string }> {
   return new Promise((resolvePromise, reject) => {
     const child = spawn(process.execPath, [LAUNCHER_CLI, "console", "--repo", repoRoot, "--no-open"], {
       cwd: repoRoot,
@@ -30,10 +30,11 @@ function startConsole(repoRoot: string, homeDir: string): Promise<{ child: Child
     const onData = (chunk: Buffer): void => {
       buffer += chunk.toString("utf8");
       const match = buffer.match(/Forge Console:\s+(https?:\/\/\S+)/);
-      if (match && !settled) {
+      const signIn = buffer.match(/Sign in \(single use\):\s+(https?:\/\/\S+)/);
+      if (match && signIn && !settled) {
         settled = true;
         clearTimeout(timer);
-        resolvePromise({ child, url: match[1]! });
+        resolvePromise({ child, url: match[1]!, signInUrl: signIn[1]! });
       }
     };
     child.stdout?.on("data", onData);
@@ -54,9 +55,13 @@ async function main(): Promise<void> {
   rmSync(framesDir, { recursive: true, force: true });
   process.env.FORGE_HOME = fixture.homeDir;
 
-  const { child, url } = await startConsole(fixture.repoRoot, fixture.homeDir);
+  const { child, url, signInUrl } = await startConsole(fixture.repoRoot, fixture.homeDir);
   const browser = await launchBrowser({ headless: !headed });
   try {
+    // Every page shares the default browser context, so one sign-in covers them.
+    const signInPage = await browser.newPage();
+    await signInPage.goto(signInUrl, { waitUntil: "load" });
+    await signInPage.close();
     console.log(`Capturing Forge Console at ${url} (headless=${!headed})`);
     const names = await captureAll(browser, url, CURRENT_DIR);
     console.log(`Captured ${names.length} responsive screenshots.`);

@@ -53,6 +53,7 @@ manifest.
 | DAPR-DEPLOY-01, -02, -03 | P5-01 in [plan.md](../../plan.md) | implemented by |
 | DAPR-DEPLOY-02, -03 | P5-03 service run API ([ADR-069](../adr/069-service-run-submission-and-repository-binding.md)) | implemented by |
 | DAPR-DEPLOY-04 | P5-02 and P5-05 in [plan.md](../../plan.md) | implemented by |
+| DAPR-DEPLOY-04 | P5-05 local operator session and sidecar token ([ADR-070](../adr/070-local-operator-session-and-sidecar-token.md)) | implemented by |
 | DAPR-DEPLOY-05 | P8-02 in [plan.md](../../plan.md) | implemented by |
 | DAPR-C-03 | [Foundation vision](../PRD.md) | constrained by (loopback host-tools exception recorded in ADR-068) |
 | Trusted-principal approvals | [Contract v1](../contracts/dapr-execution-v1.md) | consumes |

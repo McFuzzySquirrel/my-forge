@@ -9,7 +9,7 @@ import { test, type TestContext } from "node:test";
 import { jobResultPath, jobsPath, loadJobs, saveJobs, type BackgroundJob } from "./console/jobs.ts";
 import { loadRegistry, registryPath, saveRegistry, upsertProject } from "./console/paths.ts";
 import { removeProjects } from "./console/remove-projects.ts";
-import { startConsoleServer } from "./console/server.ts";
+import { signedFetch as fetch, startSignedConsoleServer as startConsoleServer } from "./console-test-session.ts";
 
 function fixture(t: TestContext) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "forge-removal-"));

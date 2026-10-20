@@ -34,10 +34,11 @@ the queued command it prints.
 | `forge-launcher bootstrap <dir> [--harness agents\|github\|claude\|opencode]` | Copy agent/skill templates into an existing project. |
 | `forge-launcher engine-run [--repo <path>] [--harness <h>] …` | Compile the manifest and run the workflow engine (autonomous build). |
 | `forge-launcher resume [--repo <path>]` | Pick up a paused/finished setup where it left off. |
-| `forge-launcher console [--repo <path>]` | Local web UI (`http://127.0.0.1:4300`) for authoring, build monitoring, and run controls. |
+| `forge-launcher console [--repo <path>]` | Local web UI (`http://127.0.0.1:4300`) for authoring, build monitoring, and run controls; sign in with the printed single-use link. |
 | `forge-launcher runtime start [--host-tools]` | Start the Forge worker and persistent PostgreSQL/Dapr services with rootless Podman; host tools publish PostgreSQL on loopback only. |
 | `forge-launcher runtime status` | Show runtime containers and recent logs for unhealthy or stopped services. |
 | `forge-launcher runtime stop` | Stop containers while preserving persistent volumes. |
+| `forge-launcher runtime rotate-tokens` | Replace the service API and Dapr sidecar tokens (database passwords are kept); restart the runtime to apply. |
 | `forge-launcher runtime reset --confirm` | Stop the runtime and remove its persistent volumes after explicit confirmation. |
 | `forge-launcher runtime backup --output <new-directory>` | Quiesce the runtime and write checksummed PostgreSQL, Scheduler, and Forge volume archives. |
 | `forge-launcher runtime restore --from <backup-directory> --confirm` | Verify an archive, replace runtime volumes, and restart the service. |

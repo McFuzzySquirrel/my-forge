@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import { test, type TestContext } from "node:test";
 import { get } from "node:http";
-import { startConsoleServer } from "./console/server.ts";
+import { sessionHeaders, signedFetch as fetch, startSignedConsoleServer as startConsoleServer } from "./console-test-session.ts";
 import { RunController, type SpawnOptions } from "./console/control.ts";
 import { inferEngineHarness, repoPaths } from "./console/paths.ts";
 import { actions, setModelOverride, summary, tasks } from "./console/repo.ts";
@@ -629,7 +629,7 @@ test("split structured authoring events survive ordinary partial-line log stream
   fs.writeFileSync(log, "");
   const server = await startConsoleServer({ repoRoot: root, port: port++, open: false });
   let received = "";
-  const request = get(`${server.url}/api/events`, (response) => {
+  const request = get(`${server.url}/api/events`, { headers: sessionHeaders(server.url) }, (response) => {
     response.setEncoding("utf8");
     response.on("data", (chunk: string) => { received += chunk; });
   });

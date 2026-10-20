@@ -42,8 +42,9 @@ forge-launcher console                  # opens the project picker in your brows
 forge-launcher console --repo my-app    # opens a specific project directly
 ```
 
-The server prints a `http://127.0.0.1:4300` URL and opens your default browser.
-From there:
+The server prints a `http://127.0.0.1:4300` URL and a single-use sign-in link,
+and opens your default browser through its own sign-in link. With `--no-open`,
+open the printed sign-in link yourself. From there:
 
 1. **Create a project** (New Project wizard) or **open an existing one**.
 2. On the **Overview**, click **Continue** to advance the pipeline one stage at a
@@ -496,7 +497,19 @@ job status keeps updating even if you switch between **Home**, **Projects**, and
 
 - The server binds to **`127.0.0.1` only** (loopback) - it is never exposed to
   the network.
-- All `POST` endpoints require an **`X-Forge-Token`** header holding a
+- Access trusts the local OS user ([ADR-070](adr/070-local-operator-session-and-sidecar-token.md)).
+  The terminal running `forge-launcher console` receives a **single-use sign-in
+  link** that expires after 10 minutes. Opening it exchanges the capability for
+  an `HttpOnly`, `SameSite=Strict` session cookie scoped to the port, which
+  expires after 12 hours without use. No GitHub, `gh`, or harness login is
+  involved.
+- Every request, including pages, static assets, and the event stream, needs
+  that session. Opening the Console without one prints a fresh sign-in link in
+  the terminal; the link is never shown in the browser. The header's **Sign
+  out** button revokes the session.
+- Requests whose `Host` header is not `127.0.0.1:<port>` or `localhost:<port>`
+  are rejected (DNS rebinding), as are requests with any other `Origin`.
+- All `POST` endpoints also require an **`X-Forge-Token`** header holding a
   per-server random token embedded in the served page, so cross-origin web pages
   cannot trigger actions.
 - File reads are confined to `docs/`, the harness `agents/`/`skills/` dirs, and

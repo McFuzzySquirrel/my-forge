@@ -18,7 +18,7 @@ From any terminal, run:
 forge-launcher console
 ```
 
-The server binds to `127.0.0.1` and prints a local URL such as `http://127.0.0.1:4300`. If the default port is busy, the next free port is used.
+The server binds to `127.0.0.1` and prints a local URL such as `http://127.0.0.1:4300`, plus a single-use sign-in link. If the default port is busy, the next free port is used. The browser it opens is signed in automatically. In another browser, or with `--no-open`, open the printed sign-in link. If a page says the browser is not signed in, use the new link printed in the terminal; sessions end after 12 hours without use or when the Console stops.
 
 Useful flags:
 

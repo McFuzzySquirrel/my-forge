@@ -16,7 +16,9 @@ import {
 
 const CREDENTIALS_FILE = "runtime.env";
 const LEGACY_KEYS = ["POSTGRES_SUPERUSER_PASSWORD", "DAPR_DB_PASSWORD", "APP_DB_PASSWORD"] as const;
-const KEYS = [...LEGACY_KEYS, "MYFORGE_API_TOKEN"] as const;
+// Later secrets are appended in order, so an older installation holds a prefix of KEYS.
+const KEYS = [...LEGACY_KEYS, "MYFORGE_API_TOKEN", "DAPR_API_TOKEN"] as const;
+const ROTATABLE_KEYS = ["MYFORGE_API_TOKEN", "DAPR_API_TOKEN"] as const;
 export const DEFAULT_API_PORT = 8483;
 const OUTPUT_LIMIT = 2 * 1024 * 1024;
 
@@ -129,8 +131,8 @@ async function readRuntimeEnvironment(directory: string): Promise<RuntimeEnviron
 }
 
 /**
- * Installations created before the service API hold only the database
- * secrets; add a generated API token once, atomically, without touching them.
+ * Older installations hold a prefix of KEYS; append the missing generated
+ * secrets once, atomically, without touching the existing ones.
  */
 async function upgradeLegacyCredentials(file: string): Promise<void> {
   let contents: string;
@@ -142,13 +144,14 @@ async function upgradeLegacyCredentials(file: string): Promise<void> {
     return;
   }
   const lines = contents.split(/\r?\n/).filter(Boolean);
-  const legacy = lines.length === LEGACY_KEYS.length && LEGACY_KEYS.every((key) =>
-    lines.some((line) => new RegExp(`^${key}=[0-9a-f]{64}$`).test(line)));
+  const legacy = lines.length >= LEGACY_KEYS.length && lines.length < KEYS.length
+    && lines.every((line, index) => new RegExp(`^${KEYS[index]}=[0-9a-f]{64}$`).test(line));
   if (!legacy) return;
+  const added = KEYS.slice(lines.length).map((key) => `${key}=${randomBytes(32).toString("hex")}`);
   const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
   const handle = await open(temporary, "wx", 0o600);
   try {
-    await handle.writeFile(`${lines.join("\n")}\nMYFORGE_API_TOKEN=${randomBytes(32).toString("hex")}\n`, "utf8");
+    await handle.writeFile(`${[...lines, ...added].join("\n")}\n`, "utf8");
     await handle.sync();
   } catch (error) {
     await handle.close();
@@ -182,6 +185,28 @@ async function requireRuntimeEnvironment(directory = getRuntimeDataDir()): Promi
   }
   await upgradeLegacyCredentials(file);
   return readRuntimeEnvironment(directory);
+}
+
+/**
+ * Replaces the service API and Dapr sidecar tokens. The database passwords are
+ * kept because they are baked into the database roles.
+ */
+export async function rotateRuntimeTokens(directory = getRuntimeDataDir()): Promise<void> {
+  const environment = await requireRuntimeEnvironment(directory);
+  const rotated: Record<string, string> = { ...environment.values };
+  for (const key of ROTATABLE_KEYS) rotated[key] = randomBytes(32).toString("hex");
+  const temporary = `${environment.file}.${randomBytes(6).toString("hex")}.tmp`;
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(`${KEYS.map((key) => `${key}=${rotated[key]}`).join("\n")}\n`, "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close();
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+  await rename(temporary, environment.file);
 }
 
 export async function ensureRuntimeCredentials(directory = getRuntimeDataDir()): Promise<string> {
@@ -372,7 +397,7 @@ function redact(output: string, values: RuntimeEnvironment["values"]): string {
   }
   return safe
     .replace(/(password=)[^\s]+/gi, "$1[REDACTED]")
-    .replace(/((?:POSTGRES|DAPR|APP)_DB_PASSWORD|POSTGRES_SUPERUSER_PASSWORD|MYFORGE_API_TOKEN)=([^\s]+)/g, "$1=[REDACTED]");
+    .replace(/((?:POSTGRES|DAPR|APP)_DB_PASSWORD|POSTGRES_SUPERUSER_PASSWORD|MYFORGE_API_TOKEN|DAPR_API_TOKEN)=([^\s]+)/g, "$1=[REDACTED]");
 }
 
 async function runtimeDiagnostics(
@@ -417,6 +442,7 @@ async function compose(
   delete env.DAPR_DB_PASSWORD;
   delete env.APP_DB_PASSWORD;
   delete env.MYFORGE_API_TOKEN;
+  delete env.DAPR_API_TOKEN;
   env.MYFORGE_ENGINE_DIR = engineDir;
   env.MYFORGE_LAUNCHER_NODE_MODULES = launcherNodeModules;
   env.MYFORGE_TEMPLATES_DIR = templatesDir;
@@ -442,6 +468,7 @@ const RUNTIME_USAGE = `Usage:
   forge-launcher runtime repo add <repository> [--id <id>]
   forge-launcher runtime repo list
   forge-launcher runtime repo remove <id>
+  forge-launcher runtime rotate-tokens
 
 Starts the local Forge execution service and its PostgreSQL/Dapr infrastructure.
 Infrastructure ports remain private. --host-tools publishes PostgreSQL on loopback (default 127.0.0.1:55432).
@@ -452,6 +479,7 @@ Restore verifies the archive, replaces those volumes, and restarts privately.
 The service API listens on 127.0.0.1:\${MYFORGE_API_PORT:-8483} and requires the generated bearer token.
 "repo add" registers a repository's .git directory for the service; restart the runtime
 (stop, then start) to apply registration changes. Worktrees and submodules are rejected.
+"rotate-tokens" replaces the service API and Dapr sidecar tokens; restart the runtime to apply them.
 `;
 
 export async function runtimeCli(args: readonly string[]): Promise<number> {
@@ -461,6 +489,15 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
     return actionValue ? 0 : 1;
   }
   if (actionValue === "repo") return repositoryCli(rest);
+  if (actionValue === "rotate-tokens") {
+    if (rest.length) throw new Error("Usage: forge-launcher runtime rotate-tokens");
+    await rotateRuntimeTokens();
+    process.stdout.write(
+      "Rotated the service API and Dapr sidecar tokens. Run \"forge-launcher runtime stop\" and " +
+      "\"forge-launcher runtime start\" to apply them; until then service commands are rejected.\n",
+    );
+    return 0;
+  }
   if (
     actionValue !== "start" && actionValue !== "status" && actionValue !== "stop" && actionValue !== "reset" &&
     actionValue !== "backup" && actionValue !== "restore"

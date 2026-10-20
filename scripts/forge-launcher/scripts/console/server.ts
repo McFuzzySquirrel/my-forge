@@ -30,6 +30,7 @@ import {
 import { harnessCliForHarness } from "./dashboard/harness-rules.ts";
 import * as repo from "./repo.ts";
 import { removeProjects, sameProjectPath } from "./remove-projects.ts";
+import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
 import type { ControlAction, CreateProjectRequest, ManifestTask } from "./types.ts";
 
 const CLIENT_DIR = fileURLToPath(new URL("../../resources/console/client", import.meta.url));
@@ -60,6 +61,8 @@ export interface ConsoleServer {
   url: string;
   port: number;
   token: string;
+  /** Mints a single-use link that signs a browser in to this Console. */
+  signInUrl(): string;
   selectRepo(repoRoot: string): void;
   stop(): Promise<void>;
 }
@@ -301,6 +304,16 @@ function sendJson(res: http.ServerResponse, code: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+// The new link goes only to the terminal: a page that showed it would hand a
+// session to anything able to load this URL.
+function sendSignInRequired(res: http.ServerResponse, sessions: OperatorSessions, onLog: (m: string) => void, reason: string): void {
+  onLog(`  forge console sign-in link: ${sessions.issueSignInUrl()}`);
+  res.writeHead(401, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+  res.end(`<!doctype html><meta charset="utf-8"><title>Forge Console sign-in</title>
+<p>${reason}</p>
+<p>A new single-use sign-in link was printed in the terminal running <code>forge-launcher console</code>. Open that link to continue.</p>`);
+}
+
 function sendText(res: http.ServerResponse, code: number, body: string): void {
   res.writeHead(code, { "Content-Type": "text/plain; charset=utf-8" });
   res.end(body);
@@ -363,6 +376,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
 
   const port = await findFreePort(options.port ?? DEFAULT_PORT, onLog);
   const url = `http://127.0.0.1:${port}`;
+  const sessions = new OperatorSessions({ port });
 
   // ── SSE clients ────────────────────────────────────────────────────────────
   type Send = (event: string, data: unknown) => void;
@@ -453,9 +467,26 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
     const urlPath = rawUrl.split("?")[0]!;
     const method = req.method ?? "GET";
 
-    const authorized = req.headers["x-forge-token"] === token;
-
     try {
+      const access = sessions.checkOrigin({ host: req.headers.host, origin: req.headers.origin });
+      if (!access.ok) return sendText(res, access.status, access.reason);
+
+      if (urlPath === SIGN_IN_PATH && method === "GET") {
+        const capability = new URLSearchParams(rawUrl.split("?")[1] ?? "").get("capability");
+        const cookie = sessions.exchange(capability);
+        if (!cookie) return sendSignInRequired(res, sessions, onLog, "This sign-in link has expired or was already used.");
+        res.writeHead(303, { "Set-Cookie": cookie, Location: "/", "Cache-Control": "no-store" });
+        res.end();
+        return;
+      }
+      if (!sessions.hasSession(req.headers.cookie)) {
+        if (urlPath.startsWith("/api/")) {
+          return sendJson(res, 401, { ok: false, message: "Console session required. Open the sign-in link printed by forge-launcher console." });
+        }
+        return sendSignInRequired(res, sessions, onLog, "This browser is not signed in to the Forge Console.");
+      }
+      const authorized = req.headers["x-forge-token"] === token;
+
       // SSE
       if (urlPath === "/api/events") {
         res.writeHead(200, {
@@ -537,8 +568,6 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
                 onLog(`board layout unavailable: ${error instanceof Error ? error.message : String(error)}`);
                 return sendJson(res, 200, null);
               });
-          case "/api/token":
-            return sendJson(res, 200, { token });
         }
 
         if (urlPath.startsWith("/api/artifacts/")) {
@@ -566,6 +595,12 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
       if (method === "POST") {
         if (!authorized) return sendText(res, 403, "forbidden");
         const body = (await readBody(req)) as Record<string, unknown>;
+
+        if (urlPath === "/api/session/logout") {
+          res.writeHead(200, { "Content-Type": "application/json", "Set-Cookie": sessions.revoke(req.headers.cookie), "Cache-Control": "no-store" });
+          res.end(JSON.stringify({ ok: true }));
+          return;
+        }
 
         if (urlPath === "/api/authoring-config") {
           if (!currentRepo) return sendJson(res, 400, { ok: false, message: "no repo selected" });
@@ -948,12 +983,13 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
     upsertProject({ path: options.repoRoot });
   }
 
-  if (options.open) openBrowser(url);
+  if (options.open) openBrowser(sessions.issueSignInUrl());
 
   return {
     url,
     port,
     token,
+    signInUrl: () => sessions.issueSignInUrl(),
     selectRepo(repoRoot: string) {
       currentRepo = path.resolve(repoRoot);
       controller.repoRoot = currentRepo;

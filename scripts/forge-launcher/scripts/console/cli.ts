@@ -35,6 +35,7 @@ export async function consoleCli(args: string[]): Promise<number> {
   });
 
   console.log(`Forge Console: ${server.url}  (Ctrl+C to stop)`);
+  console.log(`Sign in (single use): ${server.signInUrl()}`);
   await new Promise<void>(() => {
     process.on("SIGINT", () => {
       server.stop().then(() => process.exit(0));

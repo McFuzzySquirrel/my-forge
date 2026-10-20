@@ -112,6 +112,7 @@ npx forge-launcher@beta console [--repo <path>] [--port <n>] [--no-open]
 npx forge-launcher@beta runtime start [--host-tools] [--postgres-port <n>]
 npx forge-launcher@beta runtime status
 npx forge-launcher@beta runtime stop
+npx forge-launcher@beta runtime rotate-tokens
 npx forge-launcher@beta runtime reset --confirm
 npx forge-launcher@beta runtime backup --output <new-directory>
 npx forge-launcher@beta runtime restore --from <backup-directory> --confirm
@@ -161,7 +162,9 @@ fixed loopback port. The port is checked before any container starts; a
 conflict is an error, not an automatic port change. Host-tools mode applies
 only to the `start` that requests it; a later plain `start` keeps PostgreSQL
 private. `runtime stop` preserves volumes. `runtime reset --confirm` removes
-them.
+them. `runtime rotate-tokens` replaces the service API token and the Dapr
+sidecar token (`DAPR_API_TOKEN`) in `runtime.env` and keeps the database
+passwords; run `runtime stop` and `runtime start` to apply them.
 
 `runtime backup --output <new-directory>` stops the stack long enough to export
 the PostgreSQL (application and workflow state), Dapr Scheduler, and Forge
@@ -189,7 +192,8 @@ The runtime serves a run API on `127.0.0.1:8483` (override with
 `MYFORGE_API_PORT`). It requires the `MYFORGE_API_TOKEN` bearer token from the
 runtime credential file and rejects non-loopback `Host` headers and browser
 `Origin` headers. Installations created before this API gain a token on the
-next `runtime` command. See
+next `runtime` command. A separate generated `DAPR_API_TOKEN` guards the Dapr
+sidecar, so task processes in the worker cannot call the sidecar directly. See
 [ADR-069](adr/069-service-run-submission-and-repository-binding.md).
 
 1. Register the repository, then restart the runtime so it is mounted:
@@ -597,7 +601,10 @@ time (draft the PRD → generate the agent team → create the manifest or start
 build), and
 monitor/control a run (board, tasks, logs, artifacts, timeline; pause/stop/
 resume/replay). It is a projection over the same `docs/*` files the terminal
-tools write, so the CLI paths stay first-class and interchangeable.
+tools write, so the CLI paths stay first-class and interchangeable. Browsers
+sign in with the single-use link the command prints (the browser it opens is
+signed in automatically); see
+[ADR-070](adr/070-local-operator-session-and-sidecar-token.md).
 
 Full reference (views, the Continue pipeline, the project registry, the
 `draft-team`/`draft-skills`/`compile-manifest` headless subcommands, interactive

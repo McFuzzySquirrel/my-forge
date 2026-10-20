@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { assertHostPortAvailable, ensureRuntimeCredentials, getRuntimeDataDir, readRuntimeApiAccess, runtimeCli, unreadyServices } from "./runtime.ts";
+import { assertHostPortAvailable, ensureRuntimeCredentials, getRuntimeDataDir, readRuntimeApiAccess, rotateRuntimeTokens, runtimeCli, unreadyServices } from "./runtime.ts";
 
 test("runtime credentials are generated once with restrictive permissions", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "forge-runtime-"));
@@ -19,7 +19,8 @@ test("runtime credentials are generated once with restrictive permissions", asyn
   assert.match(first, /^DAPR_DB_PASSWORD=[0-9a-f]{64}$/m);
   assert.match(first, /^APP_DB_PASSWORD=[0-9a-f]{64}$/m);
   assert.match(first, /^MYFORGE_API_TOKEN=[0-9a-f]{64}$/m);
-  assert.equal(first.trim().split("\n").length, 4, "credentials must hold only secrets, not overridable settings");
+  assert.match(first, /^DAPR_API_TOKEN=[0-9a-f]{64}$/m);
+  assert.equal(first.trim().split("\n").length, 5, "credentials must hold only secrets, not overridable settings");
   assert.doesNotMatch(first, /POSTGRES_PORT/);
   if (process.platform !== "win32") {
     assert.equal(fileStat.mode & 0o777, 0o600);
@@ -42,6 +43,7 @@ test("runtime upgrades pre-API credentials with an API token without changing pa
   const upgraded = await readFile(credentials, "utf8");
   assert.ok(upgraded.startsWith(legacy));
   assert.match(upgraded, /^MYFORGE_API_TOKEN=[0-9a-f]{64}$/m);
+  assert.match(upgraded, /^DAPR_API_TOKEN=[0-9a-f]{64}$/m);
   if (process.platform !== "win32") assert.equal((await lstat(credentials)).mode & 0o777, 0o600);
 
   const access = await readRuntimeApiAccess(directory, { MYFORGE_API_PORT: "9000" });
@@ -49,6 +51,39 @@ test("runtime upgrades pre-API credentials with an API token without changing pa
   assert.equal(`MYFORGE_API_TOKEN=${access.token}`, upgraded.trim().split("\n")[3]);
   assert.equal((await readRuntimeApiAccess(directory, {})).baseUrl, "http://127.0.0.1:8483");
   await assert.rejects(readRuntimeApiAccess(directory, { MYFORGE_API_PORT: "0" }), /MYFORGE_API_PORT/);
+});
+
+test("runtime token rotation replaces only the API and sidecar tokens", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "forge-runtime-rotate-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const credentials = await ensureRuntimeCredentials(directory);
+  const before = (await readFile(credentials, "utf8")).trim().split("\n");
+
+  await rotateRuntimeTokens(directory);
+  const after = (await readFile(credentials, "utf8")).trim().split("\n");
+  assert.deepEqual(after.slice(0, 3), before.slice(0, 3), "database passwords must not change");
+  assert.equal(after.length, 5);
+  for (const index of [3, 4]) {
+    assert.equal(after[index]!.split("=")[0], before[index]!.split("=")[0]);
+    assert.notEqual(after[index], before[index]);
+    assert.match(after[index]!, /^[A-Z_]+=[0-9a-f]{64}$/);
+  }
+  if (process.platform !== "win32") assert.equal((await lstat(credentials)).mode & 0o777, 0o600);
+  await assert.rejects(rotateRuntimeTokens(path.join(directory, "missing")), /not initialized/);
+});
+
+test("runtime appends the Dapr API token to credentials created before it", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "forge-runtime-dapr-token-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const existing = ["POSTGRES_SUPERUSER_PASSWORD", "DAPR_DB_PASSWORD", "APP_DB_PASSWORD", "MYFORGE_API_TOKEN"]
+    .map((key, index) => `${key}=${String(index + 1).repeat(64)}`).join("\n") + "\n";
+  const credentials = path.join(directory, "runtime.env");
+  await writeFile(credentials, existing, { mode: 0o600 });
+
+  await ensureRuntimeCredentials(directory);
+  const upgraded = await readFile(credentials, "utf8");
+  assert.ok(upgraded.startsWith(existing));
+  assert.match(upgraded.trim().split("\n")[4]!, /^DAPR_API_TOKEN=[0-9a-f]{64}$/);
 });
 
 test("runtime refuses to replace malformed existing credentials", async (t) => {

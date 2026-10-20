@@ -1,0 +1,16 @@
+apiVersion: dapr.io/v1alpha1
+kind: Component
+metadata:
+  name: workflowstate
+spec:
+  type: state.postgresql
+  version: v2
+  metadata:
+    - name: connectionString
+      secretKeyRef:
+        name: MYFORGE_STATE_URL
+        key: MYFORGE_STATE_URL
+    - name: actorStateStore
+      value: "true"
+auth:
+  secretStore: myforge-env

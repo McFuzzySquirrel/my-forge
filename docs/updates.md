@@ -4,6 +4,41 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.116
+
+### P5 deployment and access decisions recorded
+
+- [ADR-068](adr/068-local-deployment-and-access-profiles.md) and the new
+  [local deployment and access feature](features/dapr-local-deployment-access.md)
+  define the P5 local profile. A persistent Podman Compose stack (PostgreSQL,
+  Dapr sidecar, Placement, Scheduler) keeps its infrastructure private. An
+  optional override publishes PostgreSQL on `127.0.0.1:55432` only.
+  `tools/dapr-engine/compose.postgres.yaml` remains the separate test database.
+- Local single-user access uses a protected local operator session. It needs no
+  GitHub, `gh`, Copilot, or GitHub App login and works independently of the
+  harness. Running Forge alone, with no collaborators, is first-class.
+- Shared collaborator deployments (P8 only) will use GitHub App sign-in plus
+  per-repository permission checks. An ambient browser, `gh`, or harness login
+  alone does not authenticate users to a shared Forge server.
+- [plan.md](../plan.md) P5-01, P5-05, and P8-02 now carry these decisions.
+- P5-01 now has launcher-staged persistent Compose resources for PostgreSQL
+  and the Dapr runtime. The execution service and authenticated Console path
+  are not wired yet, so legacy execution behavior is unchanged.
+- `forge-launcher runtime start|status|stop|reset` now manages the local
+  infrastructure. Generated credentials are stored outside task workspaces;
+  `stop` preserves data and reset requires `--confirm`. `start` checks the
+  requested loopback port before starting containers and succeeds only after
+  every service is running and PostgreSQL is ready, because podman-compose can
+  exit 0 when a container fails to start.
+- The C26 durable-cancel conformance fixture now cancels only after the
+  harness reports its descendant. Previously, an early cancel under load left no
+  PID to check, so the full suite failed even though the cancellation behavior
+  was correct.
+- P5-01 ([issue #16](https://github.com/McFuzzySquirrel/my-forge/issues/16)) is
+  complete. P5-02 (the execution-service lifecycle) is next.
+
+---
+
 ## October 2026 - v3.115
 
 ### P4-GATE accepted; P5 authorized

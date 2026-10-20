@@ -30,15 +30,20 @@ mkdirSync(resourcesDir, { recursive: true });
 rmSync(path.join(resourcesDir, "templates"), { recursive: true, force: true });
 rmSync(path.join(resourcesDir, "prompt-playbook.md"), { force: true });
 rmSync(path.join(resourcesDir, "tools", "dapr-engine", "execution"), { recursive: true, force: true });
+rmSync(path.join(resourcesDir, "tools", "dapr-engine", "deploy"), { recursive: true, force: true });
 
 copyTree(path.join(repoRoot, "templates"), path.join(resourcesDir, "templates"));
 copyTree(
   path.join(repoRoot, "tools", "dapr-engine", "execution"),
   path.join(resourcesDir, "tools", "dapr-engine", "execution"),
 );
+copyTree(
+  path.join(repoRoot, "tools", "dapr-engine", "deploy"),
+  path.join(resourcesDir, "tools", "dapr-engine", "deploy"),
+);
 copyFileSync(
   path.join(repoRoot, "docs", "prompt-playbook.md"),
   path.join(resourcesDir, "prompt-playbook.md"),
 );
 
-console.log(`Staged templates/, execution utilities, and prompt-playbook.md into ${resourcesDir}`);
+console.log(`Staged templates/, execution utilities, deployment resources, and prompt-playbook.md into ${resourcesDir}`);

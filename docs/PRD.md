@@ -50,6 +50,7 @@ the human-review tasks below.
 |---|---|---|---|
 | 1 | Dapr foundation and runtime spike | [features/dapr-foundation.md](features/dapr-foundation.md) | None |
 | 2 | Dapr execution boundary and reusable contracts | [features/dapr-execution-boundary.md](features/dapr-execution-boundary.md) | Dapr foundation and runtime spike |
+| 3 | Dapr local deployment and access profiles | [features/dapr-local-deployment-access.md](features/dapr-local-deployment-access.md) | Dapr execution boundary and reusable contracts |
 
 ## 15. Traceability and rollout
 

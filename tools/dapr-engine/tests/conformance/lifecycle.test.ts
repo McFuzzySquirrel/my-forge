@@ -87,14 +87,26 @@ test("C26: deadline and cancellation terminate the owned harness process tree be
     const store = new InMemoryExecutionStore();
     const key = operation();
     store.executingReceipt(key);
-    setTimeout(() => store.requestCancel(key, "operator cancel"), 100);
+    // Cancel only once the descendant exists; an earlier cancel leaves no PID to check.
+    const descendant = (async () => {
+      for (let index = 0; index < 250; index += 1) {
+        const text = await readFile(join(cwd, "descendant.pid"), "utf8").catch(() => "");
+        if (text.trim()) return Number(text.trim());
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      throw new Error("harness never reported its descendant");
+    })();
+    const cancelled = descendant.then(() => store.requestCancel(key, "operator cancel"));
     const supervised = await superviseExecution({
       store, key, workerId: "worker-a", budgetMs: 30_000, heartbeatIntervalMs: 25, heartbeatTtlMs: 1000,
-      run: harness("sleep 30 & echo $!; wait", cwd),
+      run: harness("sleep 30 & echo $! > descendant.pid; wait", cwd),
     });
+    await cancelled;
+    const grandchild = await descendant;
+    assert.ok(grandchild > 0);
     assert.ok(supervised.started);
     assert.equal(supervised.stopReason, "cancel");
-    assert.ok(await waitUntilDead(Number(supervised.result?.stdout.trim())));
+    assert.ok(await waitUntilDead(grandchild), "background descendant must not outlive the cancel");
     assert.equal(store.execution(key)?.state, "exited");
     assert.equal(store.execution(key)?.exit?.cleanup, "observed");
   }));

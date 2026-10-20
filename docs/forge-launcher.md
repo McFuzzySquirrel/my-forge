@@ -109,6 +109,10 @@ npx forge-launcher@beta engine-run [--repo <path>] [--harness <h>] [--concurrenc
                               [--auto-commit|--no-auto-commit] [--commit-message-template <tmpl>]
 npx forge-launcher@beta resume [--repo <path>] [--non-interactive] [--dry-run]
 npx forge-launcher@beta console [--repo <path>] [--port <n>] [--no-open]
+npx forge-launcher@beta runtime start [--host-tools] [--postgres-port <n>]
+npx forge-launcher@beta runtime status
+npx forge-launcher@beta runtime stop
+npx forge-launcher@beta runtime reset --confirm
 npx forge-launcher@beta draft-prd --repo <path> [model flags]
 npx forge-launcher@beta draft-existing-prd --repo <path> [model flags]
 npx forge-launcher@beta draft-team --repo <path> [model flags]
@@ -126,6 +130,23 @@ npx forge-launcher@beta authoring-models --repo <path>
 ```
 
 When installed globally (`npm install -g forge-launcher@beta`), drop the `npx`.
+
+`runtime start` provisions the persistent local PostgreSQL/Dapr infrastructure
+using rootless Podman. It creates installation-scoped credentials in the
+platform's user data directory (Linux: `$XDG_DATA_HOME/MyForge/runtime`, or
+`~/.local/share/MyForge/runtime`; macOS: `~/Library/Application Support/MyForge/runtime`;
+Windows: `%LOCALAPPDATA%\MyForge\runtime`) with owner-only permissions where
+supported. It does not yet start the Forge execution service. `runtime start`
+reports success only after every container is running and PostgreSQL accepts
+connections; otherwise it prints the failing services and their recent logs,
+with credentials redacted.
+
+Infrastructure ports stay private unless `--host-tools` is selected. That
+option publishes PostgreSQL on `127.0.0.1:55432`; `--postgres-port` changes the
+fixed loopback port. The port is checked before any container starts; a
+conflict is an error, not an automatic port change. Host-tools mode applies
+only to the `start` that requests it; a later plain `start` keeps PostgreSQL private.
+`runtime stop` preserves volumes. `runtime reset --confirm` removes them.
 
 `bootstrap` takes these options:
 

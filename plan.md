@@ -8,9 +8,11 @@ in [issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); P2-05
 conformance fixtures are implemented in
 [issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5). P3 is
 complete and P3-GATE was accepted in
-[issue #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); P4 is
-authorized to begin. Durable Dapr workflow effects remain unqualified. The
-runtime remains an experimental spike, not a production replacement.
+[issue #7](https://github.com/McFuzzySquirrel/my-forge/issues/7). P4-GATE was
+accepted by the operator on 2026-10-19, authorizing P5; the next work package is
+P5-01, with deployment/access decisions recorded in
+[ADR-068](docs/adr/068-local-deployment-and-access-profiles.md). The runtime is
+not yet a production replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
 profiles; no permanent legacy backend
@@ -257,13 +259,29 @@ local task chain running through the same contracts as the old engine.
 
 **Deliverables:** one service-backed user path and a managed local deployment.
 
-- [ ] **P5-01 — Package the local stack.** Supply pinned images/configuration,
+**P5 deployment and access decisions** ([ADR-068](docs/adr/068-local-deployment-and-access-profiles.md),
+[feature](docs/features/dapr-local-deployment-access.md)): P5 ships the
+single-user *local* profile; the *shared* collaborator profile is designed now
+and implemented only under P8. Standalone use with no collaborators, shared
+server, or GitHub App is a first-class path.
+
+- [x] **P5-01 — Package the local stack** (completed 2026-10-19; owner:
+  @McFuzzySquirrel; [issue #16](https://github.com/McFuzzySquirrel/my-forge/issues/16)).
+  Supply pinned images/configuration,
   persistent-volume ownership, readiness checks, restart policy, and resource
-  limits. A container recreation must not reset durable data.
-- [ ] **P5-02 — Add lifecycle management.** Implement launcher start/status/stop,
-  diagnostics, backup/restore, and compatible upgrade operations. Make reset a
-  separate confirmed destructive action. These are proposed capabilities, not
-  existing command names; finalize their CLI surface in the compatibility matrix.
+  limits. A container recreation must not reset durable data. Ship a persistent
+  launcher-distributed Podman Compose stack (PostgreSQL, Dapr sidecar,
+  Placement, Scheduler) with separate named volumes. PostgreSQL is private by
+  default; an optional host-tools override publishes only
+  `127.0.0.1:${POSTGRES_PORT:-55432}:5432` and reports a port conflict rather
+  than choosing another port. Containers use service DNS, not the host port.
+  `tools/dapr-engine/compose.postgres.yaml` stays the separate test database
+  with its own volume.
+- [ ] **P5-02 — Add lifecycle management.** The launcher now provides
+  `runtime start/status/stop/reset` for the local infrastructure; stop preserves
+  volumes and reset requires `--confirm`. These commands do not start the
+  execution service. Complete service lifecycle, diagnostics, backup/restore,
+  and compatible upgrade operations, then record their compatibility surface.
 - [ ] **P5-03 — Migrate execution entry points.** Update engine-run, resume,
   launcher flow, wrappers, bootstrap/package resources, and auto-build polling
   to submit/query/control the service. Select local versus hosted deployment,
@@ -276,6 +294,11 @@ local task chain running through the same contracts as the old engine.
   by default; authenticate controls, validate browser origins/CSRF protections,
   constrain repository paths, scope secrets, and redact logs. Sidecar/store APIs
   remain private and inaccessible to untrusted task processes where feasible.
+  Local access uses a protected local operator session that trusts the OS user:
+  a one-time bootstrap capability is exchanged for an expiring browser session.
+  No GitHub, `gh`, Copilot, or GitHub App login is required, and authentication
+  is independent of the selected harness. Non-loopback binding fails unless a
+  qualified shared profile is configured.
 - [ ] **P5-06 — Preserve diagnostics and onboarding.** Show useful errors for
   unavailable Podman, missing VM/resources, credentials, corrupt volumes, and
   version mismatches. Export compatible status/audit views and document offline
@@ -357,7 +380,13 @@ authenticated operations without changing task semantics.
 - [ ] **P8-02 — Isolate workers and users.** Scope repository credentials,
   authorize run/approval operations, separate trust domains, protect internal
   Dapr services, and enforce compute/storage quotas. Same-app replicas register
-  compatible workflow/activity definitions.
+  compatible workflow/activity definitions. Shared deployments authenticate
+  collaborators through GitHub App user sign-in, not an ambient browser, `gh`,
+  or harness login. Authorization requires both the app installation on the
+  repository and the user's current permission: read/triage may view;
+  write/maintain/admin may run, control, and approve. Host administration is
+  configured separately. App ownership is decided in P8 (initial proposal:
+  operator-registered per deployment).
 - [ ] **P8-03 — Prove clean-host failover.** Lose a worker and recreate its execution
   solely from shared stores and Git on another host, including credentials and
   dependencies. Simulate partitions and prove stale workers cannot integrate.
@@ -440,7 +469,21 @@ outcome and artifact bounds, and run admission backpressure; see
 [P4-06 bound evidence](#p4-06-bound-evidence) and
 [ADR-067](docs/adr/067-bounded-workflow-histories-and-concurrency.md).
 **P4-GATE was accepted by the operator on 2026-10-19**, authorizing P5. The
-next work package is **P5-01 — Package the local stack**.
+next work package is **P5-01 — Package the local stack**, tracked in
+[issue #16](https://github.com/McFuzzySquirrel/my-forge/issues/16) (owner:
+@McFuzzySquirrel).
+P5-01 was completed on 2026-10-19. Live rootless Podman validation covered
+readiness (every service running and PostgreSQL accepting connections) and
+separate least-privilege databases. It also covered Dapr-backed state across
+full stack recreation and private internal ports, an alternate loopback
+`--postgres-port`, a private restart after host-tools mode, stop preserving
+volumes, and confirmed reset removing them. An occupied host port is rejected
+before credentials or containers are created. Launcher staging and package
+contents, protected credential creation and reuse, and required-credential
+failures are tested. The flaky C26 durable-cancel fixture was fixed, and the
+full engine suite passes repeatedly. The next work package is **P5-02**: the
+execution-service entry point and its lifecycle, diagnostics, migration checks,
+and backup/restore. The `runtime` commands manage infrastructure only.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed

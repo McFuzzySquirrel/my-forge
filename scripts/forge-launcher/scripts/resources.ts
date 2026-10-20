@@ -14,6 +14,7 @@ export function resolveResources(): {
   templatesDir: string;
   docsDir: string;
   executionDir: string;
+  deploymentDir: string;
   usingBundled: boolean;
 } {
   const liveTemplates = path.join(REPO_ROOT, "templates");
@@ -23,6 +24,7 @@ export function resolveResources(): {
       templatesDir: liveTemplates,
       docsDir: liveDocs,
       executionDir: path.join(REPO_ROOT, "tools", "dapr-engine", "execution"),
+      deploymentDir: path.join(REPO_ROOT, "tools", "dapr-engine", "deploy"),
       usingBundled: false,
     };
   }
@@ -30,6 +32,7 @@ export function resolveResources(): {
     templatesDir: path.join(PKG_DIR, "resources", "templates"),
     docsDir: path.join(PKG_DIR, "resources"),
     executionDir: path.join(PKG_DIR, "resources", "tools", "dapr-engine", "execution"),
+    deploymentDir: path.join(PKG_DIR, "resources", "tools", "dapr-engine", "deploy"),
     usingBundled: true,
   };
 }

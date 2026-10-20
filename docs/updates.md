@@ -4,6 +4,17 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.125
+
+### Engine runner install failures stop execution
+
+- For repositories that use the legacy engine, `forge-launcher engine-run` now
+  exits with a clear error if installing `forge-execution-adapter` or
+  `forge-workflow-engine` dependencies fails, instead of continuing with an
+  incomplete setup.
+
+---
+
 ## October 2026 - v3.124
 
 ### Fix launcher CI and Windows runtime paths

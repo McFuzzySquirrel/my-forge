@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeFeatureFixture } from "./feature-fixture.ts";
+import { engineRun } from "./engine-run.ts";
 
 const CLI = fileURLToPath(new URL("./cli.ts", import.meta.url));
 
@@ -29,6 +30,35 @@ function runCli(args: string[], env: Record<string, string> = {}): Promise<{ cod
     });
   });
 }
+
+test("engine-run stops when adapter or engine dependency installation fails", async (t) => {
+  for (const failedStage of ["adapter", "engine"] as const) {
+    const repo = tmpRepo();
+    t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+    const adapterDir = path.join(repo, ".agents", "skills", "forge-execution-adapter");
+    fs.mkdirSync(adapterDir, { recursive: true });
+    fs.writeFileSync(path.join(adapterDir, "package.json"), "{}");
+    fs.mkdirSync(path.join(repo, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json"), "{}");
+
+    const calls: string[] = [];
+    await assert.rejects(
+      engineRun({ repo, harness: "opencode" }, {
+        run: async (_cmd, _args, _dryRun, cwd) => {
+          calls.push(cwd);
+          return calls.length === (failedStage === "adapter" ? 1 : 2) ? 7 : 0;
+        },
+      }),
+      new RegExp(`${failedStage === "adapter" ? "Execution-adapter" : "Workflow-engine"} dependency install failed \\(exit 7\\)`),
+    );
+
+    assert.equal(calls.length, failedStage === "adapter" ? 1 : 2);
+    assert.equal(calls[0], adapterDir);
+    if (failedStage === "engine") {
+      assert.equal(calls[1], path.join(repo, ".agents", "skills", "forge-workflow-engine"));
+    }
+  }
+});
 
 // OpenCode v2 removed `run --dir` and `run --attach` (ADR-058), so the engine's
 // keep-alive and attach flags are retired. The engine no longer manages a warm

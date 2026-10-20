@@ -35,6 +35,10 @@ export interface EngineRunOptions {
   pause?: boolean;
 }
 
+export interface EngineRunDependencies {
+  run?: typeof run;
+}
+
 function run(cmd: string, args: string[], dryRun: boolean, cwd: string): Promise<number> {
   if (dryRun) {
     out(`  [dry-run] ${cmd} ${args.join(" ")}`);
@@ -43,7 +47,11 @@ function run(cmd: string, args: string[], dryRun: boolean, cwd: string): Promise
   return runCommand(cmd, args, { cwd }).then((r) => r.code);
 }
 
-export async function engineRun(opts: EngineRunOptions = {}): Promise<number> {
+export async function engineRun(
+  opts: EngineRunOptions = {},
+  dependencies: EngineRunDependencies = {},
+): Promise<number> {
+  const execute = dependencies.run ?? run;
   const concurrency = opts.concurrency ?? process.env.FORGE_ENGINE_CONCURRENCY ?? "";
   const taskTimeoutMs = opts.taskTimeoutMs ?? process.env.FORGE_ENGINE_TASK_TIMEOUT_MS ?? "";
   const granularity = opts.granularity ?? process.env.FORGE_ENGINE_GRANULARITY ?? "";
@@ -124,7 +132,7 @@ export async function engineRun(opts: EngineRunOptions = {}): Promise<number> {
       out(`  [dry-run] (cd '${engineDir}' && npm run workflow-engine -- ${command} --repo "${repo}")`);
       return 0;
     }
-    const code = await run("npm", ["run", "workflow-engine", "--", command, "--repo", repo], dryRun, engineDir);
+    const code = await execute("npm", ["run", "workflow-engine", "--", command, "--repo", repo], dryRun, engineDir);
     if (code !== 0) {
       throw new Error(`Engine ${command} command failed (exit ${code}).`);
     }
@@ -145,12 +153,15 @@ export async function engineRun(opts: EngineRunOptions = {}): Promise<number> {
   //    granularity takes effect even when a manifest already exists.
   const recompile = granularity !== "";
   if (adapterDir) {
-    await run("npm", ["install"], dryRun, adapterDir);
+    const installCode = await execute("npm", ["install"], dryRun, adapterDir);
+    if (installCode !== 0) {
+      throw new Error(`Execution-adapter dependency install failed (exit ${installCode}).`);
+    }
     if (!fs.existsSync(manifest) || recompile) {
       const compileArgs = ["run", "forge-execution-adapter", "--", "compile", "--repo", repo];
       if (preferred) compileArgs.push("--harness-root", preferred);
       if (granularity) compileArgs.push("--granularity", granularity);
-      const code = await run("npm", compileArgs, dryRun, adapterDir);
+      const code = await execute("npm", compileArgs, dryRun, adapterDir);
       if (code !== 0) {
         // Fail fast with the compiler's own output instead of continuing on to
         // a confusing "manifest not found" error.
@@ -177,7 +188,10 @@ export async function engineRun(opts: EngineRunOptions = {}): Promise<number> {
   }
 
   // 2. Install engine dependencies.
-  await run("npm", ["install"], dryRun, engineDir);
+  const installCode = await execute("npm", ["install"], dryRun, engineDir);
+  if (installCode !== 0) {
+    throw new Error(`Workflow-engine dependency install failed (exit ${installCode}).`);
+  }
 
   // 3. Run the engine as a foreground, standalone process.
   const engineFlags = ["--harness", harness];

@@ -4,6 +4,18 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.127
+
+### P5 gate accepted; recovery qualification authorized
+
+- Recorded operator acceptance of P5-GATE on 2026-10-21 after the real-harness
+  run, clean-runtime installation, and Console walkthrough passed.
+- P5 is complete and P6 is authorized, with P6-01 failure-boundary qualification
+  next. The operator also reported running the cleanup and restore sequence;
+  full backup/restore integrity qualification remains part of P6-02.
+
+---
+
 ## October 2026 - v3.126
 
 ### Packed runtime worker starts as an ES module

@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveResources } from "./resources.ts";
+import { podmanUnavailableMessage, remediationHints, withRemediation } from "./runtime-diagnostics.ts";
 import {
   listRegisteredRepositories,
   registerRepository,
@@ -101,9 +102,9 @@ async function readRuntimeEnvironment(directory: string): Promise<RuntimeEnviron
     for (const line of contents.split(/\r?\n/)) {
       if (!line) continue;
       const separator = line.indexOf("=");
-      if (separator < 1) throw new Error(`Runtime credentials are malformed: ${file}`);
+      if (separator < 1) throw new Error(`Runtime credentials are malformed: ${file}. Restore it from your own copy; backups do not include it (see docs/forge-launcher.md#runtime-troubleshooting).`);
       const key = line.slice(0, separator);
-      if (entries.has(key)) throw new Error(`Runtime credentials contain a duplicate setting: ${key}`);
+      if (entries.has(key)) throw new Error(`Runtime credentials contain a duplicate setting: ${key}. Restore it from your own copy; backups do not include it (see docs/forge-launcher.md#runtime-troubleshooting).`);
       entries.set(key, line.slice(separator + 1));
     }
     const values = {} as Record<(typeof KEYS)[number], string>;
@@ -125,7 +126,7 @@ async function readRuntimeEnvironment(directory: string): Promise<RuntimeEnviron
       await new Promise((resolve) => setTimeout(resolve, 50));
       continue;
     }
-    throw new Error(`Runtime credentials are invalid; refusing to replace them: ${file}`);
+    throw new Error(`Runtime credentials are invalid; refusing to replace them: ${file}. Restore it from your own copy; backups do not include it (see docs/forge-launcher.md#runtime-troubleshooting).`);
   }
   throw new Error(`Timed out reading runtime credentials: ${file}`);
 }
@@ -301,16 +302,23 @@ async function ensureRootlessPodman(): Promise<void> {
   try {
     result = await runCommand("podman", ["info", "--format", "json"]);
   } catch {
-    throw new Error("Podman is required to manage the local runtime.");
+    throw new Error(podmanUnavailableMessage("missing"));
   }
-  if (result.code !== 0) throw new Error("Unable to inspect Podman; confirm the rootless Podman service is available.");
+  if (result.code !== 0) {
+    throw new Error(podmanUnavailableMessage("unreachable", process.platform, result.stderr.trim().split(/\r?\n/).slice(-5).join("\n")));
+  }
   let info: { host?: { security?: { rootless?: boolean } } };
   try {
     info = JSON.parse(result.stdout) as { host?: { security?: { rootless?: boolean } } };
   } catch {
     throw new Error("Podman returned invalid runtime information.");
   }
-  if (info.host?.security?.rootless !== true) throw new Error("Rootless Podman is required for the local runtime.");
+  if (info.host?.security?.rootless !== true) throw new Error(podmanUnavailableMessage("not-rootless"));
+  const composeCheck = await runCommand("podman", ["compose", "version"]).catch(() => undefined);
+  if (!composeCheck || composeCheck.code !== 0) {
+    const details = composeCheck ? `${composeCheck.stderr}${composeCheck.stdout}`.trim().split(/\r?\n/).slice(-3).join("\n") : "";
+    throw new Error(podmanUnavailableMessage("no-compose", process.platform, details));
+  }
 }
 
 export async function assertHostPortAvailable(port: number): Promise<void> {
@@ -383,11 +391,12 @@ async function waitForRuntimeReady(environment: RuntimeEnvironment): Promise<voi
     await new Promise((resolve) => setTimeout(resolve, READY_POLL_MS));
   }
   const details = await runtimeDiagnostics(containers, environment.values);
-  throw new Error(
+  throw new Error(withRemediation(
     `Local runtime did not become ready: ${pending.join(", ")}.` +
     `${details.length ? `\n${details.join("\n")}` : ""}\n` +
     `Run "forge-launcher runtime status" to inspect it and "forge-launcher runtime stop" to stop it.`,
-  );
+    details.join("\n"),
+  ));
 }
 
 function redact(output: string, values: RuntimeEnvironment["values"]): string {
@@ -453,7 +462,7 @@ async function compose(
   const output = redact(`${result.stdout}${result.stderr}`, environment.values).trim();
   if (result.code !== 0) {
     const details = output.split(/\r?\n/).slice(-20).join("\n");
-    throw new Error(`Podman Compose ${action} failed (exit ${result.code}).${details ? `\n${details}` : ""}`);
+    throw new Error(withRemediation(`Podman Compose ${action} failed (exit ${result.code}).${details ? `\n${details}` : ""}`, output));
   }
   return output;
 }
@@ -539,8 +548,10 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
   } else {
     const containers = await listRuntimeContainers();
     const diagnostics = await runtimeDiagnostics(containers, environment.values);
+    const hints = remediationHints(diagnostics.join("\n"));
     process.stdout.write(
-      `${output || "No runtime containers are present."}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}\n`,
+      `${output || "No runtime containers are present."}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}` +
+      `${hints.map((hint) => `\nHint: ${hint}`).join("")}\n`,
     );
   }
   return 0;

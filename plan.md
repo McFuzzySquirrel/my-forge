@@ -63,7 +63,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P2 — Reusable execution boundary | P1 gate | Engine + contracts | P2-GATE accepted; P2 deliverables complete | [P2-03 issue #4](https://github.com/McFuzzySquirrel/my-forge/issues/4); [P2-05 issue #5](https://github.com/McFuzzySquirrel/my-forge/issues/5); [P2-GATE review #6](https://github.com/McFuzzySquirrel/my-forge/issues/6); [P2 feature](docs/features/dapr-execution-boundary.md); [v1 contract](docs/contracts/dapr-execution-v1.md) |
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE accepted 2026-10-19 | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-GATE evidence](#p4-gate-acceptance-evidence--2026-10-19); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
-| P5 — Launcher and Console migration | P4 gate | Launcher + Console | In progress (P5-01, P5-02, P5-05 done; P5-03 partial) | @McFuzzySquirrel |
+| P5 — Launcher and Console migration | P4 gate | Launcher + Console | In progress (P5-01, P5-02, P5-05, P5-06 done; P5-03 partial) | @McFuzzySquirrel |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Not started | Unassigned |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
@@ -331,10 +331,17 @@ server, or GitHub App is a first-class path.
   test pins published ports to loopback. A live stub-harness run waiting for
   approval survived `runtime stop`/`start`, was approved through
   `service control`, and completed; rotated tokens rejected the old token.
-- [ ] **P5-06 — Preserve diagnostics and onboarding.** Show useful errors for
+- [x] **P5-06 — Preserve diagnostics and onboarding.** Show useful errors for
   unavailable Podman, missing VM/resources, credentials, corrupt volumes, and
   version mismatches. Export compatible status/audit views and document offline
   preparation, migration warnings, and disabled/retired flags.
+  *Done:* runtime commands give install, Podman machine, rootless, and
+  compose-provider guidance, and failures add `Hint:` lines for disk/memory
+  limits, port conflicts, image pulls, credential mismatches, corrupt volumes,
+  schema history, and version mismatches. A 401 explains how to apply rotated
+  tokens. `service runs|status|events --json` export run records and the full
+  event audit trail. [Runtime troubleshooting](docs/forge-launcher.md#runtime-troubleshooting)
+  documents remedies, upgrades, offline use, and disabled/retired options.
 - [ ] **P5-GATE:** A fresh local user can start the stack, submit and monitor a
   run, approve/control it, stop/restart, and recover through launcher and Console
   without editing generated files or using infrastructure APIs.
@@ -519,7 +526,9 @@ lifecycle, diagnostics, migration checks, and checksummed backups of
 service-owned volumes. P5-03 added the service run API, repository binding,
 and the `service` launcher commands; real-harness execution in the worker is
 blocked on a harness-provisioning decision (see P5-03). P5-05 hardened local
-access with a Console operator session and a Dapr sidecar token (ADR-070).
+access with a Console operator session and a Dapr sidecar token (ADR-070);
+P5-06 added runtime remediation hints, JSON status/audit export, and
+troubleshooting docs.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed

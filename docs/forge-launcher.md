@@ -120,9 +120,9 @@ npx forge-launcher@beta runtime repo add <path> [--id <id>] | list | remove <id>
 npx forge-launcher@beta service submit [--repo <path>] [--harness stub] [--branch <base>]
                               [--tasks <id,id>] [--concurrency <n>] [--max-retries <n>]
                               [--retry-delay-ms <ms>] [--allow-noop] [--key <key>] [--follow]
-npx forge-launcher@beta service runs [--repo <path>]
-npx forge-launcher@beta service status <run-id>
-npx forge-launcher@beta service events <run-id> [--after <n>] [--follow]
+npx forge-launcher@beta service runs [--repo <path>] [--json]
+npx forge-launcher@beta service status <run-id> [--json]
+npx forge-launcher@beta service events <run-id> [--after <n>] [--follow] [--json]
 npx forge-launcher@beta service control <run-id> <pause|resume|stop|cancel|replay-task|approve-task> [--task <id>]
 npx forge-launcher@beta service merge <run-id> [--repo <path>]
 npx forge-launcher@beta draft-prd --repo <path> [model flags]
@@ -153,8 +153,9 @@ supported. The service runs database migrations, registers the Dapr workflows,
 and reports ready only after a workflow-admission probe succeeds. Startup
 reports success only after every container is running, PostgreSQL accepts
 connections, and the service health check passes. Failure diagnostics include
-recent service logs with credentials redacted; `runtime status` also shows
-recent logs for unhealthy or stopped services.
+recent service logs with credentials redacted, plus remediation hints;
+`runtime status` also shows recent logs for unhealthy or stopped services. See
+[Runtime troubleshooting](#runtime-troubleshooting).
 
 Infrastructure ports stay private unless `--host-tools` is selected. That
 option publishes PostgreSQL on `127.0.0.1:55432`; `--postgres-port` changes the
@@ -209,7 +210,9 @@ sidecar, so task processes in the worker cannot call the sidecar directly. See
 3. `service merge <run-id>` fast-forwards the checked-out branch to the forge
    branch once the run has finished.
 
-Resubmitting with the same `--key` returns the existing run. `service control`
+Resubmitting with the same `--key` returns the existing run. `--json` on
+`service runs`, `status`, and `events` prints the API records (events as one
+JSON object per line) for scripts and support reports. `service control`
 accepts pause, resume, stop, cancel, replay-task, and approve-task.
 
 The worker currently provides only the deterministic `stub` harness, which
@@ -1230,6 +1233,59 @@ cd /path/to/your/repo && claude .
 ```
 
 Then in the chat or terminal, run `/forge-auto-build-prd <your idea>` to build the reviewed PRD first, or `/forge-auto-build docs/PRD.md` once a PRD exists.
+
+### Runtime troubleshooting
+
+`runtime` commands check Podman before doing anything. When `runtime start`
+fails, or `runtime status` finds a stopped or unhealthy service, the launcher
+prints recent logs with credentials redacted, followed by `Hint:` lines for
+the failures it recognizes:
+
+| Symptom | What to do |
+|---|---|
+| Podman not found on `PATH` | Install [Podman](https://podman.io/docs/installation). On macOS and Windows, also run `podman machine init` and `podman machine start`. |
+| "Unable to inspect Podman" | macOS/Windows: run `podman machine start`. Linux: make sure `podman info` works for your user. |
+| "Rootless Podman is required" | Run as your normal user, not root. On macOS/Windows, run `podman machine set --rootful=false` and restart the machine. |
+| "needs `podman compose`" | Install a compose provider such as `podman-compose`. |
+| Out of disk space or memory | Free space (`podman system df` shows usage). On macOS/Windows, raise the machine's limits with `podman machine set --disk-size <GiB>` or `--memory <MiB>` (4096 MiB or more recommended). |
+| Port already in use | Stop the conflicting process, choose another `--postgres-port`, or export `MYFORGE_API_PORT=<port>` for both `runtime` and `service` commands. |
+| Images could not be pulled | Connect to the network; see [Offline use](#offline-use). |
+| Credential mismatch ("password authentication failed") | `runtime.env` no longer matches the volumes. Restore the original file, or run `runtime reset --confirm` to recreate the volumes, which deletes runtime data. |
+| Credential file malformed or invalid | The launcher refuses to replace it. Restore it from your own copy. Backups do not include it. |
+| `service` commands return 401 | Tokens were rotated but not applied. Run `runtime stop`, then `runtime start`. |
+| Corrupt volume (PostgreSQL `PANIC`, unreadable blocks) | Run `runtime restore --from <backup> --confirm`, or `runtime reset --confirm` to discard runtime data. |
+| Version mismatch ("schema version … is newer") | The data was written by a newer Forge. Update `forge-launcher`, or restore a backup taken with this version. Downgrades are not supported. |
+
+`service runs|status --json` print the service API records, and
+`service events <run-id> --json` exports a run's whole audit trail as one JSON
+event per line. Attach that output when you report a problem.
+
+#### Upgrading
+
+Take a `runtime backup` before you upgrade `forge-launcher`. The next
+`runtime start` applies compatible schema migrations. If the worker image tag
+changed, the image is rebuilt, which needs the network. Forge never migrates
+the schema back to an earlier version, so restore a backup if you need to
+return to an older release.
+
+#### Offline use
+
+Install `forge-launcher` and run `runtime start` once while online. This pulls
+the pinned PostgreSQL and Dapr images and builds the `localhost/myforge-worker`
+image. After that, `start`, `stop`, `status`, `backup`, `restore`, and `reset`
+use the local image cache and work offline. Removing images (for example with
+`podman system prune -a`) means you need the network again. Moving images to an
+air-gapped machine (`podman save`/`podman load`) is not yet supported.
+
+#### Disabled and retired options
+
+| Option | Status |
+|---|---|
+| `service submit --harness` other than `stub` | Rejected by the worker until real harnesses are provisioned. Use `engine-run`. |
+| `--postgres-port` without `--host-tools` | Rejected. PostgreSQL stays private unless host tools are requested. |
+| Binding the Console or service API beyond loopback | Not available in the local profile ([ADR-068](adr/068-local-deployment-and-access-profiles.md)). |
+| Console `GET /api/token` | Removed in v3.120. Use the terminal sign-in link ([ADR-070](adr/070-local-operator-session-and-sidecar-token.md)). |
+| `--keep-alive`, `--attach`, `--dir`, `FORGE_ENGINE_ATTACH`, `FORGE_ENGINE_ATTACH_URL` | Retired in v3.87 (OpenCode v2). |
 
 ---
 

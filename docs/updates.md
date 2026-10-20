@@ -4,6 +4,27 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.121
+
+### P5-06 runtime diagnostics and onboarding
+
+- `runtime` commands now explain how to fix a missing Podman, a stopped
+  Podman machine (macOS/Windows), rootful Podman, or a missing compose
+  provider.
+- Failed starts and `runtime status` add `Hint:` lines for known failures:
+  disk or memory limits, port conflicts, image pulls, credential mismatches,
+  corrupt volumes, schema history, and version mismatches. A 401 from the
+  service explains how to apply rotated tokens.
+- `service runs`, `service status`, and `service events` accept `--json`;
+  events export the whole audit trail as one JSON object per line.
+- Piping launcher output into a command that closes early (such as `head`)
+  no longer crashes.
+- New [Runtime troubleshooting](forge-launcher.md#runtime-troubleshooting)
+  section covers remedies, upgrading, offline use, and disabled and retired
+  options.
+
+---
+
 ## October 2026 - v3.120
 
 ### P5-05 local access hardening

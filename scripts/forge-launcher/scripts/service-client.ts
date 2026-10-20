@@ -59,7 +59,11 @@ export class ServiceClient {
     }
     if (!response.ok) {
       const error = (parsed as { error?: { code?: string; message?: string } }).error;
-      throw new ServiceApiError(response.status, error?.code ?? "request-failed", error?.message ?? `Request failed (${response.status}).`);
+      const message = error?.message ?? `Request failed (${response.status}).`;
+      throw new ServiceApiError(response.status, error?.code ?? "request-failed", response.status === 401
+        ? `${message} The service rejected the API token from runtime.env; if you ran "forge-launcher runtime rotate-tokens", ` +
+          `run "forge-launcher runtime stop" and "forge-launcher runtime start" to apply it.`
+        : message);
     }
     return parsed as T;
   }
@@ -233,9 +237,9 @@ const SERVICE_USAGE = `Usage:
   forge-launcher service submit [--repo <path>] [--harness stub] [--branch <base>] [--tasks <id,id>]
                                 [--concurrency <n>] [--max-retries <n>] [--retry-delay-ms <ms>]
                                 [--allow-noop] [--key <submission-key>] [--follow]
-  forge-launcher service runs [--repo <path>]
-  forge-launcher service status <run-id>
-  forge-launcher service events <run-id> [--after <n>] [--follow]
+  forge-launcher service runs [--repo <path>] [--json]
+  forge-launcher service status <run-id> [--json]
+  forge-launcher service events <run-id> [--after <n>] [--follow] [--json]
   forge-launcher service control <run-id> <pause|resume|stop|cancel|replay-task|approve-task> [--task <id>]
   forge-launcher service merge <run-id> [--repo <path>]
 
@@ -245,6 +249,8 @@ Runs integrate into forge/<base>, never the checked-out branch; "merge"
 fast-forwards the checked-out branch to the run's forge branch.
 The containerized worker currently provides only the stub harness; real
 harness runs still use "forge-launcher engine-run".
+--json prints the service API records unchanged: one JSON document for runs and
+status, and one JSON event per line (NDJSON) for events.
 `;
 
 export async function serviceCli(
@@ -262,16 +268,16 @@ export async function serviceCli(
     return new ServiceClient(access.baseUrl, access.token);
   })();
 
-  const follow = async (runId: string, after = 0): Promise<number> => {
+  const follow = async (runId: string, after = 0, json = false): Promise<number> => {
     let cursor = after;
     for (;;) {
       const page = await client.events(runId, cursor);
-      for (const event of page.events) write(`${formatEvent(event)}\n`);
+      for (const event of page.events) write(`${json ? JSON.stringify(event) : formatEvent(event)}\n`);
       cursor = page.cursor;
       if (page.hasMore) continue;
       const run = await client.get(runId);
       if (TERMINAL_STATUSES.has(String(run.status))) {
-        write(`Run ${runId} is ${run.status}.\n`);
+        if (!json) write(`Run ${runId} is ${run.status}.\n`);
         return run.status === "complete" ? 0 : 1;
       }
       await new Promise((resolve) => setTimeout(resolve, 1_000));
@@ -320,32 +326,52 @@ export async function serviceCli(
       return flags.has("--follow") ? follow(String(result.runId)) : 0;
     }
     case "runs": {
-      const { flags } = parseFlags(rest, { "--repo": "value" });
+      const { flags, positional } = parseFlags(rest, { "--repo": "value", "--json": "flag" });
+      if (positional.length) throw new Error(`Unexpected argument: ${positional[0]}`);
       const repositoryId = flags.has("--repo")
         ? await repositoryIdFor(detectRepoRoot(path.resolve(flags.get("--repo")!)))
         : undefined;
       const { runs } = await client.list(repositoryId);
+      if (flags.has("--json")) {
+        write(`${JSON.stringify({ runs }, null, 2)}\n`);
+        return 0;
+      }
       write(runs.length
         ? `${runs.map((run) => `${run.runId}\t${run.status}\t${run.repositoryId}\t${run.targetRef}\t${run.createdAt}`).join("\n")}\n`
         : "No service runs.\n");
       return 0;
     }
     case "status": {
-      if (rest.length !== 1) throw new Error("Usage: forge-launcher service status <run-id>");
-      const run = await client.get(rest[0]!);
+      const { flags, positional } = parseFlags(rest, { "--json": "flag" });
+      if (positional.length !== 1) throw new Error("Usage: forge-launcher service status <run-id> [--json]");
+      const run = await client.get(positional[0]!);
+      if (flags.has("--json")) {
+        write(`${JSON.stringify(run, null, 2)}\n`);
+        return 0;
+      }
       const tasks = (run.tasks as { taskId: string; status: string; logicalAttempt?: number }[] | undefined) ?? [];
       write(`${run.runId}: ${run.status} (${run.repositoryId} ${run.targetRef}, harness ${(run.harness as { id: string }).id})\n`);
       for (const task of tasks) write(`  ${task.taskId}\t${task.status}${task.logicalAttempt ? `\tattempt ${task.logicalAttempt}` : ""}\n`);
       return 0;
     }
     case "events": {
-      const { flags, positional } = parseFlags(rest, { "--after": "value", "--follow": "flag" });
-      if (positional.length !== 1) throw new Error("Usage: forge-launcher service events <run-id> [--after <n>] [--follow]");
+      const { flags, positional } = parseFlags(rest, { "--after": "value", "--follow": "flag", "--json": "flag" });
+      if (positional.length !== 1) throw new Error("Usage: forge-launcher service events <run-id> [--after <n>] [--follow] [--json]");
       const after = integerFlag(flags, "--after") ?? 0;
-      if (flags.has("--follow")) return follow(positional[0]!, after);
-      const page = await client.events(positional[0]!, after);
-      for (const event of page.events) write(`${formatEvent(event)}\n`);
-      if (page.hasMore) write(`More events follow; rerun with --after ${page.cursor}.\n`);
+      const json = flags.has("--json");
+      if (flags.has("--follow")) return follow(positional[0]!, after, json);
+      // --json exports the complete audit trail; the text view shows one page.
+      let cursor = after;
+      for (;;) {
+        const page = await client.events(positional[0]!, cursor);
+        for (const event of page.events) write(`${json ? JSON.stringify(event) : formatEvent(event)}\n`);
+        cursor = page.cursor;
+        if (!page.hasMore) break;
+        if (!json) {
+          write(`More events follow; rerun with --after ${page.cursor}.\n`);
+          break;
+        }
+      }
       return 0;
     }
     case "control": {

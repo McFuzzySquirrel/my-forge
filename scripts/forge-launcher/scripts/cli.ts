@@ -100,6 +100,12 @@ they report an interactive handoff instead. Set FORGE_RUN_WITH=stub (plus
 FORGE_STUB_NOOP=1) to run the authoring stages offline against canned artifacts.
 `;
 
+// A closed pipe (for example "| head") ends output; it is not a failure.
+process.stdout.on("error", (error: NodeJS.ErrnoException) => {
+  if (error.code === "EPIPE") process.exit(0);
+  throw error;
+});
+
 async function main(): Promise<number> {
   const input = process.argv.slice(2);
   const args: string[] = [];

@@ -129,3 +129,35 @@ test("service CLI dispatches status, events, controls, and validates arguments",
   assert.equal(await serviceCli(["--help"], { client, write }), 0);
   assert.equal(await serviceCli([], { client, write }), 1);
 });
+
+test("service CLI exports status and the complete audit trail as JSON", async () => {
+  const pages = [
+    { events: [{ sequence: 1, eventType: "run-status", runStatus: "running" }], cursor: 1, hasMore: true },
+    { events: [{ sequence: 2, eventType: "task-status", taskId: "T1", taskStatus: "complete" }], cursor: 2, hasMore: false },
+  ];
+  const run = { runId: RUN_ID, status: "complete", repositoryId: "demo", targetRef: "refs/heads/forge/main", harness: { id: "stub" } };
+  const client = {
+    get: async () => run,
+    list: async () => ({ runs: [run] }),
+    events: async () => pages.shift()!,
+  } as unknown as ServiceClient;
+  let output = "";
+  const write = (text: string) => { output += text; };
+
+  assert.equal(await serviceCli(["status", RUN_ID, "--json"], { client, write }), 0);
+  assert.deepEqual(JSON.parse(output), run);
+  output = "";
+  assert.equal(await serviceCli(["runs", "--json"], { client, write }), 0);
+  assert.deepEqual(JSON.parse(output), { runs: [run] });
+  output = "";
+  assert.equal(await serviceCli(["events", RUN_ID, "--json"], { client, write }), 0);
+  assert.deepEqual(output.trim().split("\n").map((line) => JSON.parse(line).sequence), [1, 2]);
+  await assert.rejects(serviceCli(["runs", "extra"], { client, write }), /Unexpected argument/);
+});
+
+test("a rejected API token explains how to apply rotated tokens", async () => {
+  const client = new ServiceClient("http://127.0.0.1:8483", "t".repeat(64), async () =>
+    new Response(JSON.stringify({ error: { code: "unauthorized", message: "Unauthorized." } }), { status: 401 }));
+  await assert.rejects(client.get(RUN_ID), (error: unknown) =>
+    error instanceof ServiceApiError && error.status === 401 && /rotate-tokens/.test(error.message) && /runtime start/.test(error.message));
+});

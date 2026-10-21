@@ -114,14 +114,17 @@ workflow. With the same `POSTGRES_TEST_URL`, it starts an ephemeral rootless
 Podman pod (Dapr sidecar, Placement, Scheduler, and a PostgreSQL workflow
 state store) published only on loopback, runs a host-native worker, and writes
 evidence to `tools/dapr-engine/.runtime/p4-05-evidence.json` (gitignored). Add
-`-- --copilot` to also run one real Copilot CLI task; the credential comes from
-`gh auth token` and is passed only as `COPILOT_GITHUB_TOKEN`. Use
+`-- --copilot` to run one real Copilot CLI task; the credential comes from
+`gh auth token` and is passed only as `COPILOT_GITHUB_TOKEN`. Add `--opencode`
+to run one real OpenCode task; it imports only the saved `github-copilot`
+credential from `opencode auth export` into the attempt's private data
+directory. No host auth directory is mounted. Use
 `-- --evidence <path>` to change the output file and `-- --keep` to keep the
 pod and temporary repositories for inspection:
 
 ```bash
 cd tools/dapr-engine
-POSTGRES_TEST_URL=... npm run verify:execution -- --copilot
+POSTGRES_TEST_URL=... npm run verify:execution -- --copilot --opencode
 ```
 
 The verifier refuses to write evidence that contains a resolved secret or the

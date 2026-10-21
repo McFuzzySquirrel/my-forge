@@ -10,5 +10,5 @@ RUN apt-get update \
 RUN npm install --global --no-fund --no-audit \
     @github/copilot@1.0.100 \
     @anthropic-ai/claude-code@2.1.304 \
-    opencode-ai@1.19.3 \
+    @opencode/cli@2.0.32 \
   && npm cache clean --force

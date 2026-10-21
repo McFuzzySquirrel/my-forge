@@ -162,6 +162,7 @@ export interface TaskSpec {
   readonly expectedOutputs?: readonly string[];
   readonly validationCommands?: readonly string[];
   readonly approvalRequired?: boolean;
+  readonly model?: string;
   readonly title?: string;
   readonly description?: string;
   readonly acceptanceCriteria?: readonly string[];
@@ -180,6 +181,7 @@ export function manifestTask(spec: TaskSpec): ManifestTask {
     },
     title: spec.title ?? `Task ${spec.id}`,
     description: spec.description ?? `Implement ${spec.id}.`,
+    ...(spec.model ? { model: spec.model } : {}),
     ownerAgent: spec.ownerAgent,
     requiredCapabilities: ["repository-tools"],
     dependencies: [...(spec.dependencies ?? [])],

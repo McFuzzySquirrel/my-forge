@@ -272,11 +272,33 @@ forge-launcher runtime harness list                                 # names only
 forge-launcher runtime harness revoke copilot [COPILOT_GITHUB_TOKEN]
 ```
 
+To hand off an existing OpenCode provider login, export only the one provider
+entry you intend to grant; do not pass the full export if it contains unrelated
+credentials. For GitHub Copilot, for example:
+
+```bash
+opencode auth export | jq -c '[.[] | select(.integrationID == "github-copilot")]' \
+  | forge-launcher runtime harness grant opencode OPENCODE_AUTH_JSON
+```
+
+In PowerShell, select the same single entry before piping it to the grant
+command:
+
+```powershell
+$auth = opencode auth export | ConvertFrom-Json |
+  Where-Object { $_.integrationID -eq 'github-copilot' }
+ConvertTo-Json -InputObject @($auth) -Depth 100 -Compress |
+  forge-launcher runtime harness grant opencode OPENCODE_AUTH_JSON
+```
+
 - Each harness accepts only its own variables:
   - copilot: `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`
   - claude: `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`
   - opencode: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
-    `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`
+    `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `OPENCODE_AUTH_JSON`
+- `OPENCODE_AUTH_JSON` is the one-provider JSON list from `opencode auth export`.
+  The worker imports it into the task's private OpenCode data directory and
+  removes the temporary file; it does not mount or read the host auth store.
 - Grants are stored owner-only under the runtime data directory
   (`harness-grants/grants.json`) and mounted read-only into the worker. They
   apply from the next task attempt, with no restart.

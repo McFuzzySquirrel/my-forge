@@ -4,6 +4,23 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.136
+
+### Qualify Copilot and OpenCode on Linux (P6-05)
+
+- The isolated real-harness verifier now covers Copilot and OpenCode. OpenCode
+  can receive one explicitly granted provider credential through
+  `OPENCODE_AUTH_JSON`; the worker imports it into the task's private profile,
+  verifies it there, and removes the temporary credential file.
+- The worker image now pins the official OpenCode v2 CLI 2.0.32. The previous
+  OpenCode 1.x package did not support the isolated credential-import flow.
+- Live Linux rootless qualification passed for Copilot and OpenCode, alongside
+  all five stub scenarios. Claude is deferred; macOS and Windows qualification
+  remains open. See [ADR-077](adr/077-opencode-provider-credential-isolation.md)
+  and the P6-05 evidence in `plan.md`.
+
+---
+
 ## October 2026 - v3.135
 
 ### Per-task process privilege isolation (P6-04)

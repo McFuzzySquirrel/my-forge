@@ -5,7 +5,7 @@
  *
  * Usage (Linux, rootless Podman, images from tools/dapr-spike already pulled):
  *   POSTGRES_TEST_URL=postgres://... npm run verify:execution -- \
- *     [--evidence <file>] [--copilot] [--keep]
+ *     [--evidence <file>] [--copilot] [--opencode] [--keep]
  */
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -16,6 +16,7 @@ import { promisify } from "node:util";
 import { DaprWorkflowClient, WorkflowRuntime, WorkflowRuntimeStatus } from "@dapr/dapr";
 import type { ControlRequestV1 } from "../contract/v1/index.ts";
 import { CopilotAdapter } from "../execution/harness/copilot-adapter.ts";
+import { OpenCodeAdapter } from "../execution/harness/opencode-adapter.ts";
 import type { HarnessAdapter, TaskAttemptRequest } from "../execution/types.ts";
 
 type AttemptTask = TaskAttemptRequest["task"];
@@ -44,6 +45,7 @@ interface Options {
   readonly databaseUrl: string;
   readonly evidence: string;
   readonly copilot: boolean;
+  readonly opencode: boolean;
   readonly keep: boolean;
 }
 
@@ -52,15 +54,17 @@ function parseOptions(argv: readonly string[]): Options {
   if (!databaseUrl) throw new Error("POSTGRES_TEST_URL must point at the engine PostgreSQL database");
   let evidence = resolve(".runtime/p4-05-evidence.json");
   let copilot = false;
+  let opencode = false;
   let keep = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--copilot") copilot = true;
+    else if (arg === "--opencode") opencode = true;
     else if (arg === "--keep") keep = true;
     else if (arg === "--evidence" && argv[index + 1]) evidence = resolve(argv[++index]!);
     else throw new Error(`Unknown argument: ${arg}`);
   }
-  return { databaseUrl, evidence, copilot, keep };
+  return { databaseUrl, evidence, copilot, opencode, keep };
 }
 
 interface Scenario {
@@ -212,6 +216,7 @@ function copilotScenario(): Scenario {
     tasks: [{
       id: "H-1",
       ownerAgent: "docs-writer",
+      model: "gpt-6-luna",
       title: "Add a greeting document",
       description: "Create docs/hello.md. Its first line must be exactly '# Hello from MyForge' and it must contain one short sentence explaining that the file was written by an automated MyForge execution test. Do not modify any other file.",
       expectedOutputs: ["docs/hello.md"],
@@ -222,6 +227,61 @@ function copilotScenario(): Scenario {
     timeoutSeconds: 900,
     expect: (result) => {
       check(result.output.status === "complete", "copilot run completed");
+      check(result.commits.length === 1 && result.commits[0]!.files.join(",") === "docs/hello.md", "single integrated docs/hello.md change");
+    },
+  };
+}
+
+function opencodeScenario(): Scenario {
+  const previousFlags = process.env.OPENCODE_EXTRA_FLAGS;
+  process.env.OPENCODE_EXTRA_FLAGS = [previousFlags, "--standalone"].filter(Boolean).join(" ");
+  let harness: OpenCodeAdapter;
+  try {
+    harness = new OpenCodeAdapter();
+  } finally {
+    if (previousFlags === undefined) delete process.env.OPENCODE_EXTRA_FLAGS;
+    else process.env.OPENCODE_EXTRA_FLAGS = previousFlags;
+  }
+
+  return {
+    name: "real-harness-opencode",
+    proves: "A real OpenCode CLI run imports only its explicitly granted GitHub Copilot provider credential into a per-task isolated home and integrates a validated change.",
+    harness,
+    harnessId: "opencode",
+    secretRefs: { "github-copilot": { ref: "opencode-cli:github-copilot" } },
+    credentials: (scope) => () => resolveWorkspaceCredentialEnvironment({
+      repositoryId: scope.repositoryId,
+      targetRef: TARGET_REF,
+      harnessId: scope.harnessId,
+      secretRefs: scope.secretRefs,
+      bindings: [{ secretName: "github-copilot", environmentVariable: "OPENCODE_AUTH_JSON" }],
+    }, {
+      resolve: async (request) => {
+        if (request.reference.ref !== "opencode-cli:github-copilot") throw new Error("Unsupported secret reference");
+        const { stdout } = await execFileAsync("opencode", ["auth", "export"], { timeout: 30_000 });
+        const exported: unknown = JSON.parse(stdout);
+        if (!Array.isArray(exported)) throw new Error("OpenCode auth export was not a credential list");
+        const credentials = exported.filter((entry) =>
+          entry && typeof entry === "object" && "integrationID" in entry
+          && entry.integrationID === "github-copilot");
+        if (credentials.length !== 1) throw new Error("A saved GitHub Copilot OpenCode credential is required");
+        return JSON.stringify(credentials);
+      },
+    }),
+    tasks: [{
+      id: "O-1",
+      ownerAgent: "docs-writer",
+      model: "github-copilot/gpt-6-luna",
+      title: "Add a greeting document",
+      description: "Create docs/hello.md. Its first line must be exactly '# Hello from MyForge' and it must contain one short sentence explaining that the file was written by an automated MyForge execution test. Do not modify any other file.",
+      expectedOutputs: ["docs/hello.md"],
+      validationCommands: ["head -n 1 docs/hello.md | grep -qx '# Hello from MyForge'"],
+      acceptanceCriteria: ["docs/hello.md starts with '# Hello from MyForge'.", "No other files change."],
+    }],
+    settings: { maxRetries: 0 },
+    timeoutSeconds: 900,
+    expect: (result) => {
+      check(result.output.status === "complete", "OpenCode run completed");
       check(result.commits.length === 1 && result.commits[0]!.files.join(",") === "docs/hello.md", "single integrated docs/hello.md change");
     },
   };
@@ -287,7 +347,11 @@ async function main(): Promise<void> {
     await runtime.start();
     client = new DaprWorkflowClient(daprAddress);
 
-    const selected = [...scenarios(), ...(options.copilot ? [copilotScenario()] : [])];
+    const selected = [
+      ...scenarios(),
+      ...(options.copilot ? [copilotScenario()] : []),
+      ...(options.opencode ? [opencodeScenario()] : []),
+    ];
     for (const scenario of selected) {
       process.stdout.write(`▶ ${scenario.name}\n`);
       const record = await runScenario(scenario, { fixture, host, client, runs, audit, secrets });

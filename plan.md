@@ -413,10 +413,11 @@ support matrix, and release evidence.
   Preserve Linux, macOS, and Windows support; missing desktop evidence is a
   qualification gap, not permission to drop platform support.
   *Partial 2026-10-21 ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)):
-  Linux rootless evidence recorded. macOS/Windows Podman-machine qualification
-  and real-harness runs remain required. Harness selection must not require
+  Linux rootless evidence and authenticated Copilot/OpenCode runs recorded.
+  macOS/Windows Podman-machine qualification remains required. Harness selection must not require
   additional GitHub repository credentials; reuse existing authorized provider
-  authentication where possible without exposing unrelated credentials.*
+  authentication where possible without exposing unrelated credentials.
+  Claude is deferred by the operator until after the planned phases.*
 - [x] **P6-06 — Re-run parity and budgets.** Compare accepted outcomes, commit
   behavior, validation, audit, and controls with P0 fixtures; measure startup,
   memory/disk, long histories, cancellation, and recovery against agreed thresholds.
@@ -581,7 +582,7 @@ complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
 [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
 [P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21),
 [ADR-075](docs/adr/075-security-boundary-review.md), which records one open
-cutover blocker); P6-05 remains incomplete ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)): Linux, macOS, and Windows remain required support targets. P6-06 budget evidence is recorded ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)). P6-GATE remains blocked by residual cross-repository Git read access, real-harness qualification, and macOS/Windows runtime qualification.
+cutover blocker); P6-05 remains incomplete ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)): Linux, macOS, and Windows remain required support targets, and Claude qualification is deferred. P6-06 budget evidence is recorded ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)). P6-GATE remains blocked by residual cross-repository Git read access, Claude qualification, and macOS/Windows runtime qualification.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -872,20 +873,30 @@ and performance still need host-specific qualification before P6-05 can close.
 | User namespace | Container root maps to operator UID 1000; other UIDs map to subordinate range 100000+ |
 | Rootless runtime | P6-01–P6-03 suites passed on rootless stacks `myforge-qual` and `myforge-qual2`, covering restart, worker loss, sidecar/DB loss, backup/restore, and upgrade/rollback |
 | Mounts | Repository `.git` bind mounts and workspace integration verified by the failure and backup suites; grants file mounted `0600` root |
-| Harness CLIs in `localhost/myforge-worker:2` | `copilot` 1.0.100, `claude` 2.1.304, `opencode` 1.19.3 install and report their pinned versions |
+| Harness CLIs in `localhost/myforge-worker:4` | `copilot` 1.0.100, `claude` 2.1.304, `opencode` 2.0.32 |
 | Grant enforcement | A submission without a grant is rejected with the grant hint (P5-GATE evidence) |
 | Stub harness | Qualified end to end (all P6 suites) |
-| Real harness task with a granted credential | **Not run.** No operator credential was available in the isolated stack, and operator credentials were not used without consent. copilot, claude, and opencode are therefore **unqualified** for P6-GATE. |
+| Copilot CLI 1.0.100 | Passed one isolated live Dapr workflow task with the existing `gh auth token` bound only as `COPILOT_GITHUB_TOKEN`; one validated `docs/hello.md` commit integrated |
+| OpenCode CLI 2.0.32 | Passed one isolated live Dapr workflow task using only the saved GitHub Copilot provider entry, imported into the task's private home through `OPENCODE_AUTH_JSON`; one validated `docs/hello.md` commit integrated |
+| Claude Code | **Deferred** by the operator until after the planned phases; remains unqualified |
 
-Remaining: run one authenticated task per real harness on an isolated stack,
-then record its outcome, commit, and audit trail. The repository remains a
-standard Git repository hosted on GitHub regardless of harness; changing
-harness must not require another repository credential. Provider authentication
-is separate from GitHub repository access. Existing authorized provider logins
-should be reused through a narrowly scoped handoff; the current service only
-supports explicit credential grants and does not import host login state.
-The task-UID fix is implemented (ADR-076); residual read-only cross-repository
-access still needs a trust-boundary decision before cutover.
+The host-native verifier ran five stub scenarios plus the two authenticated
+harness tasks against an ephemeral rootless Dapr 1.18.7 pod and disposable
+PostgreSQL schema. Both real tasks completed in one attempt, passed validation,
+and integrated only `docs/hello.md`; the evidence file
+`/tmp/p6-05-linux-harnesses.json` contains no resolved credentials. OpenCode
+was upgraded in worker image `:4` because the former 1.19.3 pin did not support
+isolated auth import; the container's 2.0.32 CLI was separately verified to
+import and export the single-provider credential offline.
+
+The repository remains a standard Git repository hosted on GitHub regardless
+of harness; switching harness requires no additional repository credential.
+Provider authentication is separate from GitHub repository access. macOS and
+Windows Podman-machine networking, credentials, mounts, path translation,
+watchers, and performance remain unqualified. Claude is also unqualified by
+choice and must be tested before advertising it as a release-qualified
+profile. The task-UID fix is implemented (ADR-076); residual read-only
+cross-repository access still needs a trust-boundary decision before cutover.
 
 ### P5-GATE evidence — 2026-10-22
 

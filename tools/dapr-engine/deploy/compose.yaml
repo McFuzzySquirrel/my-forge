@@ -106,7 +106,7 @@ services:
   forge:
     # Built locally from the pinned Node image; bump the tag when the
     # Containerfile changes so existing installs rebuild.
-    image: localhost/myforge-worker:3
+    image: localhost/myforge-worker:4
     build:
       context: .
       dockerfile: worker.Containerfile

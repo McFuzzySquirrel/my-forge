@@ -1,5 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { chown, mkdir, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { runCommand, extractModelFlags, canSelectAgentNatively, harnessProcessOptions } from "./run.ts";
 import { harnessInvocationContext } from "./invocation-log.ts";
@@ -67,6 +69,25 @@ export class OpenCodeAdapter implements HarnessAdapter {
   async invoke(request: TaskAttemptRequest): Promise<TaskResult> {
     const start = Date.now();
     const { agent, task, repoRoot } = request;
+    const processOptions = harnessProcessOptions(request);
+    const environment = processOptions.env ? { ...processOptions.env } : undefined;
+    const authJson = environment?.OPENCODE_AUTH_JSON;
+    if (authJson && environment) {
+      delete environment.OPENCODE_AUTH_JSON;
+      const imported = await this.importGrantedAuth(request, authJson, environment);
+      if (imported) {
+        request.isolation?.onProcessSettled?.(imported.processCleanup ?? "observed");
+        return {
+          success: false,
+          outputFiles: [],
+          stdout: "",
+          stderr: "",
+          durationMs: Date.now() - start,
+          errorMessage: imported.error,
+          failureKind: "configuration",
+        };
+      }
+    }
 
     // OpenCode model IDs are provider-qualified (for example,
     // `github-copilot/gpt-5.6-luna`); unlike Copilot, do not strip the prefix.
@@ -90,7 +111,8 @@ export class OpenCodeAdapter implements HarnessAdapter {
       maxBufferBytes: 10 * 1024 * 1024,
       invocation: harnessInvocationContext(this.name, request),
       activity: request.logHarnessActivity === true,
-      ...harnessProcessOptions(request),
+      ...processOptions,
+      ...(environment ? { env: environment } : {}),
     });
     const durationMs = Date.now() - start;
 
@@ -137,6 +159,96 @@ export class OpenCodeAdapter implements HarnessAdapter {
   /** True when opencode can select this agent natively; see `canSelectAgentNatively`. */
   private canSelectAgent(request: TaskAttemptRequest): boolean {
     return canSelectAgentNatively(request, ".opencode");
+  }
+
+  private async importGrantedAuth(
+    request: TaskAttemptRequest,
+    authJson: string,
+    environment: NodeJS.ProcessEnv,
+  ): Promise<{ readonly error: string; readonly processCleanup?: "observed" | "unconfirmed" } | undefined> {
+    let exported: unknown;
+    try {
+      exported = JSON.parse(authJson);
+    } catch {
+      return { error: "OPENCODE_AUTH_JSON must contain valid OpenCode exported credentials." };
+    }
+    if (!Array.isArray(exported) || exported.length !== 1) {
+      return { error: "OPENCODE_AUTH_JSON must contain exactly one explicitly granted provider credential." };
+    }
+    const expectedProvider = exported[0] && typeof exported[0] === "object" && "integrationID" in exported[0]
+      ? exported[0].integrationID
+      : undefined;
+    if (typeof expectedProvider !== "string" || !expectedProvider) {
+      return { error: "OPENCODE_AUTH_JSON must contain one credential with a provider identifier." };
+    }
+    const dataHome = environment.XDG_DATA_HOME;
+    const temporaryHome = environment.TMPDIR;
+    if (!dataHome || !isAbsolute(dataHome) || !temporaryHome || !isAbsolute(temporaryHome)) {
+      return { error: "OpenCode auth import requires isolated XDG_DATA_HOME and TMPDIR paths." };
+    }
+
+    const authFile = join(temporaryHome, `opencode-auth-${randomUUID()}.json`);
+    await mkdir(temporaryHome, { recursive: true, mode: 0o700 });
+    try {
+      await writeFile(authFile, authJson, { encoding: "utf8", mode: 0o600, flag: "wx" });
+      if (request.isolation?.processIdentity) {
+        await chown(authFile, request.isolation.processIdentity.uid, request.isolation.processIdentity.gid);
+      }
+      const result = await runCommand(this.bin, ["auth", "import", "--standalone", authFile], {
+        cwd: request.repoRoot,
+        timeoutMs: Math.min(request.budget.timeoutMs, 30_000),
+        maxBufferBytes: 1024 * 1024,
+        env: environment,
+        inheritEnvironment: false,
+        reapProcessGroupOnExit: true,
+        ...(request.isolation?.processIdentity ? { processIdentity: request.isolation.processIdentity } : {}),
+        signal: request.signal,
+      });
+      if (result.error || result.status !== 0 || result.processCleanup === "unconfirmed") {
+        return {
+          error: "OpenCode could not import the explicitly granted provider credential into its isolated task home.",
+          ...(result.processCleanup ? { processCleanup: result.processCleanup } : {}),
+        };
+      }
+      const verification = await runCommand(this.bin, ["auth", "export", "--standalone"], {
+        cwd: request.repoRoot,
+        timeoutMs: Math.min(request.budget.timeoutMs, 30_000),
+        maxBufferBytes: 1024 * 1024,
+        env: environment,
+        inheritEnvironment: false,
+        reapProcessGroupOnExit: true,
+        ...(request.isolation?.processIdentity ? { processIdentity: request.isolation.processIdentity } : {}),
+        signal: request.signal,
+      });
+      if (verification.error || verification.status !== 0 || verification.processCleanup === "unconfirmed") {
+        return {
+          error: "OpenCode did not verify the provider credential in its isolated task home.",
+          ...(verification.processCleanup ? { processCleanup: verification.processCleanup } : {}),
+        };
+      }
+      let stored: unknown;
+      try {
+        stored = JSON.parse(verification.stdout);
+      } catch {
+        return { error: "OpenCode returned an invalid credential verification result.", processCleanup: "observed" };
+      }
+      if (
+        !Array.isArray(stored)
+        || stored.length !== 1
+        || !stored[0]
+        || typeof stored[0] !== "object"
+        || !("integrationID" in stored[0])
+        || stored[0].integrationID !== expectedProvider
+      ) {
+        return {
+          error: "OpenCode did not store exactly the explicitly granted provider credential.",
+          processCleanup: verification.processCleanup ?? "observed",
+        };
+      }
+      return undefined;
+    } finally {
+      await rm(authFile, { force: true });
+    }
   }
 }
 

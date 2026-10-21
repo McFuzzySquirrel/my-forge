@@ -401,12 +401,15 @@ support matrix, and release evidence.
   artifact metadata, and exhausted resource limits. Scan dependencies and changed
   code; require resolution of relevant findings before cutover.
   *Reviewed 2026-10-21 ([ADR-075](docs/adr/075-security-boundary-review.md),
-  [ADR-076](docs/adr/076-task-process-privilege-isolation.md)): dependency
-  audit clean; validation secret exposure fixed; task processes now run under
-  per-attempt unprivileged UIDs; live F11 verifies the grants file is unreadable
-  and source `.git` is unwritable. The remaining cross-repository Git-metadata
-  read is accepted only within the operator-approved, mutually trusted local
-  repository/harness domain recorded in ADR-075.*
+  [ADR-076](docs/adr/076-task-process-privilege-isolation.md),
+  [ADR-078](docs/adr/078-no-cross-repository-git-metadata-access.md)):
+  dependency audit clean; validation secret exposure fixed; task processes run
+  under per-attempt unprivileged UIDs with supplementary groups and all
+  capabilities dropped and no-new-privileges set; the service proves that same
+  identity cannot read any registered source `.git` metadata before listening.
+  Live F11 verifies zero task capabilities, sibling `.git/HEAD` denial,
+  grant-file denial, source `.git` write denial, and successful service-side
+  integration.*
 - [x] **P6-05 — Qualify the Linux platform and available harnesses.** Validate
   Linux rootless behavior and each available, claimed harness. Preserve the
   existing macOS and Windows implementations; do not remove desktop targets
@@ -429,13 +432,12 @@ support matrix, and release evidence.
   duplicate provider calls are documented. Unqualified profiles are not
   advertised. Under the approved P6-05 rebaseline, native desktop and Claude
   qualification are post-plan follow-ups, not P6-GATE prerequisites while
-  those profiles remain unadvertised. The operator accepted a shared trust
-  domain for registered repositories and harnesses; the remaining read-only
-  cross-repository Git-metadata access is a documented restriction, not a
-  claim of isolation.
-  *Accepted 2026-10-21 under ADR-075's trust-domain decision. Linux rootless,
-  stub/Copilot/OpenCode are the qualified profile; never register mutually
-  untrusted repositories or harnesses in the same runtime.*
+  those profiles remain unadvertised. Registered repositories are isolated
+  from task-UID Git-metadata reads as required by ADR-078.
+  *Accepted 2026-10-21 after reopening the earlier trust-domain acceptance.
+  Linux rootless, stub/Copilot/OpenCode are the qualified profile; F11 proves
+  sibling `.git/HEAD` is unreadable by a task UID and service integration still
+  succeeds. Native desktop and Claude remain unqualified and unadvertised.*
 
 ## P7 — Cut over and retire the legacy scheduler
 
@@ -500,8 +502,9 @@ authenticated operations without changing task semantics.
 These follow-ups are scheduled after completion of the currently planned phases
 (P6–P8). Keep the existing macOS and Windows implementations in the product,
 but do not describe those profiles as qualified until their native-host checks
-pass. They do not change the accepted trust-domain boundary; repositories or
-harnesses outside that boundary require new isolation work before registration.
+pass. The same no-cross-repository Git-metadata boundary must pass on each
+native host; the runtime fails closed if the Podman-machine mount cannot enforce
+it. Claude qualification remains deferred and unadvertised.
 
 - [ ] **P6-FU-01 — Qualify the native macOS Podman machine.** On a real Mac,
   verify Podman-machine networking, credentials, mounts, path translation,
@@ -618,8 +621,9 @@ macOS and Windows implementations remain included but unqualified; native
 desktop and Claude qualification are tracked in the post-Phase-6 follow-up.
 P6-06 budget evidence is recorded
 ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)).
-P6-GATE was accepted on 2026-10-21 under the explicit shared-trust-domain
-restriction recorded in ADR-075.
+P6-GATE was closed on 2026-10-21 after technical Git-metadata isolation passed
+live F11 qualification (ADR-078); the earlier shared-trust-domain acceptance
+is superseded.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -887,10 +891,17 @@ hooks directory. Qualification F11 automates these checks. The privilege-drop
 helper is exercised through the real harness process runner; `setpriv` is
 installed in worker image `localhost/myforge-worker:3`.
 
-**Accepted residual risk:** the task can read other registered repositories'
-Git metadata and objects. Per the operator's 2026-10-21 acceptance in ADR-075,
-all repositories and harnesses in one local runtime are a mutually trusted
-domain; use separate runtime installations for distinct trust domains.
+**Previous residual risk (superseded):** tasks could read other registered
+repositories' Git metadata and objects. The operator initially accepted this
+shared-trust-domain limitation in ADR-075, then reopened P6-GATE and required
+technical isolation.
+
+**Resolution — 2026-10-21:** the service now sets every mounted source `.git`
+root to mode `0700` and proves task-UID denial before listening. F11 registers a
+sibling repository, verifies its `.git/HEAD` is unreadable to the task UID, and
+confirms the service still integrates the task result exactly once. Startup
+fails closed if a registered mount or permission probe cannot be verified.
+See [ADR-078](docs/adr/078-no-cross-repository-git-metadata-access.md).
 
 **Live regression qualification after the change:** failures F01–F10 and F11
 passed; backup B01–B04 passed; upgrade U01–U02 passed. The test-only
@@ -932,13 +943,14 @@ The repository remains a standard Git repository hosted on GitHub regardless
 of harness; switching harness requires no additional repository credential.
 Provider authentication is separate from GitHub repository access. macOS and
 Windows Podman-machine networking, credentials, mounts, path translation,
-watchers, and performance remain unqualified. The task-UID fix is implemented
-(ADR-076); read-only cross-repository access is accepted only within the
-documented shared trust domain (ADR-075).
+watchers, and performance remain unqualified. Task-UID isolation and the
+registered Git-metadata boundary are implemented (ADRs 076 and 078); native
+mount semantics must pass the service's fail-closed probe before use.
 
-### P6-GATE acceptance — 2026-10-21
+### P6-GATE acceptance — 2026-10-21 (superseded)
 
-**Status: accepted by the operator under the shared-trust-domain scope.**
+**Historical status: accepted by the operator under the shared-trust-domain scope;
+reopened and superseded by the technical isolation decision below.**
 P6-01–P6-06 evidence is recorded above. The Linux rootless profile and
 stub/Copilot/OpenCode harness paths are qualified; unqualified macOS, Windows,
 and Claude profiles are not advertised. Backup/restore and upgrade rehearsals
@@ -947,13 +959,26 @@ are recorded in P6-06. Dapr activity execution is at least once, and provider
 calls may repeat if a result is not durably recorded; exactly-once external
 effects are not promised without provider idempotency (ADR-066).
 
-The accepted residual security limit is that a task can read Git metadata and
-objects for other repositories registered to the same runtime. Only
-repositories, harnesses, and task/validation work that the operator explicitly
-trusts as one domain may be registered together. Use separate local runtime
-installations for different trust domains. This is not multi-tenant isolation;
-registering untrusted repositories or claiming their isolation reopens P6-04
-and P6-GATE.
+At that time, tasks could read Git metadata and objects for other repositories
+registered to the same runtime. This residual is no longer accepted.
+
+### P6-GATE technical isolation closure — 2026-10-21
+
+**Status: closed after live technical-isolation qualification.** The service
+sets every registered source `.git` root to owner-only mode and proves a task
+UID with zero capabilities cannot read its `HEAD` before listening. Harness
+and validation processes use the same capability-dropping policy and set
+no-new-privileges. Failure to verify any registered mount or denial stops
+startup. F11 passed on the isolated Linux rootless Podman runtime: the task
+could not read sibling Git metadata, could not write source Git metadata or
+read harness grants, and its result was integrated exactly once. The operator
+`.git` directory remains mode `0700` after unregistration; the repository owner
+retains normal Git access.
+
+The qualified release matrix remains Linux rootless with stub, Copilot, and
+OpenCode. Unqualified macOS, Windows, and Claude profiles remain unadvertised;
+the desktop runtime must pass the same fail-closed access probe before it can
+be treated as supported.
 
 ### P5-GATE evidence — 2026-10-22
 

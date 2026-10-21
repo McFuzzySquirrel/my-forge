@@ -4,6 +4,24 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.139
+
+### Enforce Git-metadata isolation between registered repositories
+
+- The service now tightens every mounted source `.git` directory to owner-only
+  mode and proves a real task UID with no capabilities cannot read its `HEAD`
+  before listening. Task processes drop capabilities and set no-new-privileges.
+  Startup fails closed if any mount or access check cannot be verified; service
+  integration retains access.
+- F11 now registers a sibling repository and proves task UIDs cannot read its
+  Git metadata, while the service still integrates the task result exactly
+  once. This supersedes the P6 shared-trust-domain acceptance.
+- The host `.git` directory remains mode `0700` after unregistration. Linux
+  rootless qualification passed; native macOS/Windows Podman-machine semantics
+  remain unqualified and must pass the startup probe before use.
+
+---
+
 ## October 2026 - v3.138
 
 ### Accept the local shared-trust-domain boundary for P6-GATE

@@ -45,6 +45,19 @@ export function releaseTaskProcessIdentity(identity: ProcessIdentityV1): void {
   if (!quarantinedTaskUids.delete(identity.uid)) usedTaskUids.delete(identity.uid);
 }
 
+export function taskProcessPrivilegeArgs(identity: ProcessIdentityV1): string[] {
+  return [
+    "--reuid", String(identity.uid),
+    "--regid", String(identity.gid),
+    "--clear-groups",
+    "--no-new-privs",
+    "--bounding-set=-all",
+    "--inh-caps=-all",
+    "--ambient-caps=-all",
+    "--",
+  ];
+}
+
 export function quarantineTaskProcessIdentity(identity: ProcessIdentityV1): void {
   if (!activeTaskUids.has(identity.uid)) {
     throw new Error(`Cannot quarantine inactive task process identity ${identity.uid}.`);

@@ -6,6 +6,7 @@ import readCmdShim from "read-cmd-shim";
 import which from "which";
 import type { ProcessCleanup } from "../../contract/v1/execution-ownership.ts";
 import type { ProcessIdentityV1, TaskAttemptRequest, TaskFailureKind } from "../types.ts";
+import { taskProcessPrivilegeArgs } from "../isolation.ts";
 import {
   ActivityLineBuffer,
   formatActivityLine,
@@ -187,9 +188,7 @@ export function runCommand(
     const watchdogDeadlineAt = opts.reapProcessGroupOnExit && process.platform !== "win32"
       ? Date.now() + opts.timeoutMs + CLEANUP_TIMEOUT_MS
       : undefined;
-    const identityArgs = opts.processIdentity
-      ? ["--reuid", String(opts.processIdentity.uid), "--regid", String(opts.processIdentity.gid), "--clear-groups", "--"]
-      : [];
+    const identityArgs = opts.processIdentity ? taskProcessPrivilegeArgs(opts.processIdentity) : [];
     const targetBin = opts.shell ? "/bin/sh" : bin;
     const targetArgs = opts.shell
       ? ["-c", [bin, ...args.map(shellQuote)].join(" ")]

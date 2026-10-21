@@ -69,6 +69,11 @@ async function prepare(isolation: Isolation, suite: string, scenarios: readonly 
   for (const scenario of scenarios) {
     const repoRoot = createFixtureRepo(isolation.root, `${suite}-${scenario.id.toLowerCase()}-${nonce}`, scenario.tasks(nonce));
     await requireLauncher(["runtime", "repo", "add", repoRoot]);
+    if (scenario.id === "F11") {
+      const peerRepositoryId = `f11-peer-${nonce}`;
+      const peerRoot = createFixtureRepo(isolation.root, `${suite}-${scenario.id.toLowerCase()}-peer-${nonce}`, []);
+      await requireLauncher(["runtime", "repo", "add", peerRoot, "--id", peerRepositoryId]);
+    }
     contexts.set(scenario.id, { isolation, client: connect, repoRoot, nonce });
   }
   await launcher(["runtime", "stop"]);

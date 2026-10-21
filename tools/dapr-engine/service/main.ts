@@ -34,6 +34,7 @@ import {
 } from "../storage/index.ts";
 import { createServiceApiHandler, MIN_API_TOKEN_LENGTH } from "./api.ts";
 import { migrateApplicationDatabase } from "./migrations.ts";
+import { secureRegisteredGitMetadata } from "./repository-git-boundary.ts";
 import { reconcileFailedRuns, type OrchestrationFailureV1 } from "./run-reconciler.ts";
 import { sdkWorkflowWorkerProbe, watchWorkflowWorker } from "./worker-watchdog.ts";
 import {
@@ -309,6 +310,7 @@ async function start(): Promise<void> {
   await mkdir(join(DATA_DIR, "scratch"), { recursive: true, mode: 0o700 });
   await rm(TASK_SCRATCH_DIR, { recursive: true, force: true });
   await mkdir(TASK_SCRATCH_DIR, { recursive: true, mode: 0o711 });
+  await secureRegisteredGitMetadata(REPOSITORIES_DIR);
   const host = createWorkflowHost();
   const runs = createRunService(host);
   await listen(runs);

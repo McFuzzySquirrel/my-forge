@@ -18,9 +18,11 @@ function failFirstAttempt(): string {
   return 'test "$MYFORGE_LOGICAL_ATTEMPT" -gt 1';
 }
 
-function taskIsolationProbe(repositoryId: string, nonce: string): string {
+function taskIsolationProbe(repositoryId: string, peerRepositoryId: string, nonce: string): string {
   const marker = `/repositories/${repositoryId}/.git/hooks/myforge-isolation-${nonce}`;
-  return `test "$(id -u)" -gt 0 && test "$HOME" != /root && test ! -r /run/myforge/harness-grants/grants.json && ! touch '${marker}' 2>/dev/null`;
+  const peerHead = `/repositories/${peerRepositoryId}/.git/HEAD`;
+  const capabilityCheck = `awk '/^Cap(Inh|Prm|Eff|Bnd|Amb):/ { if ($2 ~ /[1-9a-fA-F]/) exit 1; found++ } /^NoNewPrivs:/ { if ($2 != 1) exit 1; noNewPrivs = 1 } END { if (found != 5 || !noNewPrivs) exit 1 }' /proc/self/status`;
+  return `${capabilityCheck} && test "$(id -u)" -gt 0 && test "$HOME" != /root && test ! -r /run/myforge/harness-grants/grants.json && test ! -r '${peerHead}' && ! touch '${marker}' 2>/dev/null`;
 }
 
 export interface Scenario {
@@ -324,10 +326,10 @@ export const FAILURE_SCENARIOS: readonly Scenario[] = [
   },
   {
     id: "F11",
-    title: "Task UID cannot read harness grants or write the registered source Git metadata",
+    title: "Task UID cannot read harness grants or sibling Git metadata, or write source Git metadata",
     tasks: (nonce) => [{
       id: "T1",
-      validation: [taskIsolationProbe(`failures-f11-${nonce}`, nonce)],
+      validation: [taskIsolationProbe(`failures-f11-${nonce}`, `f11-peer-${nonce}`, nonce)],
     }],
     async run(context, details) {
       const client = await context.client();

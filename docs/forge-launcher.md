@@ -235,13 +235,15 @@ an absolute `MYFORGE_RUNTIME_DIR` (runtime data directory), and a different
 `MYFORGE_API_PORT` for every `runtime` and `service` command. Containers and
 volumes are named after the project, so the default installation is not affected.
 
-**Shared repository trust boundary.** Every task can read Git metadata and
-objects from all repositories registered to the same runtime, although it
-cannot write sibling `.git` directories or read the shared harness-grants
-file. Register only repositories, harnesses, and task/validation work that you
-trust to share this access. Use separate runtime installations for different
-trust domains; this local profile is not multi-tenant isolation. See
-[ADR-075](adr/075-security-boundary-review.md).
+**Repository Git-metadata isolation.** Before listening, the service changes
+each mounted source `.git` directory to owner-only mode and verifies that a
+task UID cannot read its `HEAD`. Tasks cannot read Git metadata or objects from
+any registered repository; service-side Git integration retains access. Startup
+fails if the mount, permission change, service access, or task-UID denial cannot
+be verified. This tightens the host `.git` directory to mode `0700`, and that
+mode remains after unregistration; the repository owner retains normal Git
+access. Native macOS and Windows Podman-machine behavior remains unqualified.
+See [ADR-078](adr/078-no-cross-repository-git-metadata-access.md).
 
 1. Register the repository, then restart the runtime so it is mounted:
    `runtime repo add <path>`, `runtime stop`, `runtime start`. Only the

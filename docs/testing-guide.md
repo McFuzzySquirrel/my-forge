@@ -357,9 +357,13 @@ npm run typecheck
 npm run -s qualify -- failures --report /tmp/myforge-qual/reports/failures.json
 npm run -s qualify -- failures --only F07,F08   # selected scenarios
 npm run -s qualify -- failures --teardown       # reset the isolated runtime afterwards
+npm run -s qualify -- backup                    # P6-02 backup/restore suite
 ```
 
-The full suite takes about 15 minutes. To inspect the isolated stack, run the
+The full failure suite takes about 15 minutes. The backup suite (about 7
+minutes) also creates a disposable second installation (`myforge-qual2`, API
+port 18484, data under `/tmp/myforge-qual2`); it is reset at the start of each
+run, and `--teardown` removes it. To inspect the isolated stack, run the
 launcher with `MYFORGE_RUNTIME_PROJECT=myforge-qual`,
 `MYFORGE_RUNTIME_DIR=/tmp/myforge-qual/runtime`, and `MYFORGE_API_PORT=18483`.
 Never use `podman system reset` or change `XDG_DATA_HOME` to isolate a run; both

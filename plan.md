@@ -14,7 +14,8 @@ decisions recorded in
 [ADR-068](docs/adr/068-local-deployment-and-access-profiles.md). P5-01–06 are
 done, and P5-GATE was accepted by the operator on 2026-10-21, authorizing P6.
 P6 is tracked in [issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17);
-P6-01 is complete ([evidence](#p6-01-failure-boundary-evidence--2026-10-21)).
+P6-01 and P6-02 are complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
+[P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21)).
 The runtime is not yet a production replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
@@ -67,7 +68,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE accepted 2026-10-19 | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-GATE evidence](#p4-gate-acceptance-evidence--2026-10-19); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | P5-01–06 done; P5-GATE accepted 2026-10-21 ([evidence](#p5-gate-evidence--2026-10-22)) | @McFuzzySquirrel |
-| P6 — Recovery and release qualification | P5 gate | QA + security + platform | In progress; P6-01 done | @McFuzzySquirrel; [P6 issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17); [P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21) |
+| P6 — Recovery and release qualification | P5 gate | QA + security + platform | In progress; P6-01–02 done | @McFuzzySquirrel; [P6 issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17); [P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21); [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21) |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
 
@@ -387,7 +388,7 @@ support matrix, and release evidence.
   during execution, retry delay, approval wait, checkpoint publication,
   integration, and receipt persistence. Duplicate deliveries/controls; expire
   ownership, introduce store outages, and deliver late task results.
-- [ ] **P6-02 — Test backup and restore.** Quiesce or otherwise coordinate snapshots
+- [x] **P6-02 — Test backup and restore.** Quiesce or otherwise coordinate snapshots
   of workflow database, application receipts, Scheduler, artifacts, and Git refs.
   Restore into a fresh installation and check integrity and pending timers.
   Missing/out-of-sync stores must not silently accept incomplete tasks.
@@ -559,9 +560,10 @@ sidecar token (ADR-070). P5-06 added runtime remediation hints, JSON
 status/audit export, and troubleshooting docs. P5-04 routes Console controls
 and human-review approval to service runs. **P5-GATE was accepted by the
 operator on 2026-10-21, authorizing P6**
-([P5-GATE evidence](#p5-gate-evidence--2026-10-22)). P6-01 is complete
-([evidence](#p6-01-failure-boundary-evidence--2026-10-21)); P6-02 backup and
-restore qualification is the next work package.
+([P5-GATE evidence](#p5-gate-evidence--2026-10-22)). P6-01 and P6-02 are complete
+([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
+[P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21)); P6-03
+upgrade qualification is the next work package.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -701,6 +703,48 @@ including the runtime project/directory overrides).
 - The run workflow does not terminate child task workflows on cancellation;
   enforcement is at the activity boundary to keep existing histories
   replayable.
+
+### P6-02 backup and restore evidence — 2026-10-21
+
+**Harness.** `npm run -s qualify -- backup` builds pending durable state on the
+isolated source installation (`myforge-qual`). It then restores that state into
+a fresh second installation (`myforge-qual2`, API port 18484, data under
+`/tmp/myforge-qual2`) and checks damaged archives and Git/store drift there.
+The environment is the same as for P6-01. The operator's `myforge-runtime`
+installation was not touched.
+
+| ID | Scenario | Result |
+|---|---|---|
+| B01 | Back up the source with a pending 240 s retry timer and an approval wait. Stop the source, register its 68 repositories in a fresh installation, and restore. | Pass. Backup took 21 s; restore to ready took 20 s. Restore with the fresh installation's own credentials was refused, and the installation kept running. After copying `runtime.env`, the approval wait survived and completed. The timer fired at 240.0 s. Each task was committed exactly once. |
+| B02 | Restore a tampered volume archive, a backup missing a volume, and a backup missing its manifest | Pass. All three were rejected before any volume was touched; the restored runs were intact. |
+| B03 | Git behind the stores: after T1 is accepted, back up, then move `forge/main` back before T1 | Pass. Restore was refused as drift. With `--allow-git-drift`, T2 failed with `integration-history-missing`, the run ended `failed`, and the branch was unchanged. |
+| B04 | Git ahead of the stores: back up while T1 runs, then let T1 integrate | Pass. Restore was refused with a reset hint for the recorded tip. After that reset, the restore re-ran T1, and T1 was committed exactly once. |
+
+**Changes** ([ADR-073](docs/adr/073-coordinated-runtime-backup-and-git-consistency.md)):
+
+- Backups record each registered repository's `refs/heads/forge/*` tips and a
+  database credential fingerprint while the stack is quiesced.
+- Restore verifies the archive, the credentials, and the tips before replacing
+  any volume. It refuses drift unless `--allow-git-drift` is passed.
+- The integration authority refuses to build on a branch that lost the
+  current run's accepted commits. It returns `integration-history-missing`,
+  which the execution host makes non-retryable.
+
+Before this change, B03 would have completed the run without T1's accepted
+work.
+
+**Automated checks.** Engine typecheck and `npm test` pass (179 tests,
+including the new PostgreSQL history-guard test). Launcher typecheck and tests
+pass (349 tests, including restore verification of integrity, credentials,
+registration, and drift).
+
+**Residual risks.**
+
+- With `--allow-git-drift` and Git ahead of the stores, a restored run can
+  integrate a task a second time.
+- Target repositories and working trees are not backed up. Operators keep
+  forge branches consistent with runtime backups.
+- Completed runs are not re-verified against Git after a restore.
 
 ### P5-GATE evidence — 2026-10-22
 

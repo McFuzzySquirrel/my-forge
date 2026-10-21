@@ -532,6 +532,16 @@ reconciling to `not-integrated`. Reconcile another attempt only after its
 execution is lost (heartbeat expired and fenced) or its receipt is `ambiguous`.
 A pending intent alone may belong to a live owner between its two transactions.
 
+**Integration never builds on lost history.** Before it moves the branch, and
+while it holds the fence lock, `integrate` checks that every commit the same run
+has already integrated on that `(repository, targetRef)` is still reachable from
+the branch. If any is missing, for example because a runtime restore was forced
+past Git drift or the branch was reset, it abandons the intent with
+`integration-history-missing` and returns that code. The execution host fails the
+attempt as non-retryable, so the run fails rather than accepting an incomplete
+result. Only the current run's integrations are checked. Deliberate branch resets
+between runs do not block later runs, and completed runs are not re-verified.
+
 Because an abandoned intent
 is checked inside the same fenced transaction as the mutation, a worker that
 outlives reconciliation cannot integrate that logical attempt later; a retry

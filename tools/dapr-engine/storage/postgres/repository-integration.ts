@@ -65,7 +65,12 @@ export type RepositoryIntegrationResult =
         | "expected-head-mismatch"
         | "checkpoint-unavailable"
         | "commit-checkpoint-mismatch"
-        | "integration-abandoned";
+        | "integration-abandoned"
+        /**
+         * A commit this run already integrated is no longer on the target
+         * branch, for example after a store restore that Git did not follow.
+         */
+        | "integration-history-missing";
     }
   | {
       readonly ok: false;
@@ -78,7 +83,11 @@ export type RepositoryIntegrationResult =
       readonly blockingAttempt: RepositoryIntegrationScope;
     };
 
-export type IntegrationAbandonReason = "no-intent" | "commit-not-on-target" | "expected-head-mismatch";
+export type IntegrationAbandonReason =
+  | "no-intent"
+  | "commit-not-on-target"
+  | "expected-head-mismatch"
+  | "integration-history-missing";
 
 export type RepositoryIntegrationReconciliation =
   | {
@@ -440,6 +449,32 @@ async function markIntentIntegrated(connection: SqlQueryable, scope: RepositoryI
   );
 }
 
+/**
+ * The run's latest earlier integration on the branch, if the branch no longer
+ * contains it. Each recorded commit was built on the branch head at the time,
+ * so the latest one covers every earlier integration of the run; a reset below
+ * an earlier one would have been refused at the later integration.
+ */
+async function missingRunIntegrations(
+  connection: SqlQueryable,
+  git: GitIntegrationInspector,
+  repositoryRoot: string,
+  scope: RepositoryIntegrationScope,
+): Promise<readonly string[]> {
+  const result = await connection.query<IntegrationRow>(
+    `SELECT ${INTEGRATION_COLUMNS}
+     FROM forge_repository_integrations
+     WHERE repository_id = $1 AND target_ref = $2 AND run_id = $3
+       AND NOT (task_id = $4 AND logical_attempt = $5)
+     ORDER BY integrated_at DESC
+     LIMIT 1`,
+    [scope.repositoryId, scope.targetRef, scope.runId, scope.taskId, scope.logicalAttempt],
+  );
+  const latest = result.rows[0];
+  if (!latest) return [];
+  return await git.contains(repositoryRoot, scope.targetRef, latest.commit_sha) ? [] : [latest.commit_sha];
+}
+
 async function abandonIntent(
   connection: SqlQueryable,
   scope: RepositoryIntegrationScope,
@@ -684,6 +719,13 @@ export class PostgresRepositoryIntegrationAuthority {
         if (await this.git.contains(repositoryRoot, request.targetRef, request.commitSha)) {
           await recordIntegration(connection, request, request, "reconciliation");
           return { ok: true, commitSha: request.commitSha, effectDigest, reused: true, recordedBy: "reconciliation" };
+        }
+
+        // Building on a branch that lost this run's earlier work would accept an
+        // incomplete result, so refuse until an operator reconciles Git.
+        if ((await missingRunIntegrations(connection, this.git, repositoryRoot, request)).length > 0) {
+          await abandonIntent(connection, request, "integration-history-missing");
+          return { ok: false, code: "integration-history-missing" };
         }
 
         const updated = await this.git.update(

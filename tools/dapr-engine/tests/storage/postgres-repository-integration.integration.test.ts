@@ -525,3 +525,24 @@ test("an unresolved integration blocks the branch until reconciliation resolves 
     ]);
   }, gitRepository);
 });
+
+test("integration refuses to build on a branch that lost the run's earlier integrations", {
+  skip: !connectionString,
+}, async () => {
+  await withAuthority(async (harness) => {
+    const { authority, checkpoints, database, fixture } = harness;
+    const a = await leasedRequest(harness);
+    const integrated = await authority.integrate(a);
+    assert.ok(integrated.ok);
+
+    // The stores remember A, but the branch is moved back (for example, a runtime restore Git did not follow).
+    git(fixture.root, ["update-ref", "refs/heads/main", fixture.base]);
+    const b = { ...a, taskId: "task_b", operationId: "operation_b", expectedHead: fixture.base, commitSha: fixture.sibling,
+      checkpointDigest: checkpoints.for("run_a", fixture.sibling) };
+    assert.deepEqual(await authority.integrate(b), { ok: false, code: "integration-history-missing" });
+    assert.equal(git(fixture.root, ["rev-parse", "refs/heads/main"]), fixture.base, "the branch did not advance");
+    assert.deepEqual(await authority.reconcile(b), { outcome: "not-integrated", reason: "integration-history-missing" });
+    assert.deepEqual(await authority.integrate(b), { ok: false, code: "integration-abandoned" });
+    assert.deepEqual(await integrationRows(database), [{ commit_sha: fixture.first, recorded_by: "authority" }]);
+  });
+});

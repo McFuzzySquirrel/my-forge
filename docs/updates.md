@@ -4,6 +4,31 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.129
+
+### Backups stay consistent with Git; restore into a fresh installation
+
+P6-02 qualified `runtime backup` and `runtime restore`, including restoring
+into a new installation with a pending retry timer and an approval wait.
+
+- **Git consistency.** Backups now record each registered repository's
+  `forge/*` branch tips. Restore refuses when a branch moved since the backup,
+  and shows the `git update-ref` command that resets it. Pass
+  `--allow-git-drift` to restore anyway.
+- **No silent incomplete runs.** If a run's accepted commit disappears from
+  its forge branch, the next integration fails the run with
+  `integration-history-missing` instead of building on the incomplete branch.
+- **Credential check.** Restore refuses a backup made with different database
+  credentials and tells you to copy `runtime.env` from the source
+  installation. Restoring into a fresh installation is now documented in
+  `docs/forge-launcher.md`.
+- Missing backup files now produce clear errors instead of `ENOENT`.
+- `npm run -s qualify -- backup` in `tools/runtime-qualification` runs the
+  live backup suite. See
+  [ADR-073](adr/073-coordinated-runtime-backup-and-git-consistency.md).
+
+---
+
 ## October 2026 - v3.128
 
 ### Runtime recovers from worker, sidecar, and store loss; cancellation is final

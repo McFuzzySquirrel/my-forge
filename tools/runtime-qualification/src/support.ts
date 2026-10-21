@@ -27,9 +27,14 @@ export function isolate(root: string, project = "myforge-qual", apiPort = 18483)
   if (!path.isAbsolute(root)) throw new Error("The qualification root must be an absolute path.");
   const isolation = { root, runtimeDir: path.join(root, "runtime"), project, apiPort };
   mkdirSync(isolation.runtimeDir, { recursive: true });
+  return activate(isolation);
+}
+
+/** Points later launcher and API calls at this installation. */
+export function activate(isolation: Isolation): Isolation {
   process.env.MYFORGE_RUNTIME_DIR = isolation.runtimeDir;
-  process.env.MYFORGE_RUNTIME_PROJECT = project;
-  process.env.MYFORGE_API_PORT = String(apiPort);
+  process.env.MYFORGE_RUNTIME_PROJECT = isolation.project;
+  process.env.MYFORGE_API_PORT = String(isolation.apiPort);
   return isolation;
 }
 

@@ -691,6 +691,14 @@ export class ExecutionHost {
       const ambiguous = await this.transition(key, receipt, "ambiguous");
       return this.recover(run, key, ambiguous, await this.readJournal(key.operationId));
     }
+    if (!result.ok && result.code === "integration-history-missing") {
+      return this.finishFailed(key, receipt, {
+        status: "failed",
+        retryable: false,
+        failureCode: result.code,
+        reason: "A commit this run already integrated is missing from the target branch; reconcile Git with the runtime stores before retrying.",
+      });
+    }
     if (!result.ok) {
       return this.finishFailed(key, receipt, {
         status: "failed",

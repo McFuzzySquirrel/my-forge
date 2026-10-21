@@ -1,15 +1,20 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { createFixtureRepo } from "./fixture.ts";
+import { removeInstallation, runBackupSuite } from "./backup.ts";
 import { DETERMINISTIC_FAILURE_COVERAGE, FAILURE_SCENARIOS, runFailureSuite, type Scenario, type ScenarioContext } from "./failures.ts";
 import { connect, waitForApi } from "./service.ts";
-import { hostEnvironment, isolate, launcher, Report, requireLauncher, type Isolation } from "./support.ts";
+import { activate, hostEnvironment, isolate, launcher, Report, requireLauncher, type Isolation } from "./support.ts";
 
 const USAGE = `Usage: npm run qualify -- <suite> [--root <abs-dir>] [--only <id,id>] [--report <file>] [--teardown]
 
 Suites:
   failures   P6-01 failure boundaries (worker/sidecar/store loss, retry timer,
              approval wait, duplicate submissions and controls, cancellation)
+  backup     P6-02 backup/restore (fresh-installation restore with a pending
+             timer and approval, damaged archives, Git behind/ahead of stores);
+             also uses a second installation (myforge-qual2, port 18484,
+             data under <root>2)
 
 Runs against an isolated Compose project (myforge-qual, API port 18483, data
 under --root, default /tmp/myforge-qual); the operator's myforge-runtime
@@ -69,6 +74,7 @@ async function main(): Promise<number> {
   const options = parse(process.argv.slice(2));
   const isolation = isolate(options.root);
   const report = new Report(options.suite, { ...hostEnvironment(), project: isolation.project, apiPort: isolation.apiPort });
+  const extraInstallations: Isolation[] = [];
   try {
     switch (options.suite) {
       case "failures": {
@@ -78,6 +84,9 @@ async function main(): Promise<number> {
         report.environment.deterministicCoverage = DETERMINISTIC_FAILURE_COVERAGE;
         break;
       }
+      case "backup":
+        extraInstallations.push(await runBackupSuite(report, options.root));
+        break;
       default:
         throw new Error(`Unknown suite '${options.suite}'.\n${USAGE}`);
     }
@@ -85,7 +94,15 @@ async function main(): Promise<number> {
     const file = options.report ?? path.join(options.root, "reports", `${options.suite}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
     report.write(file);
     process.stdout.write(`\nReport: ${file}\n`);
-    if (options.teardown) await launcher(["runtime", "reset", "--confirm"]);
+    if (options.teardown) {
+      for (const extra of extraInstallations) {
+        activate(extra);
+        await launcher(["runtime", "reset", "--confirm"]);
+        removeInstallation(extra);
+      }
+      activate(isolation);
+      await launcher(["runtime", "reset", "--confirm"]);
+    }
   }
   const failed = report.entries.filter((entry) => !entry.passed).map((entry) => entry.id);
   process.stdout.write(failed.length ? `FAILED: ${failed.join(", ")}\n` : `All ${report.entries.length} scenarios passed.\n`);

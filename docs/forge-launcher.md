@@ -115,7 +115,7 @@ npx forge-launcher@beta runtime stop
 npx forge-launcher@beta runtime rotate-tokens
 npx forge-launcher@beta runtime reset --confirm
 npx forge-launcher@beta runtime backup --output <new-directory>
-npx forge-launcher@beta runtime restore --from <backup-directory> --confirm
+npx forge-launcher@beta runtime restore --from <backup-directory> --confirm [--allow-git-drift]
 npx forge-launcher@beta runtime repo add <path> [--id <id>] | list | remove <id>
 npx forge-launcher@beta service submit [--repo <path>] [--harness stub] [--branch <base>]
                               [--tasks <id,id>] [--concurrency <n>] [--max-retries <n>]
@@ -179,16 +179,39 @@ passwords. A failed startup is not a successful fresh-install acceptance run.
 `runtime backup --output <new-directory>` stops the stack long enough to export
 the PostgreSQL (application and workflow state), Dapr Scheduler, and Forge
 artifact/runtime volumes as tar files with a checksummed manifest, then restores
-the runtime to a ready, privately networked state. A backup does not include the
-installation credential file; restore it on the same installation that created
-the backup. Keep the backup directory private; it contains runtime data.
-Backups do not include target repositories or their working trees/Git refs,
-which remain under repository backup policy.
+the runtime to a ready, privately networked state. Keep the backup directory
+private; it contains runtime data. A backup does not include the installation
+credential file, target repositories, or their working trees. While the stack is
+quiesced it records each registered repository's `refs/heads/forge/*` tips
+(the only refs the service integrates into) and a fingerprint of the database
+credentials, so restore can check that Git and the credentials still match the
+stores. Back up repositories under your own policy, but keep their forge
+branches consistent with the runtime backup.
 
 `runtime restore --from <backup-directory> --confirm` verifies the manifest and
-volume checksums before replacing the runtime volumes, then starts the runtime
-privately and waits for readiness. Restore is destructive to the currently
-installed runtime data. Re-enable optional PostgreSQL host-tools exposure with
+volume checksums, the database credential fingerprint, and the recorded forge
+branch tips before replacing any volume. Damaged, incomplete, or manifest-less
+backups, mismatched credentials, and Git drift are refused and leave the
+installation untouched. On success it replaces the runtime volumes, starts the
+runtime privately, and waits for readiness; pending retry timers and approval
+waits resume. Restore is destructive to the currently installed runtime data.
+
+To restore into a fresh installation (a new machine or data directory): copy
+`runtime.env` from the source installation into the new runtime directory with
+mode `0600` (restored PostgreSQL data keeps the passwords it was initialized
+with), register every repository the source had with
+`runtime repo add <path> --id <same-id>` at the same paths, and make sure the
+source installation is stopped so the two never execute against the same
+repositories. Then run the restore.
+
+Git drift means a recorded forge branch moved or disappeared after the backup,
+or a recorded repository is not registered. The refusal lists each difference
+with the `git update-ref` command that resets it to the recorded commit. Resetting
+discards Git work integrated after the backup; the restored runs then repeat it
+exactly once. `--allow-git-drift` restores anyway: a run whose accepted commits
+are missing from its forge branch then fails its next integration with
+`integration-history-missing` rather than building on the incomplete branch,
+and work integrated after the backup may be integrated a second time. Re-enable optional PostgreSQL host-tools exposure with
 an explicit `runtime start --host-tools`. The migration runner applies only
 contiguous, append-only SQL
 migrations and fails closed on checksum drift, version gaps, or a database

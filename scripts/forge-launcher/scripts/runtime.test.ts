@@ -4,7 +4,24 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { assertHostPortAvailable, DEFAULT_RUNTIME_PROJECT, ensureRuntimeCredentials, getRuntimeDataDir, getRuntimeProject, readRuntimeApiAccess, rotateRuntimeTokens, runtimeCli, unreadyServices } from "./runtime.ts";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import {
+  assertHostPortAvailable,
+  databaseCredentialFingerprint,
+  DEFAULT_RUNTIME_PROJECT,
+  ensureRuntimeCredentials,
+  getRuntimeDataDir,
+  getRuntimeProject,
+  readRuntimeApiAccess,
+  readRuntimeEnvironment,
+  rotateRuntimeTokens,
+  runtimeCli,
+  unreadyServices,
+  verifyRestoreSource,
+} from "./runtime.ts";
+import { registerRepository } from "./runtime-repositories.ts";
 
 test("runtime credentials are generated once with restrictive permissions", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "forge-runtime-"));
@@ -211,4 +228,77 @@ test("runtime project defaults to myforge-runtime and accepts an isolated overri
   for (const invalid of ["MyForge", "-x", "a b", "a/b", "x".repeat(64)]) {
     assert.throws(() => getRuntimeProject({ MYFORGE_RUNTIME_PROJECT: invalid }), /MYFORGE_RUNTIME_PROJECT/);
   }
+});
+
+test("restore verifies archive integrity, database credentials, and Git drift before touching volumes", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "forge-restore-"));
+  const previousDir = process.env.MYFORGE_RUNTIME_DIR;
+  t.after(async () => {
+    if (previousDir === undefined) delete process.env.MYFORGE_RUNTIME_DIR;
+    else process.env.MYFORGE_RUNTIME_DIR = previousDir;
+    await rm(root, { recursive: true, force: true });
+  });
+  const runtimeDir = path.join(root, "runtime");
+  process.env.MYFORGE_RUNTIME_DIR = runtimeDir;
+  const environment = await readRuntimeEnvironment(path.dirname(await ensureRuntimeCredentials(runtimeDir)));
+
+  const repository = path.join(root, "repo");
+  await mkdir(repository);
+  const git = (...args: string[]) => execFileSync("git", ["-C", repository, ...args], { encoding: "utf8" }).trim();
+  git("init", "--quiet", "--initial-branch=main");
+  git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "base");
+  git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "--quiet", "--allow-empty", "-m", "accepted");
+  git("branch", "forge/main");
+  const accepted = git("rev-parse", "forge/main");
+  const base = git("rev-parse", "forge/main~1");
+
+  const writeBackup = async (name: string, manifest: Record<string, unknown>) => {
+    const directory = path.join(root, name);
+    await mkdir(directory);
+    const volumes = [];
+    for (const volume of ["postgres_data", "scheduler_data", "runtime_data"]) {
+      const contents = `${volume} archive`;
+      await writeFile(path.join(directory, `${volume}.tar`), contents);
+      volumes.push({ name: volume, file: `${volume}.tar`, sha256: createHash("sha256").update(contents).digest("hex") });
+    }
+    await writeFile(path.join(directory, "manifest.json"), JSON.stringify({ version: 1, createdAt: new Date().toISOString(), volumes, ...manifest }));
+    return directory;
+  };
+  const refs = { id: "repo", path: repository, refs: { "refs/heads/forge/main": accepted } };
+  const consistent = await writeBackup("consistent", {
+    databaseCredentialFingerprint: databaseCredentialFingerprint(environment.values),
+    repositories: [refs],
+  });
+
+  // The backup's repository is not registered in this (fresh) installation.
+  await assert.rejects(verifyRestoreSource(consistent, environment, false), /not registered in this installation/);
+  await registerRepository(runtimeDir, repository, "repo");
+  assert.equal((await verifyRestoreSource(consistent, environment, false)).repositories?.length, 1);
+
+  // Restored PostgreSQL data keeps the credentials it was initialized with.
+  const otherCredentials = await writeBackup("other-credentials", {
+    databaseCredentialFingerprint: "0".repeat(64),
+    repositories: [refs],
+  });
+  await assert.rejects(verifyRestoreSource(otherCredentials, environment, false), /different database credentials.*Copy runtime\.env/s);
+
+  // Git moved since the backup: refused unless the operator accepts the drift.
+  git("update-ref", "refs/heads/forge/main", base);
+  await assert.rejects(verifyRestoreSource(consistent, environment, false),
+    new RegExp(`Git no longer matches the backup[\\s\\S]*update-ref refs/heads/forge/main ${accepted}`));
+  assert.ok(await verifyRestoreSource(consistent, environment, true));
+  git("update-ref", "refs/heads/forge/main", accepted);
+
+  // Older backups without recorded refs or fingerprint are still accepted.
+  assert.ok(await verifyRestoreSource(await writeBackup("legacy", {}), environment, false));
+
+  // A tampered volume archive or manifest is rejected.
+  await writeFile(path.join(consistent, "runtime_data.tar"), "tampered");
+  await assert.rejects(verifyRestoreSource(consistent, environment, false), /runtime_data' is missing or failed its integrity check/);
+  await rm(path.join(consistent, "scheduler_data.tar"));
+  await assert.rejects(verifyRestoreSource(consistent, environment, false), /volume 'scheduler_data' is missing/);
+  await rm(path.join(consistent, "manifest.json"));
+  await assert.rejects(verifyRestoreSource(consistent, environment, false), /Backup manifest is missing/);
+  const forged = await writeBackup("forged", { repositories: [{ ...refs, refs: { "refs/heads/main": accepted } }] });
+  await assert.rejects(verifyRestoreSource(forged, environment, false), /invalid repository record/);
 });

@@ -37,9 +37,10 @@ interface RuntimeOptions {
   readonly postgresPort?: number;
   readonly confirm: boolean;
   readonly backupPath?: string;
+  readonly allowGitDrift?: boolean;
 }
 
-interface RuntimeBackupManifestV1 {
+export interface RuntimeBackupManifestV1 {
   readonly version: 1;
   readonly createdAt: string;
   readonly volumes: readonly {
@@ -47,9 +48,27 @@ interface RuntimeBackupManifestV1 {
     readonly file: string;
     readonly sha256: string;
   }[];
+  /**
+   * Fingerprint of the database credentials the restored PostgreSQL data was
+   * initialized with. Absent in backups created before it was recorded.
+   */
+  readonly databaseCredentialFingerprint?: string;
+  /**
+   * Forge integration branch tips of each registered repository at backup
+   * time. Git is not copied; restore checks that Git still matches the stores.
+   */
+  readonly repositories?: readonly BackupRepositoryRefs[];
 }
 
-interface RuntimeEnvironment {
+interface BackupRepositoryRefs {
+  readonly id: string;
+  readonly path: string;
+  readonly refs: Readonly<Record<string, string>>;
+}
+
+const FORGE_REFS = "refs/heads/forge/";
+
+export interface RuntimeEnvironment {
   readonly file: string;
   readonly values: Readonly<Record<(typeof KEYS)[number], string>>;
 }
@@ -99,7 +118,7 @@ export function getRuntimeDataDir(
   return pathApi.join(base, "MyForge", "runtime");
 }
 
-async function readRuntimeEnvironment(directory: string): Promise<RuntimeEnvironment> {
+export async function readRuntimeEnvironment(directory: string): Promise<RuntimeEnvironment> {
   const file = path.join(directory, CREDENTIALS_FILE);
   for (let attempt = 0; attempt < 20; attempt++) {
     let stat;
@@ -267,7 +286,7 @@ export async function ensureRuntimeCredentials(directory = getRuntimeDataDir()):
 }
 
 function parseOptions(action: RuntimeAction | RuntimeBackupAction, args: readonly string[]): RuntimeOptions {
-  const options: { hostTools: boolean; postgresPort?: number; confirm: boolean; backupPath?: string } = {
+  const options: { hostTools: boolean; postgresPort?: number; confirm: boolean; backupPath?: string; allowGitDrift?: boolean } = {
     hostTools: false,
     confirm: false,
   };
@@ -285,6 +304,8 @@ function parseOptions(action: RuntimeAction | RuntimeBackupAction, args: readonl
       options.postgresPort = port;
     } else if (argument === "--confirm" && (action === "reset" || action === "restore")) {
       options.confirm = true;
+    } else if (argument === "--allow-git-drift" && action === "restore") {
+      options.allowGitDrift = true;
     } else if ((argument === "--output" && action === "backup") || (argument === "--from" && action === "restore")) {
       const value = args[++index];
       if (!value || value.startsWith("--")) throw new Error(`${argument} requires a directory path.`);
@@ -498,7 +519,7 @@ const RUNTIME_USAGE = `Usage:
   forge-launcher runtime stop
   forge-launcher runtime reset --confirm
   forge-launcher runtime backup --output <new-directory>
-  forge-launcher runtime restore --from <backup-directory> --confirm
+  forge-launcher runtime restore --from <backup-directory> --confirm [--allow-git-drift]
   forge-launcher runtime repo add <repository> [--id <id>]
   forge-launcher runtime repo list
   forge-launcher runtime repo remove <id>
@@ -509,8 +530,10 @@ Starts the local Forge execution service and its PostgreSQL/Dapr infrastructure.
 Infrastructure ports remain private. --host-tools publishes PostgreSQL on loopback (default 127.0.0.1:55432).
 Stop preserves persistent data; reset removes volumes and requires --confirm.
 Backup quiesces the runtime and exports PostgreSQL, Scheduler, and Forge data volumes.
-Backups exclude target repositories, Git refs, and the installation credential file.
-Restore verifies the archive, replaces those volumes, and restarts privately.
+Backups exclude target repositories and the installation credential file; they record each
+registered repository's forge/* branch tips and a database credential fingerprint.
+Restore verifies the archive, refuses mismatched credentials or Git drift from the recorded
+tips (unless --allow-git-drift), replaces those volumes, and restarts privately.
 The service API listens on 127.0.0.1:\${MYFORGE_API_PORT:-8483} and requires the generated bearer token.
 "repo add" registers a repository's .git directory for the service; restart the runtime
 (stop, then start) to apply registration changes. Worktrees and submodules are rejected.
@@ -619,6 +642,64 @@ async function sha256File(file: string): Promise<string> {
   return hash.digest("hex");
 }
 
+export function databaseCredentialFingerprint(values: RuntimeEnvironment["values"]): string {
+  const hash = createHash("sha256").update("myforge-runtime-backup-database-credentials:v1");
+  for (const key of LEGACY_KEYS) hash.update(`\0${key}=${values[key]}`);
+  return hash.digest("hex");
+}
+
+async function forgeRefs(repositoryPath: string): Promise<Record<string, string> | undefined> {
+  const listed = await runCommand("git", ["-C", repositoryPath, "for-each-ref", "--format=%(refname) %(objectname)", FORGE_REFS]);
+  if (listed.code !== 0) return undefined;
+  const refs: Record<string, string> = {};
+  for (const line of listed.stdout.split("\n")) {
+    const [name, sha] = line.trim().split(" ");
+    if (name && sha) refs[name] = sha;
+  }
+  return refs;
+}
+
+async function recordRepositoryRefs(): Promise<BackupRepositoryRefs[]> {
+  const recorded: BackupRepositoryRefs[] = [];
+  for (const repository of await listRegisteredRepositories(getRuntimeDataDir())) {
+    const refs = await forgeRefs(repository.path);
+    if (!refs) {
+      throw new Error(`Could not read Git refs of registered repository '${repository.id}' (${repository.path}); ` +
+        `fix it or run "forge-launcher runtime repo remove ${repository.id}" before backing up.`);
+    }
+    recorded.push({ id: repository.id, path: repository.path, refs });
+  }
+  return recorded;
+}
+
+/**
+ * Differences between Git and the forge branch tips recorded at backup time.
+ * Restored stores describe integrations as of the backup; a branch that moved
+ * since then either lost accepted work or holds work the stores do not know.
+ */
+async function gitDriftSince(backup: RuntimeBackupManifestV1): Promise<string[]> {
+  const registered = new Map((await listRegisteredRepositories(getRuntimeDataDir())).map((entry) => [entry.id, entry.path]));
+  const drift: string[] = [];
+  for (const repository of backup.repositories ?? []) {
+    const registeredPath = registered.get(repository.id);
+    if (!registeredPath) {
+      drift.push(`${repository.id}: not registered in this installation (run "forge-launcher runtime repo add ${repository.path} --id ${repository.id}")`);
+      continue;
+    }
+    const current = await forgeRefs(registeredPath);
+    if (!current) {
+      drift.push(`${repository.id}: ${registeredPath} is not a readable Git repository`);
+      continue;
+    }
+    for (const [ref, sha] of Object.entries(repository.refs)) {
+      if (current[ref] === sha) continue;
+      drift.push(`${repository.id}: ${ref} is ${current[ref] ?? "missing"}, backup recorded ${sha} ` +
+        `(to match: git -C ${registeredPath} update-ref ${ref} ${sha})`);
+    }
+  }
+  return drift;
+}
+
 function volumeName(name: (typeof RUNTIME_VOLUMES)[number]): string {
   return `${getRuntimeProject()}_${name}`;
 }
@@ -687,6 +768,9 @@ async function backupRuntime(
       version: BACKUP_VERSION,
       createdAt: new Date().toISOString(),
       volumes,
+      databaseCredentialFingerprint: databaseCredentialFingerprint(environment.values),
+      // Recorded while quiesced, so the tips match the exported stores.
+      repositories: await recordRepositoryRefs(),
     };
     await writeFile(path.join(temporary, BACKUP_FILE), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600, flag: "wx" });
     await rename(temporary, resolvedDestination);
@@ -714,14 +798,23 @@ async function backupRuntime(
   if (failures.length > 1) throw new AggregateError(failures, "Runtime backup or recovery failed.");
 }
 
+async function lstatOrMissing(file: string, missing: string) {
+  try {
+    return await lstat(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error(missing);
+    throw error;
+  }
+}
+
 async function readAndVerifyBackup(directory: string): Promise<RuntimeBackupManifestV1> {
   const root = path.resolve(directory);
-  const rootStat = await lstat(root);
+  const rootStat = await lstatOrMissing(root, `Backup directory does not exist: ${root}`);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
     throw new Error(`Backup path must be a real directory: ${root}`);
   }
   const manifestPath = path.join(root, BACKUP_FILE);
-  const manifestStat = await lstat(manifestPath);
+  const manifestStat = await lstatOrMissing(manifestPath, `Backup manifest is missing: ${manifestPath}`);
   if (!manifestStat.isFile() || manifestStat.isSymbolicLink()) {
     throw new Error(`Backup manifest must be a regular file: ${manifestPath}`);
   }
@@ -740,13 +833,57 @@ async function readAndVerifyBackup(directory: string): Promise<RuntimeBackupMani
     }
     seen.add(volume.name);
     const archivePath = path.join(root, volume.file);
-    const archiveStat = await lstat(archivePath);
+    const archiveStat = await lstatOrMissing(archivePath, `Runtime backup volume '${volume.name}' is missing (${archivePath}).`);
     if (!archiveStat.isFile() || archiveStat.isSymbolicLink() || await sha256File(archivePath) !== volume.sha256) {
       throw new Error(`Runtime backup volume '${volume.name}' is missing or failed its integrity check.`);
     }
   }
   if (seen.size !== RUNTIME_VOLUMES.length) throw new Error("Runtime backup is missing one or more persistent volumes.");
+  if (parsed.databaseCredentialFingerprint !== undefined && !/^[0-9a-f]{64}$/.test(parsed.databaseCredentialFingerprint)) {
+    throw new Error("Runtime backup manifest has an invalid credential fingerprint.");
+  }
+  if (parsed.repositories !== undefined && (!Array.isArray(parsed.repositories) || !parsed.repositories.every((entry) =>
+    entry && typeof entry.id === "string" && typeof entry.path === "string" && path.isAbsolute(entry.path) &&
+    entry.refs && typeof entry.refs === "object" &&
+    Object.entries(entry.refs).every(([ref, sha]) => ref.startsWith(FORGE_REFS) && typeof sha === "string" && /^[0-9a-f]{40,64}$/.test(sha))))) {
+    throw new Error("Runtime backup manifest contains an invalid repository record.");
+  }
   return parsed as RuntimeBackupManifestV1;
+}
+
+/**
+ * Verifies a backup and that this installation can restore it consistently:
+ * matching database credentials and forge branches still at the recorded tips.
+ */
+export async function verifyRestoreSource(
+  source: string,
+  environment: RuntimeEnvironment,
+  allowGitDrift: boolean,
+): Promise<RuntimeBackupManifestV1> {
+  const backup = await readAndVerifyBackup(source);
+  if (backup.databaseCredentialFingerprint && backup.databaseCredentialFingerprint !== databaseCredentialFingerprint(environment.values)) {
+    throw new Error(
+      "The backup's PostgreSQL data was initialized with different database credentials than this installation. " +
+      `Copy ${CREDENTIALS_FILE} from the installation that created the backup into ${path.dirname(environment.file)} ` +
+      "(mode 0600) and rerun the restore.",
+    );
+  }
+  if (!backup.repositories) {
+    process.stderr.write("Warning: this backup predates Git ref recording; check that forge branches match the backup time.\n");
+  } else {
+    const drift = await gitDriftSince(backup);
+    if (drift.length && !allowGitDrift) {
+      throw new Error(
+        "Git no longer matches the backup, so the restored stores would be out of sync with the repositories:\n" +
+        `${drift.map((line) => `  ${line}`).join("\n")}\n` +
+        "Reset the listed refs to the recorded commits (and register missing repositories), or rerun with " +
+        "--allow-git-drift: runs whose integrated commits are missing then fail, and work integrated after the " +
+        "backup may be integrated again.",
+      );
+    }
+    for (const line of drift) process.stderr.write(`Warning: Git drift accepted: ${line}\n`);
+  }
+  return backup;
 }
 
 async function restoreRuntime(
@@ -754,7 +891,7 @@ async function restoreRuntime(
   options: RuntimeOptions,
   environment: RuntimeEnvironment,
 ): Promise<void> {
-  const backup = await readAndVerifyBackup(source);
+  const backup = await verifyRestoreSource(source, environment, options.allowGitDrift ?? false);
   await compose("down", { ...options, confirm: true }, environment);
   for (const volume of backup.volumes) {
     const name = volumeName(volume.name);

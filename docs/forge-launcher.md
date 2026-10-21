@@ -256,6 +256,10 @@ JSON object per line) for scripts and support reports. `service control`
 accepts pause, resume, stop, cancel, replay-task, and approve-task.
 
 **Harnesses and credentials** ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)).
+All harnesses work against standard Git repositories, including repositories
+hosted on GitHub. Switching harness does not itself require additional GitHub
+repository credentials. AI-provider authentication is separate: a GitHub login
+alone does not authenticate Claude to Anthropic or every OpenCode provider.
 The worker image includes pinned `copilot`, `claude`, and `opencode` CLIs and
 the deterministic `stub` harness. `stub` needs `--allow-noop` when tasks make
 no changes. Host logins are not visible to the worker. Grant each harness its
@@ -278,6 +282,12 @@ forge-launcher runtime harness revoke copilot [COPILOT_GITHUB_TOKEN]
   apply from the next task attempt, with no restart.
 - A run for a harness with no grant is rejected at submission with a hint
   naming the grant command.
+
+**Platform support and qualification.** Linux, macOS, and Windows remain
+support targets. The P6 live runtime evidence currently covers Linux rootless
+Podman only. macOS and Windows require separate Podman-machine qualification;
+that missing evidence is not a Linux-only product policy. See
+[P6-05](../plan.md#p6-05-platform-and-harness-evidence--2026-10-21).
 
 **Routing for registered repositories.** Once a repository is registered,
 `engine-run`, `resume`, feature-increment runs, and Console builds use the

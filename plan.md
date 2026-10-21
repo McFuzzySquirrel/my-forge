@@ -405,13 +405,16 @@ support matrix, and release evidence.
   **Open cutover blocker:** harness processes run as container root beside
   every repository's read-write `.git` and the grants file. A dedicated
   task UID is required.*
-- [x] **P6-05 — Qualify supported platforms/harnesses.** Validate Linux rootless
+- [ ] **P6-05 — Qualify supported platforms/harnesses.** Validate Linux rootless
   behavior and each claimed harness. Test Podman-machine networking, credentials,
   mounts, path translation, watchers, and performance separately on macOS/Windows.
-  If desktop platforms are deferred, explicitly release as Linux-only.
-  *Done 2026-10-21 ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)):
-  **Linux-only release.** macOS and Windows (Podman machine) are deferred and
-  not advertised. Real harnesses are not qualified until a credentialed run.*
+  Preserve Linux, macOS, and Windows support; missing desktop evidence is a
+  qualification gap, not permission to drop platform support.
+  *Partial 2026-10-21 ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)):
+  Linux rootless evidence recorded. macOS/Windows Podman-machine qualification
+  and real-harness runs remain required. Harness selection must not require
+  additional GitHub repository credentials; reuse existing authorized provider
+  authentication where possible without exposing unrelated credentials.*
 - [x] **P6-06 — Re-run parity and budgets.** Compare accepted outcomes, commit
   behavior, validation, audit, and controls with P0 fixtures; measure startup,
   memory/disk, long histories, cancellation, and recovery against agreed thresholds.
@@ -576,7 +579,7 @@ complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
 [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
 [P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21),
 [ADR-075](docs/adr/075-security-boundary-review.md), which records one open
-cutover blocker); P6-05 declared a Linux-only release ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)); P6-06 met all budgets ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)). P6-GATE awaits operator review, with two open items: the ADR-075 task-UID blocker and real-harness qualification.
+cutover blocker); P6-05 remains incomplete ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)): Linux, macOS, and Windows remain required support targets. P6-06 budget evidence is recorded ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)). P6-GATE remains blocked by the ADR-075 task-UID finding, real-harness qualification, and macOS/Windows runtime qualification.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -835,10 +838,11 @@ deliberately with `--allow-git-drift`.
 
 ### P6-05 platform and harness evidence — 2026-10-21
 
-**Release scope: Linux only.** macOS and Windows hosts (Podman machine
-networking, path translation, watchers, and performance) are deferred. They
-are not advertised and must not be listed as supported until they are
-qualified separately.
+**Required support: Linux, macOS, and Windows.** The earlier Linux-only
+declaration was corrected at the operator's request on 2026-10-21. Evidence
+below covers Linux only; it does not remove desktop support. macOS and Windows
+Podman-machine networking, credentials, mounts, path translation, watchers,
+and performance still need host-specific qualification before P6-05 can close.
 
 | Item | Result |
 |---|---|
@@ -851,9 +855,14 @@ qualified separately.
 | Stub harness | Qualified end to end (all P6 suites) |
 | Real harness task with a granted credential | **Not run.** No operator credential was available in the isolated stack, and operator credentials were not used without consent. copilot, claude, and opencode are therefore **unqualified** for P6-GATE. |
 
-Remaining before advertising a real harness: run one credentialed task per
-harness on an isolated stack, then record its outcome, commit, and audit
-trail. This also requires the ADR-075 task-UID fix first.
+Remaining: run one authenticated task per real harness on an isolated stack,
+then record its outcome, commit, and audit trail. The repository remains a
+standard Git repository hosted on GitHub regardless of harness; changing
+harness must not require another repository credential. Provider authentication
+is separate from GitHub repository access. Existing authorized provider logins
+should be reused through a narrowly scoped handoff; the current service only
+supports explicit credential grants and does not import host login state.
+This also requires the ADR-075 task-UID fix first.
 
 ### P5-GATE evidence — 2026-10-22
 

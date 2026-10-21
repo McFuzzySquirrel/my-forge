@@ -4,6 +4,20 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.134
+
+### Preserve cross-platform support and clarify harness authentication
+
+- Correct the v3.132 Linux-only declaration: Linux, macOS, and Windows remain
+  support targets. P6-05 is reopened until desktop runtime and real-harness
+  qualification are complete; Linux evidence alone does not qualify desktops.
+- Clarify that every harness works with standard Git/GitHub repositories.
+  Switching harness does not require additional repository credentials.
+  AI-provider authentication is separate; the current isolated service uses
+  explicit grants and does not reuse host login state automatically.
+
+---
+
 ## October 2026 - v3.133
 
 ### Parity and budgets re-measured (P6-06)

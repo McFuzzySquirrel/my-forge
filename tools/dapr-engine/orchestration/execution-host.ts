@@ -348,6 +348,11 @@ export class ExecutionHost {
             artifactStore: new ArtifactStore({ artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts") }),
             predecessorTaskIds: run.prerequisites.get(input.taskId) ?? [],
             allowNoop: input.allowNoop,
+            validationEnvironment: buildHarnessEnvironment({
+              home: home.home,
+              inherited: this.dependencies.inheritedEnvironment ?? process.env,
+              credentials: {},
+            }),
           });
         } finally {
           await rm(home.home, { recursive: true, force: true });
@@ -533,18 +538,29 @@ export class ExecutionHost {
     readonly reason?: string;
   }> {
     const results: Array<Record<string, unknown>> = [];
-    for (const command of task.validationCommands) {
-      const result = await runCommand(command, [], { shell: true, cwd: root, timeoutMs, maxBufferBytes: 10 * 1024 * 1024 });
-      results.push({ command, status: result.status, stdout: tail(result.stdout), stderr: tail(result.stderr) });
-      if (result.status !== 0) {
-        return {
-          ok: false,
-          record: { taskId: task.id, results },
-          reason: `validation command failed (exit ${result.status}): ${command}`,
-        };
+    // Validation commands come from the repository: never hand them the
+    // worker's environment (API/Dapr tokens, database URL) or harness grants.
+    const home = await createHarnessHome(join(this.dependencies.scratchRoot, "homes"));
+    try {
+      const env = buildHarnessEnvironment({ home: home.home, inherited: this.dependencies.inheritedEnvironment ?? process.env });
+      for (const command of task.validationCommands) {
+        const result = await runCommand(command, [], {
+          shell: true, cwd: root, timeoutMs, maxBufferBytes: 10 * 1024 * 1024,
+          env, inheritEnvironment: false, reapProcessGroupOnExit: true,
+        });
+        results.push({ command, status: result.status, stdout: tail(result.stdout), stderr: tail(result.stderr) });
+        if (result.status !== 0) {
+          return {
+            ok: false,
+            record: { taskId: task.id, results },
+            reason: `validation command failed (exit ${result.status}): ${command}`,
+          };
+        }
       }
+      return { ok: true, record: { taskId: task.id, results } };
+    } finally {
+      await rm(home.home, { recursive: true, force: true });
     }
-    return { ok: true, record: { taskId: task.id, results } };
   }
 
   private async captureEffect(

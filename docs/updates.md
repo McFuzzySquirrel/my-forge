@@ -4,6 +4,23 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.131
+
+### Security boundary review (P6-04)
+
+- **Fixed: validation commands could read runtime secrets.** Manifest
+  `validationCommands` ran with the full worker environment, including the
+  Forge API token, the Dapr API token, and the database password. They now run
+  with the same credential-free, per-attempt environment as harness attempts.
+- **Open blocker before cutover.** Harness processes run as container root next
+  to every registered repository's `.git`, mounted read-write. A dedicated
+  task UID is required before cutover; see
+  [ADR-075](adr/075-security-boundary-review.md).
+- Dependency audit is clean, and the live probes of the API boundary
+  (authentication, Origin, Host, and body limits) passed.
+
+---
+
 ## October 2026 - v3.130
 
 ### Upgrades keep in-flight runs; rollback is qualified

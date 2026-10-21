@@ -396,10 +396,15 @@ support matrix, and release evidence.
 - [x] **P6-03 — Test workflow/application upgrades.** Version definitions and
   activity contracts; drain incompatible runs or retain compatible workers.
   Verify historical replay, schema upgrades, and documented rollback constraints.
-- [ ] **P6-04 — Review security boundaries.** Test unauthorized/stale approvals,
+- [x] **P6-04 — Review security boundaries.** Test unauthorized/stale approvals,
   cross-repository access, escaping paths/symlinks, log/secret exposure, malicious
   artifact metadata, and exhausted resource limits. Scan dependencies and changed
   code; require resolution of relevant findings before cutover.
+  *Done 2026-10-21 ([ADR-075](docs/adr/075-security-boundary-review.md)):
+  audit clean; validation-command secret exposure fixed; live API probes pass.
+  **Open cutover blocker:** harness processes run as container root beside
+  every repository's read-write `.git` and the grants file. A dedicated
+  task UID is required.*
 - [ ] **P6-05 — Qualify supported platforms/harnesses.** Validate Linux rootless
   behavior and each claimed harness. Test Podman-machine networking, credentials,
   mounts, path translation, watchers, and performance separately on macOS/Windows.
@@ -561,11 +566,12 @@ sidecar token (ADR-070). P5-06 added runtime remediation hints, JSON
 status/audit export, and troubleshooting docs. P5-04 routes Console controls
 and human-review approval to service runs. **P5-GATE was accepted by the
 operator on 2026-10-21, authorizing P6**
-([P5-GATE evidence](#p5-gate-evidence--2026-10-22)). P6-01 through P6-03 are
+([P5-GATE evidence](#p5-gate-evidence--2026-10-22)). P6-01 through P6-04 are
 complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
 [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
-[P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21)); P6-04
-security review is the next work package.
+[P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21),
+[ADR-075](docs/adr/075-security-boundary-review.md), which records one open
+cutover blocker); P6-05 platform qualification is next.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed

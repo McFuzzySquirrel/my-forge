@@ -202,6 +202,11 @@ export async function runTaskValidation(
   task: ManifestTask,
   repoRoot: string,
   timeoutMs: number,
+  /**
+   * Complete environment for the commands. When set, nothing is inherited from
+   * the worker, so repository commands cannot read its tokens or credentials.
+   */
+  environment?: Readonly<Record<string, string>>,
 ): Promise<VerifyResult> {
   if (task.validationCommands.length === 0) return { ok: true };
 
@@ -211,6 +216,7 @@ export async function runTaskValidation(
       cwd: repoRoot,
       timeoutMs,
       maxBufferBytes: 10 * 1024 * 1024,
+      ...(environment ? { env: { ...environment }, inheritEnvironment: false, reapProcessGroupOnExit: true } : {}),
     });
     if (result.status !== 0) {
       const detail = (result.stderr || result.stdout).trim();

@@ -18,6 +18,8 @@ export interface TaskAdmissionOptions {
   readonly baseline: WorktreeSnapshot | null;
   readonly allowNoop: boolean;
   readonly timeoutMs: number;
+  /** Isolated environment for validation commands; see `runTaskValidation`. */
+  readonly validationEnvironment?: Readonly<Record<string, string>>;
 }
 
 export type TaskAdmissionResult =
@@ -190,7 +192,7 @@ export async function admitTaskResult(options: TaskAdmissionOptions): Promise<Ta
   gates.push(gate("handoff", "passed", undefined, [handoff.summary]));
   gates.push(gate("requirements", "passed", undefined, ["unresolved=[]"]));
 
-  const validation = await runTaskValidation(options.task, options.repoRoot, options.timeoutMs);
+  const validation = await runTaskValidation(options.task, options.repoRoot, options.timeoutMs, options.validationEnvironment);
   if (!validation.ok) {
     const reason = boundedReason(validation.reason ?? "A mandatory validation command failed.");
     return reject("validation-failed", reason, [

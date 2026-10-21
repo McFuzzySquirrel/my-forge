@@ -44,7 +44,12 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
     phases: [{
       id: "phase-1",
       tasks: [
-        manifestTask({ id: "T-1", ownerAgent: "alpha", expectedOutputs: ["one.txt"], validationCommands: ["grep -qx one one.txt"] }),
+        manifestTask({ id: "T-1", ownerAgent: "alpha", expectedOutputs: ["one.txt"], validationCommands: [
+          "grep -qx one one.txt",
+          // Repository commands never see worker secrets (P6-04): the real
+          // process environment carries POSTGRES_TEST_URL, the grant GH_TOKEN.
+          'test -z "$POSTGRES_TEST_URL$DATABASE_URL$GH_TOKEN" && test "$HOME" != /root',
+        ] }),
         manifestTask({ id: "T-2", ownerAgent: "alpha", dependencies: ["T-1"], expectedOutputs: ["two.txt"], validationCommands: ["grep -qx one one.txt", "grep -qx two two.txt"] }),
         manifestTask({ id: "T-3", ownerAgent: "beta", expectedOutputs: ["three.txt"], validationCommands: ["grep -qx three three.txt"] }),
         manifestTask({ id: "T-4", ownerAgent: "gamma", expectedOutputs: ["four.txt"], validationCommands: ["grep -qx four four.txt"] }),

@@ -42,6 +42,8 @@ export interface ExecuteVerifiedTaskActivityInputV1 {
   readonly artifactStore: ArtifactStore;
   readonly predecessorTaskIds: readonly string[];
   readonly allowNoop: boolean;
+  /** Credential-free environment for validation commands (never the worker env). */
+  readonly validationEnvironment?: Readonly<Record<string, string>>;
   readonly publishArtifacts?: (
     admission: Extract<TaskAdmissionResult, { ok: true }>,
   ) => Promise<readonly ArtifactRefV1[]>;
@@ -122,6 +124,7 @@ export async function executeVerifiedTaskActivity(
     baseline,
     allowNoop: input.allowNoop,
     timeoutMs: request.budget.timeoutMs,
+    ...(input.validationEnvironment ? { validationEnvironment: input.validationEnvironment } : {}),
   });
   if (!admission.ok) return outcomeForAdmission(input, admission, []);
   const artifactRefs = input.publishArtifacts ? await input.publishArtifacts(admission) : [];

@@ -412,9 +412,11 @@ support matrix, and release evidence.
   *Done 2026-10-21 ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)):
   **Linux-only release.** macOS and Windows (Podman machine) are deferred and
   not advertised. Real harnesses are not qualified until a credentialed run.*
-- [ ] **P6-06 — Re-run parity and budgets.** Compare accepted outcomes, commit
+- [x] **P6-06 — Re-run parity and budgets.** Compare accepted outcomes, commit
   behavior, validation, audit, and controls with P0 fixtures; measure startup,
   memory/disk, long histories, cancellation, and recovery against agreed thresholds.
+  *Done 2026-10-21 ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)):
+  all budgets met; cancellation has little headroom.*
 - [ ] **P6-GATE:** Release matrix below passes for every advertised profile;
   backup/restore and upgrades are rehearsed; support limits and unavoidable
   duplicate provider calls are documented. Unqualified platforms are not advertised.
@@ -574,7 +576,7 @@ complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
 [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
 [P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21),
 [ADR-075](docs/adr/075-security-boundary-review.md), which records one open
-cutover blocker); P6-05 declared a Linux-only release ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)); P6-06 parity and budgets is next.
+cutover blocker); P6-05 declared a Linux-only release ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)); P6-06 met all budgets ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)). P6-GATE awaits operator review, with two open items: the ADR-075 task-UID blocker and real-harness qualification.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -801,6 +803,35 @@ migrated back. Rolling back means restoring a backup taken with the earlier
 release, and work done after that backup is lost. The ADR-073 drift checks
 refuse the restore if Git moved since the backup, unless `--allow-git-drift` is
 passed.
+
+### P6-06 parity and budget evidence — 2026-10-21
+
+**Parity.** All suites passed on the release commit:
+
+| Suite | Result |
+|---|---|
+| `tools/dapr-engine` (contract v1 conformance, orchestration, history replay, PostgreSQL integration) | 188/188 |
+| `forge-workflow-engine` (legacy P0 semantics through the shared execution library) | 283 pass, 7 skipped, 0 fail |
+| `forge-execution-adapter` | 49/49 |
+| `forge-launcher` | 349/349 |
+
+The suites cover accepted outcomes, commit integration, validation gates, audit,
+and controls. Recorded histories replay against the current code: 125 of 126
+live histories replayed. The one exception was a restore artifact created
+deliberately with `--allow-git-drift`.
+
+**Budgets** (measured on Linux rootless, operator-accepted thresholds from
+2026-10-13):
+
+| Budget | Threshold | Measured | Result |
+|---|---|---|---|
+| Cached startup readiness | ≤ 180 s | 14 s (`runtime start`, `myforge-qual2`) | Pass |
+| Idle stack memory | ≤ 3 GiB | ≈ 165 MB (forge 73, scheduler 42, daprd 28, postgres 13, placement 9) | Pass |
+| Disk | 10 GiB free host | Images ≈ 2.0 GB (worker 1.2 GB with harness CLIs); volumes 258 MB after about 130 qualification runs | Pass |
+| Restart recovery | ≤ 120 s | 20 s restart; worker loss 86 s; sidecar loss 84–99 s; DB loss 51–52 s; scheduler loss 37 s | Pass |
+| Cancellation cleanup | ≤ 30 s | 27 s | Pass, little headroom |
+| Long histories | Bounded | 1,000-task run measured above; rollover bounds history size | Pass |
+| Backup / restore / upgrade | Rehearsed | About 20 s each (P6-02, P6-03) | Pass |
 
 ### P6-05 platform and harness evidence — 2026-10-21
 

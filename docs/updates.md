@@ -4,6 +4,19 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.133
+
+### Parity and budgets re-measured (P6-06)
+
+- All parity suites pass: engine 188, legacy workflow engine 283, adapter 49,
+  launcher 349.
+- Measured against the agreed limits: cached startup took 14 s (limit 180 s),
+  the idle stack used about 165 MB (limit 3 GiB), recovery took at most 99 s
+  (limit 120 s), and cancellation took 27 s (limit 30 s).
+  See the P6-06 evidence in `plan.md`.
+
+---
+
 ## October 2026 - v3.132
 
 ### Platform qualification: Linux-only release (P6-05)

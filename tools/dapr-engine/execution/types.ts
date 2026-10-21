@@ -55,8 +55,15 @@ export interface TaskAttemptRequest {
 export interface HarnessProcessIsolation {
   /** Complete child environment; the worker's own environment is not inherited. */
   readonly environment: Readonly<Record<string, string>>;
+  /** Per-attempt POSIX identity, used by the service worker to isolate tasks. */
+  readonly processIdentity?: ProcessIdentityV1;
   /** Called once per harness process with whether its process-tree termination was observed. */
   readonly onProcessSettled?: (cleanup: "observed" | "unconfirmed") => void;
+}
+
+export interface ProcessIdentityV1 {
+  readonly uid: number;
+  readonly gid: number;
 }
 
 export interface HarnessRunContext {

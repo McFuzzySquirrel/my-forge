@@ -4,7 +4,7 @@
 # launcher mounts an operator-managed grant file read-only at runtime.
 FROM docker.io/library/node@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends git ca-certificates \
+  && apt-get install -y --no-install-recommends git ca-certificates util-linux \
   && rm -rf /var/lib/apt/lists/*
 # Bump the compose image tag whenever these pins change so installs rebuild.
 RUN npm install --global --no-fund --no-audit \

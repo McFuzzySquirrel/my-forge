@@ -125,6 +125,7 @@ export async function executeVerifiedTaskActivity(
     allowNoop: input.allowNoop,
     timeoutMs: request.budget.timeoutMs,
     ...(input.validationEnvironment ? { validationEnvironment: input.validationEnvironment } : {}),
+    ...(request.isolation?.processIdentity ? { validationProcessIdentity: request.isolation.processIdentity } : {}),
   });
   if (!admission.ok) return outcomeForAdmission(input, admission, []);
   const artifactRefs = input.publishArtifacts ? await input.publishArtifacts(admission) : [];

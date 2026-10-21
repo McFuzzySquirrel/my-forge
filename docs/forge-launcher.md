@@ -282,6 +282,11 @@ forge-launcher runtime harness revoke copilot [COPILOT_GITHUB_TOKEN]
   apply from the next task attempt, with no restart.
 - A run for a harness with no grant is rejected at submission with a hint
   naming the grant command.
+- On the service runtime, each task runs under its own unprivileged UID with a
+  private workspace and home. It cannot read the shared grants file or write
+  registered source `.git` directories. It can currently read other registered
+  repositories' Git metadata; register only repositories in the same trust
+  domain until that remaining boundary is closed.
 
 **Platform support and qualification.** Linux, macOS, and Windows remain
 support targets. The P6 live runtime evidence currently covers Linux rootless

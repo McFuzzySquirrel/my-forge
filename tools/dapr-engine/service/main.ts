@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { DaprWorkflowClient, WorkflowRuntime, WorkflowRuntimeStatus } from "@dapr/dapr";
@@ -51,6 +52,7 @@ const DAPR_HTTP_PORT = process.env.DAPR_HTTP_PORT ?? "3500";
 const DATABASE_URL = process.env.MYFORGE_DATABASE_URL;
 const DATA_DIR = process.env.MYFORGE_RUNTIME_DATA_DIR ?? "/var/lib/myforge";
 const REPOSITORIES_DIR = process.env.MYFORGE_REPOSITORIES_DIR ?? "/repositories";
+const TASK_SCRATCH_DIR = join(tmpdir(), "myforge-task-scratch");
 const API_TOKEN = process.env.MYFORGE_API_TOKEN ?? "";
 const READY_TIMEOUT_MS = 120_000;
 const HEARTBEAT_TTL_MS = 30_000;
@@ -159,6 +161,8 @@ function createWorkflowHost(): ExecutionHost {
     controls,
     repositoryRoot,
     scratchRoot: join(DATA_DIR, "scratch"),
+    taskUidIsolation: true,
+    taskScratchRoot: TASK_SCRATCH_DIR,
     workerId: process.env.MYFORGE_WORKER_ID ?? `local-${randomUUID()}`,
     budgetMs: 15 * 60_000,
     heartbeatIntervalMs: 2_000,
@@ -303,6 +307,8 @@ async function start(): Promise<void> {
   process.stdout.write("Execution service starting\n");
   await mkdir(join(DATA_DIR, "artifacts"), { recursive: true, mode: 0o700 });
   await mkdir(join(DATA_DIR, "scratch"), { recursive: true, mode: 0o700 });
+  await rm(TASK_SCRATCH_DIR, { recursive: true, force: true });
+  await mkdir(TASK_SCRATCH_DIR, { recursive: true, mode: 0o711 });
   const host = createWorkflowHost();
   const runs = createRunService(host);
   await listen(runs);

@@ -5,7 +5,7 @@ import { dirname, relative, resolve as resolvePath } from "node:path";
 import readCmdShim from "read-cmd-shim";
 import which from "which";
 import type { ProcessCleanup } from "../../contract/v1/execution-ownership.ts";
-import type { TaskAttemptRequest, TaskFailureKind } from "../types.ts";
+import type { ProcessIdentityV1, TaskAttemptRequest, TaskFailureKind } from "../types.ts";
 import {
   ActivityLineBuffer,
   formatActivityLine,
@@ -84,6 +84,8 @@ export interface RunCommandOptions {
    * primitive (Windows), cleanup is reported unconfirmed.
    */
   reapProcessGroupOnExit?: boolean;
+  /** Drop privileges before launching a supervised task process. */
+  processIdentity?: ProcessIdentityV1;
   /** Receives `processCleanup` when a started process settles. */
   onProcessSettled?: (cleanup: ProcessCleanup) => void;
   signal?: AbortSignal;
@@ -109,6 +111,10 @@ export interface RunCommandResult {
    * Absent when no process was started.
    */
   processCleanup?: ProcessCleanup;
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 /**
@@ -181,13 +187,28 @@ export function runCommand(
     const watchdogDeadlineAt = opts.reapProcessGroupOnExit && process.platform !== "win32"
       ? Date.now() + opts.timeoutMs + CLEANUP_TIMEOUT_MS
       : undefined;
+    const identityArgs = opts.processIdentity
+      ? ["--reuid", String(opts.processIdentity.uid), "--regid", String(opts.processIdentity.gid), "--clear-groups", "--"]
+      : [];
+    const targetBin = opts.shell ? "/bin/sh" : bin;
+    const targetArgs = opts.shell
+      ? ["-c", [bin, ...args.map(shellQuote)].join(" ")]
+      : args;
+    if (opts.processIdentity && process.platform === "win32") {
+      resolve({ stdout: "", stderr: "", status: null, error: "Per-task POSIX identities are unavailable on Windows." });
+      return;
+    }
     const child = watchdogDeadlineAt === undefined
-      ? spawn(bin, args, {
+      ? spawn(opts.processIdentity ? "setpriv" : bin, opts.processIdentity ? [...identityArgs, targetBin, ...targetArgs] : args, {
           cwd: opts.cwd, env: childEnv(opts.cwd, opts.env, opts.inheritEnvironment ?? true), stdio: ["ignore", "pipe", "pipe"],
-          shell: opts.shell,
+          shell: opts.processIdentity ? false : opts.shell,
           detached: process.platform !== "win32", windowsHide: true,
         })
-      : spawnProcess(process.execPath, ["-e", WATCHDOG_SOURCE, "--", String(watchdogDeadlineAt), opts.shell ? "1" : "0", bin, ...args], {
+      : spawnProcess(opts.processIdentity ? "setpriv" : process.execPath, [
+          ...identityArgs,
+          ...(opts.processIdentity ? [process.execPath] : []),
+          "-e", WATCHDOG_SOURCE, "--", String(watchdogDeadlineAt), opts.shell ? "1" : "0", bin, ...args,
+        ], {
           cwd: opts.cwd, env: childEnv(opts.cwd, opts.env, opts.inheritEnvironment ?? true), stdio: ["ignore", "pipe", "pipe", "ipc"],
           detached: true, windowsHide: true,
         });
@@ -221,6 +242,7 @@ export function runCommand(
           durationMs: Date.now() - startedAt,
         }));
       }
+
       // A normal exit only proves descendants are gone when the group was reaped.
       const processCleanup = child.pid
         ? cleanup ?? (terminating || opts.reapProcessGroupOnExit ? "observed" : "unconfirmed")
@@ -364,13 +386,14 @@ function reapProcessGroup(pid: number): ProcessCleanup {
  */
 export function harnessProcessOptions(
   request: Pick<TaskAttemptRequest, "isolation">,
-): Pick<RunCommandOptions, "env" | "inheritEnvironment" | "reapProcessGroupOnExit" | "onProcessSettled"> {
+): Pick<RunCommandOptions, "env" | "inheritEnvironment" | "reapProcessGroupOnExit" | "onProcessSettled" | "processIdentity"> {
   const isolation = request.isolation;
   if (!isolation) return {};
   return {
     env: { ...isolation.environment },
     inheritEnvironment: false,
     reapProcessGroupOnExit: true,
+    ...(isolation.processIdentity ? { processIdentity: isolation.processIdentity } : {}),
     ...(isolation.onProcessSettled ? { onProcessSettled: isolation.onProcessSettled } : {}),
   };
 }

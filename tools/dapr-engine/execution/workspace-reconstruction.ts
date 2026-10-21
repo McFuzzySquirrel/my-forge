@@ -118,6 +118,9 @@ function gitEnvironment(home: string): NodeJS.ProcessEnv {
     GIT_CONFIG_GLOBAL: join(home, ".gitconfig-disabled"),
     GIT_TERMINAL_PROMPT: "0",
     GIT_OPTIONAL_LOCKS: "0",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "safe.directory",
+    GIT_CONFIG_VALUE_0: home,
     LC_ALL: "C",
   };
   for (const key of keep) {

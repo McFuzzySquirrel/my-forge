@@ -37,9 +37,8 @@ export function removePreviousRelease(root: string): void {
   run("git", ["worktree", "remove", "--force", path.join(root, `release-${PREVIOUS_RELEASE}`)], REPO_ROOT);
 }
 
-function failOnce(nonce: string, taskId: string): string {
-  const marker = `/var/lib/myforge/qual-markers/${nonce}-${taskId}`;
-  return `test -f ${marker} || { mkdir -p /var/lib/myforge/qual-markers && touch ${marker} && exit 1; }`;
+function failFirstAttempt(): string {
+  return 'test "$MYFORGE_LOGICAL_ATTEMPT" -gt 1';
 }
 
 function exactlyOnce(repoRoot: string, runId: string, taskIds: readonly string[]): Record<string, number> {
@@ -74,7 +73,7 @@ export async function runUpgradeSuite(report: Report, isolation: Isolation): Pro
     useLauncherFrom(previous);
     await launcher(["runtime", "reset", "--confirm"]);
     const approvalRepo = repo("approval", [{ id: "T1" }, { id: "R1", humanReview: true, dependencies: ["T1"] }, { id: "T2", dependencies: ["R1"] }]);
-    const timerRepo = repo("timer", [{ id: "T1", validation: [failOnce(nonce, "T1")] }]);
+    const timerRepo = repo("timer", [{ id: "T1", validation: [failFirstAttempt()] }]);
     const freshRepo = repo("fresh", [{ id: "T1" }]);
     for (const repoRoot of [approvalRepo, timerRepo, freshRepo]) await requireLauncher(["runtime", "repo", "add", repoRoot]);
     await requireLauncher(["runtime", "start"]);

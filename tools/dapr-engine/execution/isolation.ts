@@ -1,6 +1,7 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { chmod, chown, lchown, mkdir, mkdtemp, opendir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import type { ProcessIdentityV1 } from "./types.ts";
 
 /**
  * Process isolation policy for supervised harness executions (contract v1 §3
@@ -17,6 +18,60 @@ const PASS_THROUGH = new Set([
   "SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR",
 ]);
 const PASS_THROUGH_PATTERN = /^LC_[A-Z]+$/;
+const TASK_UID_FIRST = 20_000;
+const TASK_UID_LAST = 60_000;
+const activeTaskUids = new Set<number>();
+const usedTaskUids = new Set<number>();
+const quarantinedTaskUids = new Set<number>();
+let nextTaskUid = TASK_UID_FIRST;
+
+/** Allocate a distinct UID per live task so one task cannot inspect another's process environment. */
+export function allocateTaskProcessIdentity(): ProcessIdentityV1 {
+  for (let attempt = 0; attempt <= TASK_UID_LAST - TASK_UID_FIRST; attempt += 1) {
+    const uid = nextTaskUid;
+    nextTaskUid = uid === TASK_UID_LAST ? TASK_UID_FIRST : uid + 1;
+    if (usedTaskUids.has(uid)) continue;
+    activeTaskUids.add(uid);
+    usedTaskUids.add(uid);
+    return { uid, gid: uid };
+  }
+  throw new Error("No task process identities are available; wait for active attempts to finish.");
+}
+
+export function releaseTaskProcessIdentity(identity: ProcessIdentityV1): void {
+  if (!activeTaskUids.delete(identity.uid)) {
+    throw new Error(`Task process identity ${identity.uid} was not allocated or was already released.`);
+  }
+  if (!quarantinedTaskUids.delete(identity.uid)) usedTaskUids.delete(identity.uid);
+}
+
+export function quarantineTaskProcessIdentity(identity: ProcessIdentityV1): void {
+  if (!activeTaskUids.has(identity.uid)) {
+    throw new Error(`Cannot quarantine inactive task process identity ${identity.uid}.`);
+  }
+  quarantinedTaskUids.add(identity.uid);
+}
+
+/** Assign a task-owned workspace without following repository-controlled symlinks. */
+export async function chownTaskTree(path: string, identity: ProcessIdentityV1): Promise<void> {
+  const directory = await opendir(path);
+  await directory.close();
+  const visit = async (current: string): Promise<void> => {
+    const entries = await opendir(current);
+    for await (const entry of entries) {
+      const child = join(current, entry.name);
+      if (entry.isSymbolicLink()) await lchown(child, identity.uid, identity.gid);
+      else if (entry.isDirectory()) {
+        await chown(child, identity.uid, identity.gid);
+        await visit(child);
+      } else {
+        await chown(child, identity.uid, identity.gid);
+      }
+    }
+    await chown(current, identity.uid, identity.gid);
+  };
+  await visit(path);
+}
 
 /** Variables that grant engine, host, or service access, or are set by the policy itself. */
 const FORBIDDEN_PATTERNS: readonly RegExp[] = [
@@ -71,16 +126,21 @@ function harnessHomeLayout(home: string): HarnessHome {
  * Creates an owner-only home for one execution epoch below an operator-supplied
  * scratch root. The root must not overlap the worker's host home.
  */
-export async function createHarnessHome(scratchRoot: string, options: { readonly hostHome?: string } = {}): Promise<HarnessHome> {
+export async function createHarnessHome(scratchRoot: string, options: {
+  readonly hostHome?: string;
+  readonly processIdentity?: ProcessIdentityV1;
+} = {}): Promise<HarnessHome> {
   if (!isAbsolute(scratchRoot)) throw new Error("Harness scratch root must be an absolute path");
   if (overlapsHostHome(scratchRoot, options.hostHome)) {
     throw new Error("Harness scratch root must not be, contain, or be inside the host home directory");
   }
   await mkdir(scratchRoot, { recursive: true, mode: 0o700 });
+  if (options.processIdentity) await chmod(scratchRoot, 0o711);
   const layout = harnessHomeLayout(await mkdtemp(join(resolve(scratchRoot), "home-")));
   for (const directory of [layout.config, layout.cache, layout.data, layout.state, layout.tmp]) {
     await mkdir(directory, { recursive: true, mode: 0o700 });
   }
+  if (options.processIdentity) await chownTaskTree(layout.home, options.processIdentity);
   return layout;
 }
 

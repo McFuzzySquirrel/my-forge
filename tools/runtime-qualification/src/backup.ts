@@ -17,10 +17,9 @@ import {
   type Report,
 } from "./support.ts";
 
-/** A marker on the persistent runtime volume, so the failure happens once even across restore. */
-function failOnce(nonce: string, taskId: string): string {
-  const marker = `/var/lib/myforge/qual-markers/${nonce}-${taskId}`;
-  return `test -f ${marker} || { mkdir -p /var/lib/myforge/qual-markers && touch ${marker} && exit 1; }`;
+/** Deterministically fail the first logical attempt without writing outside its isolated workspace. */
+function failFirstAttempt(): string {
+  return 'test "$MYFORGE_LOGICAL_ATTEMPT" -gt 1';
 }
 
 const RETRY_DELAY_MS = 240_000;
@@ -74,7 +73,7 @@ export async function runBackupSuite(report: Report, root: string): Promise<Isol
   activate(source);
   const repo = (name: string, tasks: readonly FixtureTask[]) =>
     createFixtureRepo(source.root, `backup-${name}-${nonce}`, tasks);
-  const timerRepo = repo("timer", [{ id: "T1", validation: [failOnce(nonce, "T1")] }]);
+  const timerRepo = repo("timer", [{ id: "T1", validation: [failFirstAttempt()] }]);
   const approvalRepo = repo("approval", [{ id: "T1" }, { id: "R1", humanReview: true, dependencies: ["T1"] }, { id: "T2", dependencies: ["R1"] }]);
   const behindRepo = repo("behind", [{ id: "T1" }, { id: "R1", humanReview: true, dependencies: ["T1"] }, { id: "T2", dependencies: ["R1"] }]);
   const aheadRepo = repo("ahead", [{ id: "T1", validation: ["sleep 15"] }, { id: "R1", humanReview: true, dependencies: ["T1"] }]);

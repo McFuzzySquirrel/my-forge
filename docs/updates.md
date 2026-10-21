@@ -4,6 +4,24 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.135
+
+### Per-task process privilege isolation (P6-04)
+
+- Harness and validation processes now run under a distinct, unprivileged
+  per-attempt UID/GID, with supplementary groups cleared, a private workspace
+  and home, and process-tree cleanup. The service retains source-repository
+  ownership and the shared harness-grants file.
+- Tasks can no longer read harness grants or write registered repositories'
+  `.git` directories. **Residual:** they can still read other registered
+  repositories' Git metadata and objects; treat registrations as one trust
+  domain until this read access is prevented.
+- Live rootless qualification passed F01–F11, B01–B04, and U01–U02. See
+  [ADR-076](adr/076-task-process-privilege-isolation.md) and the P6-04 record
+  in `plan.md`.
+
+---
+
 ## October 2026 - v3.134
 
 ### Preserve cross-platform support and clarify harness authentication

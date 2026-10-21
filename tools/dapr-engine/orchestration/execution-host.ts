@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { WorkflowRuntime } from "@dapr/dapr";
@@ -16,10 +16,17 @@ import {
 } from "../contract/v1/index.ts";
 import { ArtifactStore } from "../execution/artifacts.ts";
 import { runCommand } from "../execution/harness/run.ts";
-import { buildHarnessEnvironment, createHarnessHome } from "../execution/isolation.ts";
+import {
+  allocateTaskProcessIdentity,
+  buildHarnessEnvironment,
+  chownTaskTree,
+  createHarnessHome,
+  quarantineTaskProcessIdentity,
+  releaseTaskProcessIdentity,
+} from "../execution/isolation.ts";
 import { superviseExecution, type ExecutionOwnershipStore } from "../execution/process-lifecycle.ts";
 import { TASK_EXECUTION_DIR } from "../execution/task-execution.ts";
-import type { AgentDescriptor, HarnessAdapter, ManifestTask } from "../execution/types.ts";
+import type { AgentDescriptor, HarnessAdapter, ManifestTask, ProcessIdentityV1 } from "../execution/types.ts";
 import { captureWorkspaceCheckpoint, type WorkspaceCheckpointPublisher } from "../execution/workspace-reconstruction.ts";
 import type { ArtifactResolveResult } from "../storage/files/artifact-checkpoint-store.ts";
 import { reconcileIntegrationReceipt } from "../storage/git-effect-reconciliation.ts";
@@ -149,6 +156,8 @@ export interface ExecutionHostDependenciesV1 {
   readonly repositoryRoot: (repositoryId: string) => string | undefined;
   /** Absolute scratch root for workspaces, harness homes, and the outcome journal; outside the host home. */
   readonly scratchRoot: string;
+  readonly taskUidIsolation?: boolean;
+  readonly taskScratchRoot?: string;
   readonly workerId: string;
   readonly budgetMs: number;
   readonly heartbeatIntervalMs: number;
@@ -183,7 +192,7 @@ interface JournalEntry {
   readonly failureReason?: string;
 }
 
-function gitEnvironment(home: string): NodeJS.ProcessEnv {
+function gitEnvironment(home: string, safeDirectory: string): NodeJS.ProcessEnv {
   return {
     PATH: process.env.PATH,
     HOME: home,
@@ -194,6 +203,9 @@ function gitEnvironment(home: string): NodeJS.ProcessEnv {
     GIT_AUTHOR_EMAIL: "myforge-host@example.invalid",
     GIT_COMMITTER_NAME: "MyForge host",
     GIT_COMMITTER_EMAIL: "myforge-host@example.invalid",
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "safe.directory",
+    GIT_CONFIG_VALUE_0: safeDirectory,
   };
 }
 
@@ -306,101 +318,142 @@ export class ExecutionHost {
     if (task.contract?.kind === "human-review") return this.awaitReview(run, task, key, receipt);
 
     const workspace = await this.prepareWorkspace(run, input.operationId);
-    this.audit({ event: "attempt.workspace", ...key, baseRevision: workspace.baseRevision });
-    const previousFailure = input.logicalAttempt > 1
-      ? (await this.readJournal(taskOperationId(input.runId, input.taskId, input.logicalAttempt - 1)))?.failureReason
-      : undefined;
-    const supervised = await superviseExecution({
-      store: this.dependencies.executions,
-      key,
-      workerId: this.dependencies.workerId,
-      budgetMs: this.dependencies.budgetMs,
-      heartbeatIntervalMs: this.dependencies.heartbeatIntervalMs,
-      heartbeatTtlMs: this.dependencies.heartbeatTtlMs,
-      run: async (context) => {
-        const home = await createHarnessHome(join(this.dependencies.scratchRoot, "homes"));
-        try {
-          const credentials = run.credentials ? await run.credentials() : {};
-          const environment = buildHarnessEnvironment({
-            home: home.home,
-            inherited: this.dependencies.inheritedEnvironment ?? process.env,
-            credentials,
-          });
-          return await executeVerifiedTaskActivity({
-            runId: input.runId,
-            taskId: input.taskId,
-            manifestDigest: input.manifestDigest,
-            logicalAttempt: input.logicalAttempt,
-            operationId: input.operationId,
-            request: {
-              agent: run.agentFor(task),
-              task,
-              repoRoot: workspace.path,
-              runId: input.runId,
-              attempt: input.logicalAttempt,
-              maxRetries: run.maxRetries,
-              timeoutMs: Math.max(1, Math.min(context.remainingMs, run.timeoutMs ?? context.remainingMs)),
-              signal: context.signal,
-              ...(previousFailure ? { previousFailure } : {}),
-              isolation: { environment, onProcessSettled: context.onProcessSettled },
-            },
-            harness: run.harness,
-            artifactStore: new ArtifactStore({ artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts") }),
-            predecessorTaskIds: run.prerequisites.get(input.taskId) ?? [],
-            allowNoop: input.allowNoop,
-            validationEnvironment: buildHarnessEnvironment({
+    const processIdentity = this.dependencies.taskUidIsolation ? allocateTaskProcessIdentity() : undefined;
+    try {
+      if (processIdentity) await chownTaskTree(workspace.path, processIdentity);
+      this.audit({ event: "attempt.workspace", ...key, baseRevision: workspace.baseRevision });
+      const previousFailure = input.logicalAttempt > 1
+        ? (await this.readJournal(taskOperationId(input.runId, input.taskId, input.logicalAttempt - 1)))?.failureReason
+        : undefined;
+      const supervised = await superviseExecution({
+        store: this.dependencies.executions,
+        key,
+        workerId: this.dependencies.workerId,
+        budgetMs: this.dependencies.budgetMs,
+        heartbeatIntervalMs: this.dependencies.heartbeatIntervalMs,
+        heartbeatTtlMs: this.dependencies.heartbeatTtlMs,
+        run: async (context) => {
+          let home: Awaited<ReturnType<typeof createHarnessHome>> | undefined;
+          try {
+            home = await createHarnessHome(
+              join(this.dependencies.taskUidIsolation ? this.requireTaskScratchRoot() : this.dependencies.scratchRoot, "homes"),
+              processIdentity ? { processIdentity } : {},
+            );
+            const credentials = run.credentials ? await run.credentials() : {};
+            const environment = buildHarnessEnvironment({
               home: home.home,
               inherited: this.dependencies.inheritedEnvironment ?? process.env,
-              credentials: {},
-            }),
-          });
-        } finally {
-          await rm(home.home, { recursive: true, force: true });
+              credentials,
+            });
+            return await executeVerifiedTaskActivity({
+              runId: input.runId,
+              taskId: input.taskId,
+              manifestDigest: input.manifestDigest,
+              logicalAttempt: input.logicalAttempt,
+              operationId: input.operationId,
+              request: {
+                agent: run.agentFor(task),
+                task,
+                repoRoot: workspace.path,
+                runId: input.runId,
+                attempt: input.logicalAttempt,
+                maxRetries: run.maxRetries,
+                timeoutMs: Math.max(1, Math.min(context.remainingMs, run.timeoutMs ?? context.remainingMs)),
+                signal: context.signal,
+                ...(previousFailure ? { previousFailure } : {}),
+                isolation: {
+                  environment,
+                  ...(processIdentity ? { processIdentity } : {}),
+                  onProcessSettled: (cleanup) => {
+                    if (processIdentity && cleanup === "unconfirmed") quarantineTaskProcessIdentity(processIdentity);
+                    context.onProcessSettled(cleanup);
+                  },
+                },
+              },
+              harness: run.harness,
+              artifactStore: new ArtifactStore({ artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts") }),
+              predecessorTaskIds: run.prerequisites.get(input.taskId) ?? [],
+              allowNoop: input.allowNoop,
+              validationEnvironment: {
+                ...buildHarnessEnvironment({
+                  home: home.home,
+                  inherited: this.dependencies.inheritedEnvironment ?? process.env,
+                  credentials: {},
+                }),
+                MYFORGE_LOGICAL_ATTEMPT: String(input.logicalAttempt),
+              },
+              ...(processIdentity ? { validationProcessIdentity: processIdentity } : {}),
+            });
+          } finally {
+            if (home) {
+              try {
+                await rm(home.home, { recursive: true, force: true });
+              } catch (error) {
+                if (processIdentity) quarantineTaskProcessIdentity(processIdentity);
+                throw error;
+              }
+            }
+          }
+        },
+      });
+      if (!supervised.started) throw new Error(`Execution ownership was not granted: ${supervised.code}`);
+
+      let outcome: TaskExecutionOutcomeV1;
+      if (supervised.stopReason || supervised.error !== undefined || !supervised.result) {
+        outcome = {
+          status: "failed",
+          // A cancelled attempt must not be retried under a new logical operation.
+          retryable: supervised.stopReason !== "cancel",
+          failureCode: supervised.stopReason ? `execution-${supervised.stopReason}` : "execution-error",
+          reason: supervised.error instanceof Error ? supervised.error.message : supervised.stopReason ?? "no result",
+        };
+      } else {
+        outcome = supervised.result;
+      }
+      if (outcome.status === "skipped") {
+        outcome = { status: "failed", retryable: false, failureCode: "execution-skipped" };
+      }
+      if (outcome.status !== "complete") {
+        return this.finishFailed(key, receipt, outcome);
+      }
+
+      const prepared = await this.captureEffect(
+        run, task, workspace.path, workspace.baseRevision, outcome, input.logicalAttempt, processIdentity,
+      );
+      if (!prepared.ok) return this.finishFailed(key, receipt, prepared.outcome);
+      this.audit({
+        event: "attempt.verified",
+        ...key,
+        checkpointDigest: prepared.effect.checkpointDigest,
+        validationRef: prepared.effect.validationRef,
+      });
+
+      if (task.approvalRequired) {
+        const evidenceDigests = [outcome.evidence.completionDigest, prepared.effect.checkpointDigest];
+        const waitId = `approval-${prepared.effect.checkpointDigest.slice(7, 23)}`;
+        receipt = await this.transition(key, receipt, "effect-published", prepared.effect.checkpointDigest);
+        await this.writeJournal(input.operationId, { approval: { ...prepared.effect, evidenceDigests } });
+        await this.transition(key, receipt, "accepted");
+        const waiting: TaskActivityOutcomeV1 = { status: "waiting", waitId };
+        await this.writeJournal(input.operationId, { approval: { ...prepared.effect, evidenceDigests }, outcome: waiting });
+        this.audit({ event: "attempt.waiting-for-approval", ...key, waitId, evidenceDigests });
+        return waiting;
+      }
+      return await this.integrate(run, task, key, receipt, prepared.effect, { rebase: true });
+    } finally {
+      try {
+        if (processIdentity) {
+          try {
+            await rm(workspace.path, { recursive: true, force: true });
+          } catch (error) {
+            quarantineTaskProcessIdentity(processIdentity);
+            throw error;
+          }
         }
-      },
-    });
-    if (!supervised.started) throw new Error(`Execution ownership was not granted: ${supervised.code}`);
-
-    let outcome: TaskExecutionOutcomeV1;
-    if (supervised.stopReason || supervised.error !== undefined || !supervised.result) {
-      outcome = {
-        status: "failed",
-        // A cancelled attempt must not be retried under a new logical operation.
-        retryable: supervised.stopReason !== "cancel",
-        failureCode: supervised.stopReason ? `execution-${supervised.stopReason}` : "execution-error",
-        reason: supervised.error instanceof Error ? supervised.error.message : supervised.stopReason ?? "no result",
-      };
-    } else {
-      outcome = supervised.result;
+      } finally {
+        if (processIdentity) releaseTaskProcessIdentity(processIdentity);
+      }
     }
-    if (outcome.status === "skipped") {
-      outcome = { status: "failed", retryable: false, failureCode: "execution-skipped" };
-    }
-    if (outcome.status !== "complete") {
-      return this.finishFailed(key, receipt, outcome);
-    }
-
-    const prepared = await this.captureEffect(run, task, workspace.path, workspace.baseRevision, outcome);
-    if (!prepared.ok) return this.finishFailed(key, receipt, prepared.outcome);
-    this.audit({
-      event: "attempt.verified",
-      ...key,
-      checkpointDigest: prepared.effect.checkpointDigest,
-      validationRef: prepared.effect.validationRef,
-    });
-
-    if (task.approvalRequired) {
-      const evidenceDigests = [outcome.evidence.completionDigest, prepared.effect.checkpointDigest];
-      const waitId = `approval-${prepared.effect.checkpointDigest.slice(7, 23)}`;
-      receipt = await this.transition(key, receipt, "effect-published", prepared.effect.checkpointDigest);
-      await this.writeJournal(input.operationId, { approval: { ...prepared.effect, evidenceDigests } });
-      await this.transition(key, receipt, "accepted");
-      const waiting: TaskActivityOutcomeV1 = { status: "waiting", waitId };
-      await this.writeJournal(input.operationId, { approval: { ...prepared.effect, evidenceDigests }, outcome: waiting });
-      this.audit({ event: "attempt.waiting-for-approval", ...key, waitId, evidenceDigests });
-      return waiting;
-    }
-    return this.integrate(run, task, key, receipt, prepared.effect, { rebase: true });
   }
 
   /**
@@ -522,8 +575,12 @@ export class ExecutionHost {
   private async prepareWorkspace(run: ExecutionHostRunV1, operationId: string): Promise<{ path: string; baseRevision: string }> {
     const target = this.targetRoot(run);
     const baseRevision = await this.git(target, ["rev-parse", "--verify", `${run.targetRef}^{commit}`]);
-    const path = join(this.dependencies.scratchRoot, "workspaces", `${operationId}-${randomUUID().slice(0, 8)}`);
-    await mkdir(join(this.dependencies.scratchRoot, "workspaces"), { recursive: true, mode: 0o700 });
+    const workspaceRoot = this.dependencies.taskUidIsolation
+      ? this.requireTaskScratchRoot()
+      : this.dependencies.scratchRoot;
+    const path = join(workspaceRoot, "workspaces", `${operationId}-${randomUUID().slice(0, 8)}`);
+    await mkdir(join(workspaceRoot, "workspaces"), { recursive: true, mode: this.dependencies.taskUidIsolation ? 0o711 : 0o700 });
+    if (this.dependencies.taskUidIsolation) await chmod(workspaceRoot, 0o711);
     await this.git(this.dependencies.scratchRoot, ["clone", "--quiet", "--no-hardlinks", "--no-checkout", target, path]);
     // The harness must not reach the integration-owned repository through a remote.
     await this.git(path, ["remote", "remove", "origin"]);
@@ -532,7 +589,13 @@ export class ExecutionHost {
     return { path, baseRevision };
   }
 
-  private async runValidation(task: ManifestTask, root: string, timeoutMs: number): Promise<{
+  private async runValidation(
+    task: ManifestTask,
+    root: string,
+    timeoutMs: number,
+    processIdentity: ProcessIdentityV1 | undefined,
+    logicalAttempt: number,
+  ): Promise<{
     readonly ok: boolean;
     readonly record: Readonly<Record<string, unknown>>;
     readonly reason?: string;
@@ -540,15 +603,34 @@ export class ExecutionHost {
     const results: Array<Record<string, unknown>> = [];
     // Validation commands come from the repository: never hand them the
     // worker's environment (API/Dapr tokens, database URL) or harness grants.
-    const home = await createHarnessHome(join(this.dependencies.scratchRoot, "homes"));
+    let home: Awaited<ReturnType<typeof createHarnessHome>> | undefined;
     try {
-      const env = buildHarnessEnvironment({ home: home.home, inherited: this.dependencies.inheritedEnvironment ?? process.env });
+      if (processIdentity) await chownTaskTree(root, processIdentity);
+      home = await createHarnessHome(
+        join(this.dependencies.taskUidIsolation ? this.requireTaskScratchRoot() : this.dependencies.scratchRoot, "homes"),
+        processIdentity ? { processIdentity } : {},
+      );
+      const env = {
+        ...buildHarnessEnvironment({ home: home.home, inherited: this.dependencies.inheritedEnvironment ?? process.env }),
+        MYFORGE_LOGICAL_ATTEMPT: String(logicalAttempt),
+      };
       for (const command of task.validationCommands) {
         const result = await runCommand(command, [], {
           shell: true, cwd: root, timeoutMs, maxBufferBytes: 10 * 1024 * 1024,
           env, inheritEnvironment: false, reapProcessGroupOnExit: true,
+          ...(processIdentity ? { processIdentity } : {}),
         });
+        if (processIdentity && result.processCleanup === "unconfirmed") {
+          quarantineTaskProcessIdentity(processIdentity);
+        }
         results.push({ command, status: result.status, stdout: tail(result.stdout), stderr: tail(result.stderr) });
+        if (result.processCleanup === "unconfirmed") {
+          return {
+            ok: false,
+            record: { taskId: task.id, results },
+            reason: `validation command process cleanup could not be confirmed: ${command}`,
+          };
+        }
         if (result.status !== 0) {
           return {
             ok: false,
@@ -559,8 +641,22 @@ export class ExecutionHost {
       }
       return { ok: true, record: { taskId: task.id, results } };
     } finally {
-      await rm(home.home, { recursive: true, force: true });
+      if (home) {
+        try {
+          await rm(home.home, { recursive: true, force: true });
+        } catch (error) {
+          if (processIdentity) quarantineTaskProcessIdentity(processIdentity);
+          throw error;
+        }
+      }
     }
+  }
+
+  private requireTaskScratchRoot(): string {
+    if (!this.dependencies.taskScratchRoot || !isAbsolute(this.dependencies.taskScratchRoot)) {
+      throw new Error("Task UID isolation requires an absolute task scratch root.");
+    }
+    return this.dependencies.taskScratchRoot;
   }
 
   private async captureEffect(
@@ -569,10 +665,12 @@ export class ExecutionHost {
     workspacePath: string,
     baseRevision: string,
     outcome: Extract<TaskExecutionOutcomeV1, { status: "complete" }>,
+    logicalAttempt: number,
+    processIdentity?: ProcessIdentityV1,
     parentCheckpointDigest?: Sha256Digest,
   ): Promise<{ ok: true; effect: PreparedEffect } | { ok: false; outcome: FailedOutcome }> {
     const timeoutMs = Math.max(1, run.timeoutMs ?? this.dependencies.budgetMs);
-    const validation = await this.runValidation(task, workspacePath, timeoutMs);
+    const validation = await this.runValidation(task, workspacePath, timeoutMs, processIdentity, logicalAttempt);
     if (!validation.ok) {
       return { ok: false, outcome: { status: "failed", retryable: true, failureCode: "validation-failed", reason: validation.reason } };
     }
@@ -746,6 +844,7 @@ export class ExecutionHost {
   ): Promise<{ ok: true; effect: PreparedEffect } | { ok: false; outcome: FailedOutcome }> {
     const workspace = await this.prepareWorkspace(run, `${key.operationId}-rebase`);
     if (workspace.baseRevision !== head) {
+      await rm(workspace.path, { recursive: true, force: true });
       return { ok: false, outcome: { status: "failed", retryable: true, failureCode: "integration-target-moved" } };
     }
     await this.importBundle(workspace.path, effect.bundleRef);
@@ -773,18 +872,37 @@ export class ExecutionHost {
       artifactRefs: [],
       validationCommands: effect.validationCommands,
     });
-    const rebased = await this.captureEffect(
-      run,
-      task,
-      workspace.path,
-      head,
-      { status: "complete", evidence: completion },
-      effect.checkpointDigest,
-    );
-    if (rebased.ok) {
-      this.audit({ event: "attempt.rebased", ...key, from: effect.baseRevision, onto: head, checkpointDigest: rebased.effect.checkpointDigest });
+    const processIdentity = this.dependencies.taskUidIsolation ? allocateTaskProcessIdentity() : undefined;
+    try {
+      const rebased = await this.captureEffect(
+        run,
+        task,
+        workspace.path,
+        head,
+        { status: "complete", evidence: completion },
+        key.logicalAttempt,
+        processIdentity,
+        effect.checkpointDigest,
+      );
+      if (rebased.ok) {
+        this.audit({ event: "attempt.rebased", ...key, from: effect.baseRevision, onto: head, checkpointDigest: rebased.effect.checkpointDigest });
+      }
+      return rebased;
+    } finally {
+      try {
+        if (processIdentity) {
+          try {
+            await chownTaskTree(workspace.path, { uid: 0, gid: 0 });
+            await rm(workspace.path, { recursive: true, force: true });
+          } catch (error) {
+            quarantineTaskProcessIdentity(processIdentity);
+            throw error;
+          }
+        }
+      } finally {
+        if (processIdentity) releaseTaskProcessIdentity(processIdentity);
+      }
     }
-    return rebased;
   }
 
   /** Resolves a redelivered operation from its receipt and integration record without repeating effects. */
@@ -884,7 +1002,7 @@ export class ExecutionHost {
     await mkdir(this.gitHome, { recursive: true, mode: 0o700 });
     const { stdout } = await execFileAsync("git", [...args], {
       cwd,
-      env: gitEnvironment(this.gitHome),
+      env: gitEnvironment(this.gitHome, cwd),
       maxBuffer: 16 * 1024 * 1024,
     });
     const text = stdout.trim();

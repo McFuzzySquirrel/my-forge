@@ -9,7 +9,7 @@ import {
   type WorktreeSnapshot,
 } from "./verify.ts";
 import { readTaskHandoff, type TaskHandoff } from "./task-result.ts";
-import type { ManifestTask, TaskGateResult, TaskResult } from "./types.ts";
+import type { ManifestTask, ProcessIdentityV1, TaskGateResult, TaskResult } from "./types.ts";
 
 export interface TaskAdmissionOptions {
   readonly task: ManifestTask;
@@ -20,6 +20,7 @@ export interface TaskAdmissionOptions {
   readonly timeoutMs: number;
   /** Isolated environment for validation commands; see `runTaskValidation`. */
   readonly validationEnvironment?: Readonly<Record<string, string>>;
+  readonly validationProcessIdentity?: ProcessIdentityV1;
 }
 
 export type TaskAdmissionResult =
@@ -192,7 +193,13 @@ export async function admitTaskResult(options: TaskAdmissionOptions): Promise<Ta
   gates.push(gate("handoff", "passed", undefined, [handoff.summary]));
   gates.push(gate("requirements", "passed", undefined, ["unresolved=[]"]));
 
-  const validation = await runTaskValidation(options.task, options.repoRoot, options.timeoutMs, options.validationEnvironment);
+  const validation = await runTaskValidation(
+    options.task,
+    options.repoRoot,
+    options.timeoutMs,
+    options.validationEnvironment,
+    options.validationProcessIdentity,
+  );
   if (!validation.ok) {
     const reason = boundedReason(validation.reason ?? "A mandatory validation command failed.");
     return reject("validation-failed", reason, [

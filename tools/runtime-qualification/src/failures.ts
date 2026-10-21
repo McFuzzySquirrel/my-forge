@@ -13,10 +13,14 @@ import {
 } from "./service.ts";
 import { assert, containerName, podman, requireLauncher, sleep, waitFor, type Isolation, type Report } from "./support.ts";
 
-/** A marker on the persistent runtime volume, so a fail-once validation survives container recreation. */
-function failOnce(nonce: string, taskId: string): string {
-  const marker = `/var/lib/myforge/qual-markers/${nonce}-${taskId}`;
-  return `test -f ${marker} || { mkdir -p /var/lib/myforge/qual-markers && touch ${marker} && exit 1; }`;
+/** Deterministically fail the first logical attempt without writing outside its isolated workspace. */
+function failFirstAttempt(): string {
+  return 'test "$MYFORGE_LOGICAL_ATTEMPT" -gt 1';
+}
+
+function taskIsolationProbe(repositoryId: string, nonce: string): string {
+  const marker = `/repositories/${repositoryId}/.git/hooks/myforge-isolation-${nonce}`;
+  return `test "$(id -u)" -gt 0 && test "$HOME" != /root && test ! -r /run/myforge/harness-grants/grants.json && ! touch '${marker}' 2>/dev/null`;
 }
 
 export interface Scenario {
@@ -148,7 +152,7 @@ export const FAILURE_SCENARIOS: readonly Scenario[] = [
   {
     id: "F06",
     title: "Full stack stop/start during a durable retry delay",
-    tasks: (nonce) => [{ id: "T1", validation: [failOnce(nonce, "T1")] }],
+    tasks: () => [{ id: "T1", validation: [failFirstAttempt()] }],
     async run(context, details) {
       const retryDelayMs = 60_000;
       let client = await context.client();
@@ -316,6 +320,23 @@ export const FAILURE_SCENARIOS: readonly Scenario[] = [
       details.attempts = Object.fromEntries(final.tasks.map((task) => [task.taskId, attemptsFor(final, task.taskId)]));
       assert(final.status === "complete", `run ended ${final.status}`);
       assertExactlyOnce(context.repoRoot, submitted.runId, ["T1", "T2", "T3", "T4"], details);
+    },
+  },
+  {
+    id: "F11",
+    title: "Task UID cannot read harness grants or write the registered source Git metadata",
+    tasks: (nonce) => [{
+      id: "T1",
+      validation: [taskIsolationProbe(`failures-f11-${nonce}`, nonce)],
+    }],
+    async run(context, details) {
+      const client = await context.client();
+      const submitted = await submit(client, context.repoRoot);
+      details.runId = submitted.runId;
+      const final = await waitForTerminal(client, submitted.runId, 120_000);
+      details.status = final.status;
+      assert(final.status === "complete", `task isolation probe ended ${final.status}`);
+      assertExactlyOnce(context.repoRoot, submitted.runId, ["T1"], details);
     },
   },
 ];

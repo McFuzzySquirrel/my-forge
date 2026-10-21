@@ -70,3 +70,11 @@ traversal, symlink and absolute output escapes, and control size limits.
 - Repository-defined commands can no longer read runtime credentials.
 - Finding 2 must be resolved, or each registered repository and harness
   explicitly trusted, before cutover.
+
+## Implementation update — 2026-10-21
+
+[ADR-076](076-task-process-privilege-isolation.md) implements per-attempt
+unprivileged UIDs. Tasks can no longer write registered source `.git` mounts
+or read the shared grants file. The mounts remain readable, however, so the
+cross-repository confidentiality risk remains open where registered
+repositories are not mutually trusted.

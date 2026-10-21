@@ -18,8 +18,9 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ManifestTask, TaskResult } from "./types.ts";
+import type { ManifestTask, ProcessIdentityV1, TaskResult } from "./types.ts";
 import { runCommand } from "./harness/run.ts";
+import { quarantineTaskProcessIdentity } from "./isolation.ts";
 
 /** Trivial responses are short and contain no content line of real length. */
 const MIN_SUBSTANTIVE_OUTPUT_LEN = 40;
@@ -207,6 +208,7 @@ export async function runTaskValidation(
    * the worker, so repository commands cannot read its tokens or credentials.
    */
   environment?: Readonly<Record<string, string>>,
+  processIdentity?: ProcessIdentityV1,
 ): Promise<VerifyResult> {
   if (task.validationCommands.length === 0) return { ok: true };
 
@@ -217,7 +219,15 @@ export async function runTaskValidation(
       timeoutMs,
       maxBufferBytes: 10 * 1024 * 1024,
       ...(environment ? { env: { ...environment }, inheritEnvironment: false, reapProcessGroupOnExit: true } : {}),
+      ...(processIdentity ? { processIdentity } : {}),
     });
+    const ownedProcess = environment !== undefined || processIdentity !== undefined;
+    if (processIdentity && result.processCleanup === "unconfirmed") {
+      quarantineTaskProcessIdentity(processIdentity);
+    }
+    if (ownedProcess && result.processCleanup === "unconfirmed") {
+      return { ok: false, reason: `validation command process cleanup could not be confirmed: ${command}` };
+    }
     if (result.status !== 0) {
       const detail = (result.stderr || result.stdout).trim();
       return {

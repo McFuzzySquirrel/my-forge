@@ -400,11 +400,13 @@ support matrix, and release evidence.
   cross-repository access, escaping paths/symlinks, log/secret exposure, malicious
   artifact metadata, and exhausted resource limits. Scan dependencies and changed
   code; require resolution of relevant findings before cutover.
-  *Done 2026-10-21 ([ADR-075](docs/adr/075-security-boundary-review.md)):
-  audit clean; validation-command secret exposure fixed; live API probes pass.
-  **Open cutover blocker:** harness processes run as container root beside
-  every repository's read-write `.git` and the grants file. A dedicated
-  task UID is required.*
+  *Reviewed 2026-10-21 ([ADR-075](docs/adr/075-security-boundary-review.md),
+  [ADR-076](docs/adr/076-task-process-privilege-isolation.md)): dependency
+  audit clean; validation secret exposure fixed; task processes now run under
+  per-attempt unprivileged UIDs; live F11 verifies the grants file is unreadable
+  and source `.git` is unwritable. **Residual cutover blocker:** registered
+  repositories' Git metadata remains readable across tasks; deny this if
+  registered repositories are not mutually trusted.*
 - [ ] **P6-05 — Qualify supported platforms/harnesses.** Validate Linux rootless
   behavior and each claimed harness. Test Podman-machine networking, credentials,
   mounts, path translation, watchers, and performance separately on macOS/Windows.
@@ -579,7 +581,7 @@ complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
 [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
 [P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21),
 [ADR-075](docs/adr/075-security-boundary-review.md), which records one open
-cutover blocker); P6-05 remains incomplete ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)): Linux, macOS, and Windows remain required support targets. P6-06 budget evidence is recorded ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)). P6-GATE remains blocked by the ADR-075 task-UID finding, real-harness qualification, and macOS/Windows runtime qualification.
+cutover blocker); P6-05 remains incomplete ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)): Linux, macOS, and Windows remain required support targets. P6-06 budget evidence is recorded ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)). P6-GATE remains blocked by residual cross-repository Git read access, real-harness qualification, and macOS/Windows runtime qualification.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -836,6 +838,26 @@ deliberately with `--allow-git-drift`.
 | Long histories | Bounded | 1,000-task run measured above; rollover bounds history size | Pass |
 | Backup / restore / upgrade | Rehearsed | About 20 s each (P6-02, P6-03) | Pass |
 
+### P6-04 task process isolation evidence — 2026-10-21
+
+The worker assigns each task a distinct, unprivileged UID/GID, clears
+supplementary groups, and gives it a private workspace and home. The service
+retains ownership of the registered source `.git` mounts and the shared
+harness-grants file. A live rootless Podman probe confirmed the task can write
+its workspace, cannot read the grants file, and cannot write a source Git
+hooks directory. Qualification F11 automates these checks. The privilege-drop
+helper is exercised through the real harness process runner; `setpriv` is
+installed in worker image `localhost/myforge-worker:3`.
+
+**Residual risk:** the task can read other registered repositories' Git
+metadata and objects. Treat registrations as a shared trust domain until a
+mount/filesystem boundary prevents that read access.
+
+**Live regression qualification after the change:** failures F01–F10 and F11
+passed; backup B01–B04 passed; upgrade U01–U02 passed. The test-only
+fail-first validation now keys off the non-secret `MYFORGE_LOGICAL_ATTEMPT`
+value rather than writing a marker into worker-owned storage.
+
 ### P6-05 platform and harness evidence — 2026-10-21
 
 **Required support: Linux, macOS, and Windows.** The earlier Linux-only
@@ -862,7 +884,8 @@ harness must not require another repository credential. Provider authentication
 is separate from GitHub repository access. Existing authorized provider logins
 should be reused through a narrowly scoped handoff; the current service only
 supports explicit credential grants and does not import host login state.
-This also requires the ADR-075 task-UID fix first.
+The task-UID fix is implemented (ADR-076); residual read-only cross-repository
+access still needs a trust-boundary decision before cutover.
 
 ### P5-GATE evidence — 2026-10-22
 

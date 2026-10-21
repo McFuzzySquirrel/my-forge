@@ -407,17 +407,18 @@ support matrix, and release evidence.
   and source `.git` is unwritable. **Residual cutover blocker:** registered
   repositories' Git metadata remains readable across tasks; deny this if
   registered repositories are not mutually trusted.*
-- [ ] **P6-05 — Qualify supported platforms/harnesses.** Validate Linux rootless
-  behavior and each claimed harness. Test Podman-machine networking, credentials,
-  mounts, path translation, watchers, and performance separately on macOS/Windows.
-  Preserve Linux, macOS, and Windows support; missing desktop evidence is a
-  qualification gap, not permission to drop platform support.
-  *Partial 2026-10-21 ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)):
+- [x] **P6-05 — Qualify the Linux platform and available harnesses.** Validate
+  Linux rootless behavior and each available, claimed harness. Preserve the
+  existing macOS and Windows implementations; do not remove desktop targets
+  because native qualification is deferred. The operator rebaselined P6-05 on
+  2026-10-21: native macOS/Windows Podman-machine checks and Claude qualification
+  move to the post-Phase-6 follow-up below. Until those checks pass, desktop and
+  Claude profiles remain unqualified and are not advertised as qualified.
+  *Done 2026-10-21 ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)):
   Linux rootless evidence and authenticated Copilot/OpenCode runs recorded.
-  macOS/Windows Podman-machine qualification remains required. Harness selection must not require
-  additional GitHub repository credentials; reuse existing authorized provider
-  authentication where possible without exposing unrelated credentials.
-  Claude is deferred by the operator until after the planned phases.*
+  Harness selection does not require additional GitHub repository credentials;
+  existing authorized provider authentication is reused without exposing
+  unrelated credentials.*
 - [x] **P6-06 — Re-run parity and budgets.** Compare accepted outcomes, commit
   behavior, validation, audit, and controls with P0 fixtures; measure startup,
   memory/disk, long histories, cancellation, and recovery against agreed thresholds.
@@ -425,7 +426,11 @@ support matrix, and release evidence.
   all budgets met; cancellation has little headroom.*
 - [ ] **P6-GATE:** Release matrix below passes for every advertised profile;
   backup/restore and upgrades are rehearsed; support limits and unavoidable
-  duplicate provider calls are documented. Unqualified platforms are not advertised.
+  duplicate provider calls are documented. Unqualified profiles are not
+  advertised. Under the approved P6-05 rebaseline, native desktop and Claude
+  qualification are post-Phase-6 follow-ups, not P6-GATE prerequisites while
+  those profiles remain unadvertised. The residual cross-repository Git-metadata
+  read remains a cutover blocker.
 
 ## P7 — Cut over and retire the legacy scheduler
 
@@ -485,6 +490,25 @@ authenticated operations without changing task semantics.
   security criteria; hosted/local run outcomes remain equivalent. Do not label
   a single-node persistent deployment highly available.
 
+## Post-Phase-6 follow-up — native desktop and deferred harness qualification
+
+These follow-ups are scheduled after completion of the currently planned phases
+(P6–P8). Keep the existing macOS and Windows implementations in the product,
+but do not describe those profiles as qualified until their native-host checks
+pass. These follow-ups do not waive the separate P6-GATE security blocker.
+
+- [ ] **P6-FU-01 — Qualify the native macOS Podman machine.** On a real Mac,
+  verify Podman-machine networking, credentials, mounts, path translation,
+  watchers, performance, and the Copilot/OpenCode task paths; fix any defects
+  found before advertising the desktop profile.
+- [ ] **P6-FU-02 — Qualify the native Windows Podman machine.** On a real Windows
+  host, verify the same runtime, credential, path, watcher, performance, and
+  harness behaviors; fix any defects found before advertising the desktop
+  profile.
+- [ ] **P6-FU-03 — Qualify Claude Code.** Run an isolated authenticated task
+  after the planned phases, verify its integration and credential isolation,
+  and advertise the Claude profile only after it passes.
+
 ## Release acceptance matrix
 
 Each row requires linked test results before P6/P7; hosted rows additionally gate
@@ -501,7 +525,7 @@ P8. A passing row does not replace its phase's other acceptance requirements.
 | Recovery | Restart app and stack, clean checkpoint reconstruction, crashes before/after each effect receipt |
 | Operations | Consistent backup/restore, compatible history replay, rollback, bounded resource/retention behavior |
 | Clients | Launcher/Console reconnection, read-only exports, migrated bootstrap and auto-build callers |
-| Platforms | Real Linux rootless run; separate macOS/Windows evidence only if supported |
+| Platforms | Real Linux rootless run is the P6 baseline; native macOS/Windows evidence is required before advertising either desktop profile |
 | Hosted | Shared objects, clean-host failover, partitions/fencing, scoped identities and quotas |
 
 ## Verification and documentation discipline
@@ -582,7 +606,13 @@ complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
 [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
 [P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21),
 [ADR-075](docs/adr/075-security-boundary-review.md), which records one open
-cutover blocker); P6-05 remains incomplete ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)): Linux, macOS, and Windows remain required support targets, and Claude qualification is deferred. P6-06 budget evidence is recorded ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)). P6-GATE remains blocked by residual cross-repository Git read access, Claude qualification, and macOS/Windows runtime qualification.
+cutover blocker); P6-05 is complete under the operator-approved Linux and
+available-harness scope ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)).
+macOS and Windows implementations remain included but unqualified; native
+desktop and Claude qualification are tracked in the post-Phase-6 follow-up.
+P6-06 budget evidence is recorded
+([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)).
+P6-GATE remains blocked by residual cross-repository Git-metadata read access.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -861,11 +891,12 @@ value rather than writing a marker into worker-owned storage.
 
 ### P6-05 platform and harness evidence — 2026-10-21
 
-**Required support: Linux, macOS, and Windows.** The earlier Linux-only
-declaration was corrected at the operator's request on 2026-10-21. Evidence
-below covers Linux only; it does not remove desktop support. macOS and Windows
-Podman-machine networking, credentials, mounts, path translation, watchers,
-and performance still need host-specific qualification before P6-05 can close.
+**Scope rebaselined by the operator on 2026-10-21:** Linux rootless and the
+available Copilot/OpenCode harnesses are the P6-05 qualification profile.
+Existing macOS and Windows implementations remain included; this scope change
+does not remove desktop targets. Native desktop behavior and Claude remain
+unqualified, are not advertised as qualified profiles, and are tracked in the
+[post-Phase-6 follow-up](#post-phase-6-follow-up--native-desktop-and-deferred-harness-qualification).
 
 | Item | Result |
 |---|---|
@@ -878,7 +909,7 @@ and performance still need host-specific qualification before P6-05 can close.
 | Stub harness | Qualified end to end (all P6 suites) |
 | Copilot CLI 1.0.100 | Passed one isolated live Dapr workflow task with the existing `gh auth token` bound only as `COPILOT_GITHUB_TOKEN`; one validated `docs/hello.md` commit integrated |
 | OpenCode CLI 2.0.32 | Passed one isolated live Dapr workflow task using only the saved GitHub Copilot provider entry, imported into the task's private home through `OPENCODE_AUTH_JSON`; one validated `docs/hello.md` commit integrated |
-| Claude Code | **Deferred** by the operator until after the planned phases; remains unqualified |
+| Claude Code | **Deferred** by the operator to the post-Phase-6 follow-up; remains unqualified |
 
 The host-native verifier ran five stub scenarios plus the two authenticated
 harness tasks against an ephemeral rootless Dapr 1.18.7 pod and disposable
@@ -893,10 +924,9 @@ The repository remains a standard Git repository hosted on GitHub regardless
 of harness; switching harness requires no additional repository credential.
 Provider authentication is separate from GitHub repository access. macOS and
 Windows Podman-machine networking, credentials, mounts, path translation,
-watchers, and performance remain unqualified. Claude is also unqualified by
-choice and must be tested before advertising it as a release-qualified
-profile. The task-UID fix is implemented (ADR-076); residual read-only
-cross-repository access still needs a trust-boundary decision before cutover.
+watchers, and performance remain unqualified. The task-UID fix is implemented
+(ADR-076); residual read-only cross-repository access still needs a
+trust-boundary decision before cutover.
 
 ### P5-GATE evidence — 2026-10-22
 

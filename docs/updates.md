@@ -4,6 +4,21 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.137
+
+### Rebaseline Phase 6 platform qualification
+
+- P6-05 now closes on the verified Linux rootless profile and the available
+  Copilot/OpenCode harnesses. Existing macOS and Windows implementations remain
+  included, but their profiles are explicitly unqualified until native-machine
+  follow-up checks pass; unqualified desktop profiles are not advertised as
+  qualified.
+- Native macOS/Windows Podman-machine checks and Claude qualification are
+  tracked as post-Phase-6 follow-ups. P6-GATE remains blocked by the separate
+  cross-repository Git-metadata read issue.
+
+---
+
 ## October 2026 - v3.136
 
 ### Qualify Copilot and OpenCode on Linux (P6-05)

@@ -311,10 +311,13 @@ ConvertTo-Json -InputObject @($auth) -Depth 100 -Compress |
   domain until that remaining boundary is closed.
 
 **Platform support and qualification.** Linux, macOS, and Windows remain
-support targets. The P6 live runtime evidence currently covers Linux rootless
-Podman only. macOS and Windows require separate Podman-machine qualification;
-that missing evidence is not a Linux-only product policy. See
-[P6-05](../plan.md#p6-05-platform-and-harness-evidence--2026-10-21).
+included targets; the existing desktop implementations are retained. P6
+qualification currently covers Linux rootless Podman only. Native macOS and
+Windows Podman-machine behavior remains unqualified and is tracked as a
+post-Phase-6 follow-up; do not treat those profiles as qualified until the
+native checks pass. This deferral is not a Linux-only product policy. See
+[P6-05](../plan.md#p6-05-platform-and-harness-evidence--2026-10-21) and the
+[post-Phase-6 follow-up](../plan.md#post-phase-6-follow-up--native-desktop-and-deferred-harness-qualification).
 
 **Routing for registered repositories.** Once a repository is registered,
 `engine-run`, `resume`, feature-increment runs, and Console builds use the

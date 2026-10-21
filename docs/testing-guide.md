@@ -344,6 +344,28 @@ forge-launcher engine-run --repo /tmp/myforge-smoke/my-smoke-app --harness stub 
 
 This verifies that the engine-run path resolves the repo, selects the workflow engine package, and builds the command correctly without launching the full workflow.
 
+## 4a. Live runtime qualification (developers)
+
+`tools/runtime-qualification` runs P6 failure scenarios against a real rootless
+Podman stack. It uses a separate Compose project (`myforge-qual`, API port
+18483, data under `/tmp/myforge-qual`), so your `myforge-runtime` installation
+is not touched. Install `scripts/forge-launcher` dependencies first.
+
+```bash
+cd tools/runtime-qualification
+npm run typecheck
+npm run -s qualify -- failures --report /tmp/myforge-qual/reports/failures.json
+npm run -s qualify -- failures --only F07,F08   # selected scenarios
+npm run -s qualify -- failures --teardown       # reset the isolated runtime afterwards
+```
+
+The full suite takes about 15 minutes. To inspect the isolated stack, run the
+launcher with `MYFORGE_RUNTIME_PROJECT=myforge-qual`,
+`MYFORGE_RUNTIME_DIR=/tmp/myforge-qual/runtime`, and `MYFORGE_API_PORT=18483`.
+Never use `podman system reset` or change `XDG_DATA_HOME` to isolate a run; both
+affect every rootless container of the user. See
+[ADR-072](adr/072-runtime-failure-recovery-and-qualification.md).
+
 ## 5. Helpful checks when debugging
 
 If a flow fails, confirm the following before digging deeper:

@@ -17,6 +17,7 @@ import {
   createGetRunControlActivity,
   createListAcceptedRunControlsActivity,
   registerOrchestrationWorkflows,
+  runOrchestrationWorkflowId,
 } from "../orchestration/index.ts";
 import { createRecordRunLifecycleEventActivity } from "../orchestration/status-activity.ts";
 import { RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME } from "../orchestration/workflow.ts";
@@ -31,6 +32,8 @@ import {
 } from "../storage/index.ts";
 import { createServiceApiHandler, MIN_API_TOKEN_LENGTH } from "./api.ts";
 import { migrateApplicationDatabase } from "./migrations.ts";
+import { reconcileFailedRuns, type OrchestrationFailureV1 } from "./run-reconciler.ts";
+import { sdkWorkflowWorkerProbe, watchWorkflowWorker } from "./worker-watchdog.ts";
 import {
   RunService,
   ServiceRunRegistry,
@@ -50,6 +53,8 @@ const REPOSITORIES_DIR = process.env.MYFORGE_REPOSITORIES_DIR ?? "/repositories"
 const API_TOKEN = process.env.MYFORGE_API_TOKEN ?? "";
 const READY_TIMEOUT_MS = 120_000;
 const HEARTBEAT_TTL_MS = 30_000;
+const RUN_RECONCILE_INTERVAL_MS = 60_000;
+const WORKER_LOSS_RECOVERY_TIMEOUT_MS = 600_000;
 
 if (!DATABASE_URL) throw new Error("MYFORGE_DATABASE_URL is required");
 if (API_TOKEN.length < MIN_API_TOKEN_LENGTH) {
@@ -63,6 +68,14 @@ const database = new Pool({
   connectionString: DATABASE_URL,
   connectionTimeoutMillis: 5_000,
   max: 10,
+});
+// A PostgreSQL restart must not crash the service: the pool discards broken
+// idle clients, and a checked-out client fails its next query instead.
+database.on("error", (error) => {
+  process.stderr.write(`PostgreSQL connection lost: ${error.message}\n`);
+});
+database.on("connect", (connection) => {
+  connection.on("error", () => {});
 });
 const daprAddress = { daprHost: DAPR_HOST, daprPort: DAPR_GRPC_PORT };
 const daprHttpUrl = `http://${DAPR_HOST}:${DAPR_HTTP_PORT}`;
@@ -78,12 +91,13 @@ const executions = new PostgresExecutionOwnershipStore(database);
 const submissions = new PostgresRunSubmissionStore(database);
 let server: Server | undefined;
 let sweeper: NodeJS.Timeout | undefined;
+let reconciler: NodeJS.Timeout | undefined;
 let ready = false;
 let stopping = false;
 let stoppingPromise: Promise<void> | undefined;
 
-async function waitForDapr(): Promise<void> {
-  const deadline = Date.now() + READY_TIMEOUT_MS;
+async function waitForDapr(timeoutMs = READY_TIMEOUT_MS): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`${daprHttpUrl}/v1.0/healthz/outbound`, {
@@ -97,6 +111,19 @@ async function waitForDapr(): Promise<void> {
     await delay(500);
   }
   throw new Error("Dapr sidecar did not become ready before the startup deadline");
+}
+
+async function waitForDatabase(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await database.query("SELECT 1");
+      return;
+    } catch {
+      await delay(1_000);
+    }
+  }
+  throw new Error("The application database did not recover before the deadline");
 }
 
 async function proveWorkflowAdmission(): Promise<void> {
@@ -142,6 +169,45 @@ function createWorkflowHost(): ExecutionHost {
 const workflowEvents = {
   raiseEvent: (instanceId: string, name: string, payload: unknown) => client.raiseEvent(instanceId, name, payload),
 };
+
+const lifecycleWriter = leaseReleasingLifecycleWriter(
+  status,
+  (runId) => integration.releaseRun(runId),
+  (runId, error) => process.stderr.write(
+    `Repository leases for ${runId} were not released: ${error instanceof Error ? error.message : "unknown error"}\n`,
+  ),
+);
+
+async function orchestrationFailure(runId: string): Promise<OrchestrationFailureV1 | undefined> {
+  const instanceId = runOrchestrationWorkflowId(runId);
+  const state = await client.getWorkflowState(instanceId, false);
+  if (state?.runtimeStatus === WorkflowRuntimeStatus.FAILED) {
+    // Failure details are only returned with the payloads.
+    const detailed = await client.getWorkflowState(instanceId, true).catch(() => undefined);
+    return { runtimeStatus: "FAILED", message: detailed?.workflowFailureDetails?.getErrorMessage() };
+  }
+  if (state?.runtimeStatus === WorkflowRuntimeStatus.TERMINATED) return { runtimeStatus: "TERMINATED" };
+  return undefined;
+}
+
+let reconciling = false;
+async function reconcileRuns(): Promise<void> {
+  if (reconciling) return;
+  reconciling = true;
+  try {
+    const reconciled = await reconcileFailedRuns(
+      { listActiveRunIds: () => status.listActiveRunIds(), orchestrationFailure, appendEvent: (input) => lifecycleWriter.appendEvent(input) },
+      (runId, error) => process.stderr.write(
+        `Run ${runId} could not be reconciled: ${error instanceof Error ? error.message : "unknown error"}\n`,
+      ),
+    );
+    if (reconciled > 0) process.stderr.write(`Marked ${reconciled} run(s) failed after their orchestration failed\n`);
+  } catch (error) {
+    process.stderr.write(`Run reconciliation failed: ${error instanceof Error ? error.message : "unknown error"}\n`);
+  } finally {
+    reconciling = false;
+  }
+}
 
 async function scheduleRun(instanceId: string, input: unknown): Promise<void> {
   if (await client.getWorkflowState(instanceId, false)) return;
@@ -217,6 +283,7 @@ async function stop(): Promise<void> {
     deadline.unref();
     try {
       if (sweeper) clearInterval(sweeper);
+      if (reconciler) clearInterval(reconciler);
       await closeServer();
       await runtime.stop();
       await client.stop();
@@ -245,13 +312,7 @@ async function start(): Promise<void> {
   registerOrchestrationWorkflows(runtime);
   runtime.registerActivityWithName(
     RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME,
-    createRecordRunLifecycleEventActivity(leaseReleasingLifecycleWriter(
-      status,
-      (runId) => integration.releaseRun(runId),
-      (runId, error) => process.stderr.write(
-        `Repository leases for ${runId} were not released: ${error instanceof Error ? error.message : "unknown error"}\n`,
-      ),
-    )),
+    createRecordRunLifecycleEventActivity(lifecycleWriter),
   );
   host.register(runtime);
   registerRunControlActivities();
@@ -263,6 +324,29 @@ async function start(): Promise<void> {
   process.stdout.write("Dapr sidecar is ready\n");
   await runtime.start();
   process.stdout.write("Dapr workflow worker is running\n");
+  const workerProbe = sdkWorkflowWorkerProbe(runtime);
+  if (workerProbe.running() === undefined) {
+    process.stderr.write("Dapr workflow worker state is not observable with this SDK; sidecar-loss recovery is disabled\n");
+  }
+  watchWorkflowWorker({
+    probe: workerProbe,
+    stopping: () => stopping,
+    onLost: () => {
+      process.stderr.write("Dapr workflow worker stopped after losing the sidecar connection; restarting the service once its dependencies are back\n");
+      ready = false;
+      process.exitCode = 1;
+      // Podman skips the restart policy while a required container is down,
+      // so exit only after the sidecar and database are reachable again.
+      void (async () => {
+        await waitForDapr(WORKER_LOSS_RECOVERY_TIMEOUT_MS)
+          .then(() => waitForDatabase(WORKER_LOSS_RECOVERY_TIMEOUT_MS))
+          .catch((error: unknown) => {
+            process.stderr.write(`${error instanceof Error ? error.message : "Dependencies did not recover"}; exiting anyway\n`);
+          });
+        await stop();
+      })().finally(() => process.exit(1));
+    },
+  });
   await proveWorkflowAdmission();
   await runs.recover(reportUnbound);
   sweeper = setInterval(() => {
@@ -271,6 +355,9 @@ async function start(): Promise<void> {
     });
   }, HEARTBEAT_TTL_MS);
   sweeper.unref();
+  await reconcileRuns();
+  reconciler = setInterval(() => { void reconcileRuns(); }, RUN_RECONCILE_INTERVAL_MS);
+  reconciler.unref();
   ready = true;
   process.stdout.write("Execution service is ready\n");
 }

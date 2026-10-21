@@ -257,11 +257,21 @@ function validTaskTransition(from: TaskStatusV1, to: TaskStatusV1): boolean {
     running: ["running", "waiting-for-approval", "complete", "failed", "skipped", "cancelled", "pending"],
     "waiting-for-approval": ["running", "failed", "cancelled"],
     complete: ["pending"],
-    failed: ["pending"],
+    // A run cancellation supersedes a task failure that raced with it.
+    failed: ["pending", "cancelled"],
     skipped: ["pending"],
     cancelled: ["pending"],
   };
   return transitions[from].includes(to);
+}
+
+/**
+ * A task attempt still running when its run is cancelled can report an outcome
+ * (or a retry) after the run has recorded the task as cancelled. The event is
+ * kept for audit, but it must not reopen the cancelled task.
+ */
+function isLateCancelledTaskOutcome(run: RunStatusV1, task: TaskStatusV1, to: TaskStatusV1 | undefined): boolean {
+  return (run === "cancelling" || run === "cancelled") && task === "cancelled" && to !== undefined;
 }
 
 function validAttemptTransition(from: AttemptStatusV1, to: AttemptStatusV1): boolean {
@@ -423,6 +433,7 @@ export class PostgresRunStatusStore {
       }
 
       let task: TaskRow | undefined;
+      let lateCancelledOutcome = false;
       if (input.taskId !== undefined) {
         const taskResult = await connection.query<TaskRow>(
           `SELECT task_id, task_index, status, logical_attempt, updated_at
@@ -431,7 +442,8 @@ export class PostgresRunStatusStore {
         );
         task = taskResult.rows[0];
         if (!task) throw new Error(`Unknown task status record: ${input.taskId}`);
-        if (input.taskStatus !== undefined && !validTaskTransition(task.status, input.taskStatus)) {
+        lateCancelledOutcome = isLateCancelledTaskOutcome(run.status, task.status, input.taskStatus);
+        if (input.taskStatus !== undefined && !lateCancelledOutcome && !validTaskTransition(task.status, input.taskStatus)) {
           const oldAttempt = task.logical_attempt === null ? 0 : safeInteger(task.logical_attempt, "task logical attempt", 1);
           const newAttempt = input.logicalAttempt ?? oldAttempt;
           const isNewAttempt = input.taskStatus === "running" && newAttempt > oldAttempt
@@ -487,7 +499,7 @@ export class PostgresRunStatusStore {
                updated_at = $3
            WHERE run_id = $4 AND task_id = $5`,
           [
-            input.taskStatus ?? null, input.logicalAttempt ?? null, event.createdAt,
+            lateCancelledOutcome ? null : input.taskStatus ?? null, input.logicalAttempt ?? null, event.createdAt,
             input.runId, input.taskId,
           ],
         );
@@ -504,6 +516,18 @@ export class PostgresRunStatusStore {
       }
       return { event, reused: false };
     });
+  }
+
+  /** IDs of runs whose projected status is not terminal, oldest first. */
+  async listActiveRunIds(limit = 10_000): Promise<readonly string[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1) throw new RangeError("limit must be a positive integer");
+    const result = await this.database.query<{ run_id: string }>(
+      `SELECT run_id FROM forge_run_statuses
+       WHERE status NOT IN ('complete', 'failed', 'cancelled')
+       ORDER BY updated_at, run_id LIMIT $1`,
+      [limit],
+    );
+    return result.rows.map((row) => row.run_id);
   }
 
   async getRunStatus(runId: string): Promise<RunStatusSnapshotV1 | undefined> {

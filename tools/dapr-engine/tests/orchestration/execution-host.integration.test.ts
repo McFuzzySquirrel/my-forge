@@ -289,3 +289,152 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
   }
   assert.ok(!JSON.stringify(audit).includes("fixture-token-not-a-secret"));
 }
+
+test("execution host neither integrates nor starts attempts once the run is cancelling", {
+  skip: !connectionString && "POSTGRES_TEST_URL is not set",
+}, async () => {
+  const fixture = await createExecutionFixture(connectionString!, { label: "host-cancel" });
+  try {
+    const submission = acceptedSubmission({
+      repositoryId: fixture.repositoryId,
+      phases: [{
+        id: "phase-1",
+        tasks: [manifestTask({ id: "T-1", ownerAgent: "alpha", expectedOutputs: ["one.txt"], validationCommands: ["grep -qx one one.txt"] })],
+      }],
+      settings: { maxRetries: 1 },
+    });
+    const runId = `run_${randomUUID().replaceAll("-", "")}`;
+    await fixture.status.createRun({
+      schemaVersion: 1,
+      runId,
+      repositoryId: fixture.repositoryId,
+      targetRef: TARGET_REF,
+      manifestDigest: submission.manifestDigest,
+      taskIds: [...submission.selection.effectiveTaskIds],
+    });
+    await fixture.status.appendEvent({ schemaVersion: 1, runId, eventKey: "run:started", eventType: "run.started", runStatus: "running" });
+    let cancelling: Promise<unknown> | undefined;
+    // The cancel lands while the attempt runs, after its harness effect but before integration.
+    const harness = new ScriptedHarness(() => {
+      cancelling = fixture.status.appendEvent({
+        schemaVersion: 1,
+        runId,
+        eventKey: "run:cancelling:test",
+        eventType: "run.cancelling",
+        runStatus: "cancelling",
+      });
+      return { files: { "one.txt": "one\n" }, delayMs: 200 };
+    });
+    const run = executionHostRunFromSubmission(runId, submission, { agentFor: (task) => agent(task.ownerAgent!), harness });
+    const host = new ExecutionHost({
+      runs: (id) => id === runId ? run : undefined,
+      receipts: fixture.receipts,
+      executions: fixture.executions,
+      integration: fixture.integration,
+      checkpoints: fixture.checkpoints,
+      status: fixture.status,
+      controls: fixture.controls,
+      repositoryRoot: (id) => id === fixture.repositoryId ? fixture.target : undefined,
+      scratchRoot: fixture.scratchRoot,
+      workerId: "host-cancel-test",
+      budgetMs: 60_000,
+      heartbeatIntervalMs: 200,
+      heartbeatTtlMs: 5_000,
+      inheritedEnvironment: { PATH: process.env.PATH },
+    });
+    const input = (logicalAttempt: number): ExecuteTaskActivityInputV1 => ({
+      runId,
+      taskId: "T-1",
+      manifestDigest: submission.manifestDigest,
+      logicalAttempt,
+      operationId: taskOperationId(runId, "T-1", logicalAttempt),
+      allowNoop: false,
+    });
+
+    const late = await host.executeTask(input(1));
+    await cancelling;
+    assert.deepEqual(late, { status: "failed", retryable: false, failureCode: "run-cancelled", reason: "The run was cancelled" });
+    assert.equal(git(fixture.target, ["rev-parse", TARGET_REF]), fixture.base);
+
+    const next = await host.executeTask(input(2));
+    assert.equal(next.status, "failed");
+    assert.equal((next as Extract<TaskActivityOutcomeV1, { status: "failed" }>).failureCode, "run-cancelled");
+    assert.equal(harness.invocations.length, 1);
+    assert.equal(git(fixture.target, ["rev-parse", TARGET_REF]), fixture.base);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a failure that lands while the run is cancelling is not retryable", {
+  skip: !connectionString && "POSTGRES_TEST_URL is not set",
+}, async () => {
+  const fixture = await createExecutionFixture(connectionString!, { label: "host-cancel-fail" });
+  try {
+    const submission = acceptedSubmission({
+      repositoryId: fixture.repositoryId,
+      phases: [{
+        id: "phase-1",
+        tasks: [manifestTask({ id: "T-1", ownerAgent: "alpha", expectedOutputs: ["one.txt"], validationCommands: ["grep -qx one one.txt"] })],
+      }],
+      settings: { maxRetries: 1 },
+    });
+    const runId = `run_${randomUUID().replaceAll("-", "")}`;
+    await fixture.status.createRun({
+      schemaVersion: 1,
+      runId,
+      repositoryId: fixture.repositoryId,
+      targetRef: TARGET_REF,
+      manifestDigest: submission.manifestDigest,
+      taskIds: [...submission.selection.effectiveTaskIds],
+    });
+    await fixture.status.appendEvent({ schemaVersion: 1, runId, eventKey: "run:started", eventType: "run.started", runStatus: "running" });
+    let cancelling: Promise<unknown> | undefined;
+    // The cancel lands while the attempt runs, after its harness effect but before integration.
+    const harness = new ScriptedHarness(() => {
+      cancelling = fixture.status.appendEvent({
+        schemaVersion: 1,
+        runId,
+        eventKey: "run:cancelling:test",
+        eventType: "run.cancelling",
+        runStatus: "cancelling",
+      });
+      return { files: { "one.txt": "wrong\n" }, delayMs: 200 };
+    });
+    const run = executionHostRunFromSubmission(runId, submission, { agentFor: (task) => agent(task.ownerAgent!), harness });
+    const host = new ExecutionHost({
+      runs: (id) => id === runId ? run : undefined,
+      receipts: fixture.receipts,
+      executions: fixture.executions,
+      integration: fixture.integration,
+      checkpoints: fixture.checkpoints,
+      status: fixture.status,
+      controls: fixture.controls,
+      repositoryRoot: (id) => id === fixture.repositoryId ? fixture.target : undefined,
+      scratchRoot: fixture.scratchRoot,
+      workerId: "host-cancel-fail-test",
+      budgetMs: 60_000,
+      heartbeatIntervalMs: 200,
+      heartbeatTtlMs: 5_000,
+      inheritedEnvironment: { PATH: process.env.PATH },
+    });
+    const input = (logicalAttempt: number): ExecuteTaskActivityInputV1 => ({
+      runId,
+      taskId: "T-1",
+      manifestDigest: submission.manifestDigest,
+      logicalAttempt,
+      operationId: taskOperationId(runId, "T-1", logicalAttempt),
+      allowNoop: false,
+    });
+
+    const failed = await host.executeTask(input(1));
+    await cancelling;
+    assert.equal(failed.status, "failed");
+    const outcome = failed as Extract<TaskActivityOutcomeV1, { status: "failed" }>;
+    assert.equal(outcome.failureCode, "validation-failed");
+    assert.equal(outcome.retryable, false);
+    assert.equal(git(fixture.target, ["rev-parse", TARGET_REF]), fixture.base);
+  } finally {
+    await fixture.cleanup();
+  }
+});

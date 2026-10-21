@@ -27,7 +27,8 @@ const OUTPUT_LIMIT = 2 * 1024 * 1024;
 type RuntimeAction = "start" | "status" | "stop" | "reset";
 type RuntimeBackupAction = "backup" | "restore";
 const RUNTIME_VOLUMES = ["postgres_data", "scheduler_data", "runtime_data"] as const;
-const RUNTIME_PROJECT = "myforge-runtime";
+export const DEFAULT_RUNTIME_PROJECT = "myforge-runtime";
+const RUNTIME_PROJECT_PATTERN = /^[a-z0-9][a-z0-9_-]{0,62}$/;
 const BACKUP_FILE = "manifest.json";
 const BACKUP_VERSION = 1;
 
@@ -59,12 +60,34 @@ interface CommandResult {
   readonly code: number;
 }
 
+/**
+ * Compose project that owns the runtime's containers and volumes. An override
+ * (MYFORGE_RUNTIME_PROJECT) isolates a second installation, such as a
+ * qualification stack, that also sets its own data directory and API port.
+ */
+export function getRuntimeProject(env: NodeJS.ProcessEnv = process.env): string {
+  const value = env.MYFORGE_RUNTIME_PROJECT;
+  if (value === undefined || value === "") return DEFAULT_RUNTIME_PROJECT;
+  if (!RUNTIME_PROJECT_PATTERN.test(value)) {
+    throw new Error("MYFORGE_RUNTIME_PROJECT must be 1-63 lowercase letters, digits, '-' or '_', starting with a letter or digit.");
+  }
+  return value;
+}
+
 export function getRuntimeDataDir(
   env: NodeJS.ProcessEnv = process.env,
   home = os.homedir(),
   platform = process.platform,
 ): string {
   const pathApi = platform === "win32" ? path.win32 : path.posix;
+  // Host-side override for an isolated installation. Unlike XDG_DATA_HOME it
+  // does not relocate Podman's own rootless storage.
+  if (env.MYFORGE_RUNTIME_DIR) {
+    if (!pathApi.isAbsolute(env.MYFORGE_RUNTIME_DIR)) {
+      throw new Error("MYFORGE_RUNTIME_DIR must be an absolute path.");
+    }
+    return pathApi.normalize(env.MYFORGE_RUNTIME_DIR);
+  }
   let base: string;
   if (platform === "win32") {
     base = env.LOCALAPPDATA || pathApi.join(home, "AppData", "Local");
@@ -358,7 +381,7 @@ export function unreadyServices(containers: readonly RuntimeContainer[]): string
 
 async function listRuntimeContainers(): Promise<RuntimeContainer[]> {
   const result = await runCommand("podman", [
-    "ps", "-a", "--filter", "label=com.docker.compose.project=myforge-runtime", "--format", "json",
+    "ps", "-a", "--filter", `label=com.docker.compose.project=${getRuntimeProject()}`, "--format", "json",
   ]);
   if (result.code !== 0) throw new Error("Unable to list local runtime containers with Podman.");
   const entries = JSON.parse(result.stdout || "[]") as Array<{
@@ -438,7 +461,7 @@ async function compose(
     await mkdir(path.join(engineDir, "node_modules"), { recursive: true });
   }
   const baseFile = path.join(deploymentDir, "compose.yaml");
-  const args = ["compose", "--env-file", environment.file, "-f", baseFile];
+  const args = ["compose", "-p", getRuntimeProject(), "--env-file", environment.file, "-f", baseFile];
   if (action === "up" && options.hostTools) {
     args.push("-f", path.join(deploymentDir, "compose.host-tools.yaml"));
   }
@@ -597,7 +620,7 @@ async function sha256File(file: string): Promise<string> {
 }
 
 function volumeName(name: (typeof RUNTIME_VOLUMES)[number]): string {
-  return `${RUNTIME_PROJECT}_${name}`;
+  return `${getRuntimeProject()}_${name}`;
 }
 
 async function removeRuntimeVolumes(): Promise<void> {

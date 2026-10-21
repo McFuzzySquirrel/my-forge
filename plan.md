@@ -13,6 +13,8 @@ accepted by the operator on 2026-10-19, authorizing P5, with deployment/access
 decisions recorded in
 [ADR-068](docs/adr/068-local-deployment-and-access-profiles.md). P5-01–06 are
 done, and P5-GATE was accepted by the operator on 2026-10-21, authorizing P6.
+P6 is tracked in [issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17);
+P6-01 is complete ([evidence](#p6-01-failure-boundary-evidence--2026-10-21)).
 The runtime is not yet a production replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
@@ -65,7 +67,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE accepted 2026-10-19 | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-GATE evidence](#p4-gate-acceptance-evidence--2026-10-19); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | P5-01–06 done; P5-GATE accepted 2026-10-21 ([evidence](#p5-gate-evidence--2026-10-22)) | @McFuzzySquirrel |
-| P6 — Recovery and release qualification | P5 gate | QA + security + platform | Authorized; not started | Unassigned |
+| P6 — Recovery and release qualification | P5 gate | QA + security + platform | In progress; P6-01 done | @McFuzzySquirrel; [P6 issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17); [P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21) |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
 
@@ -381,7 +383,7 @@ server, or GitHub App is a first-class path.
 **Deliverables:** automated failure-injection coverage, operational runbooks,
 support matrix, and release evidence.
 
-- [ ] **P6-01 — Exercise failure boundaries.** Kill application/sidecar/worker
+- [x] **P6-01 — Exercise failure boundaries.** Kill application/sidecar/worker
   during execution, retry delay, approval wait, checkpoint publication,
   integration, and receipt persistence. Duplicate deliveries/controls; expire
   ownership, introduce store outages, and deliver late task results.
@@ -557,8 +559,9 @@ sidecar token (ADR-070). P5-06 added runtime remediation hints, JSON
 status/audit export, and troubleshooting docs. P5-04 routes Console controls
 and human-review approval to service runs. **P5-GATE was accepted by the
 operator on 2026-10-21, authorizing P6**
-([P5-GATE evidence](#p5-gate-evidence--2026-10-22)). P6-01 failure-boundary
-qualification is the next work package.
+([P5-GATE evidence](#p5-gate-evidence--2026-10-22)). P6-01 is complete
+([evidence](#p6-01-failure-boundary-evidence--2026-10-21)); P6-02 backup and
+restore qualification is the next work package.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -623,6 +626,81 @@ conformance fixtures remain semantic evidence only, not proof of full durable
 Dapr effects. The evidence also does not cover Dapr PostgreSQL state, deployment
 volumes, or a running service. P4 execution is now authorized; Console migration
 and legacy-engine retirement remain gated by their later phases.
+
+### P6-01 failure-boundary evidence — 2026-10-21
+
+**Harness.** `tools/runtime-qualification` (`npm run -s qualify -- failures`)
+drives the source launcher against an isolated Compose project
+(`MYFORGE_RUNTIME_PROJECT=myforge-qual`, `MYFORGE_RUNTIME_DIR=/tmp/myforge-qual/runtime`,
+API port 18483) on rootless Podman 4.9.3, podman-compose 1.0.6, Dapr 1.18.7,
+and worker image `localhost/myforge-worker:2`. Each scenario uses its own
+fixture repository and stub-harness tasks, and asserts the final run status
+and the number of commits per task on the target branch. The operator's
+`myforge-runtime` installation was not touched. Three consecutive full runs
+after the fixes passed all 10 scenarios (times are the range across the last
+two runs).
+
+| ID | Boundary | Result |
+|---|---|---|
+| F01 | Duplicate submission key reused; changed snapshot under the same key rejected (409) | Pass; one commit |
+| F02 | Worker killed during execution, held down past the 30 s ownership TTL | Pass; recovered in 86 s; attempt 2 integrated once |
+| F03 | Dapr sidecar killed during execution | Pass; recovered in 84–99 s |
+| F04 | Worker and sidecar killed together | Pass; recovered in 51–52 s |
+| F05 | PostgreSQL (workflow and application store) outage during execution | Pass; recovered in 37 s; no extra attempt |
+| F06 | Full stack stop/start during a 60 s durable retry delay | Pass; restart 20 s; timer fired at 60 s |
+| F07 | Approval wait across worker and sidecar loss; approval of a non-waiting task (409), forged evidence (422), duplicate approval (reused), stale approval after completion (422) | Pass |
+| F08 | Cancellation during execution, duplicate cancel, late task result with retries enabled | Pass; terminal in 27 s; no commits; after `run.cancelled` only the stopped attempt's own `run-cancelled` failure may be recorded |
+| F09 | Duplicate pause/resume controls | Pass; acknowledged once; run completes |
+| F10 | Repeated worker kills across a four-task chain | Pass; each task integrated exactly once |
+
+Boundaries that cannot be timed reliably from outside the worker are covered
+by deterministic tests: crash after the Git ref update but before the receipt,
+pending/ambiguous earlier integrations, stale owner heartbeat/publish after
+takeover, and checkpoint reconstruction (`p3-gate.integration.test.ts`,
+conformance C23–C30, ownership PostgreSQL tests), plus the P4-01 live timer
+recovery evidence.
+
+**Defects found and fixed** ([ADR-072](docs/adr/072-runtime-failure-recovery-and-qualification.md)):
+
+1. Dapr SDK 3.18 never reconnects the workflow worker after an established
+   stream drops; the service stayed "ready" without a worker. A watchdog now
+   waits for the sidecar and PostgreSQL, then exits so the restart policy
+   starts a fresh worker. (Podman skips the restart if a `--requires`
+   dependency is down at exit.)
+2. A PostgreSQL restart crashed the service with an unhandled pool `error`
+   event. Pool and client errors are now logged.
+3. A cancel-stopped attempt was retryable, and child task workflows kept
+   running after `run.cancelled`; a retry integrated a commit about 65 s after
+   cancellation. Cancel stops, and any failure recorded while the run is
+   `cancelling`/`cancelled`, are now non-retryable. The execution host refuses
+   to start an attempt or begin an integration once the run is cancelling
+   (`run-cancelled`).
+4. A late `task.failed` racing `task.cancelled` was rejected by the projection
+   (`failed -> cancelled`), failing the run orchestration and leaving the run in
+   `cancelling`. Cancellation now supersedes a racing failure in either order;
+   later task events are kept for audit without reopening the cancelled task.
+5. A failed or terminated run orchestration left its run non-terminal forever.
+   The service now reconciles these runs to `failed` at startup and every 60 s;
+   the stuck run from finding 4 was repaired by this sweep on restart.
+
+**Automated checks.** Engine typecheck and `npm test` pass (178 tests,
+including the PostgreSQL integration tests with new cancel-race and
+execution-host cancellation regressions; both execution-host regressions fail
+with their guard removed). Launcher typecheck and tests pass (348 tests,
+including the runtime project/directory overrides).
+
+**Residual risks.**
+- An attempt that passed the cancellation check can still integrate if
+  cancellation arrives during the integration itself; validation commands are
+  not under cancel supervision.
+- Worker-loss recovery depends on the container restart policy. If a dependency
+  stays down for more than 10 minutes, the service keeps running without a
+  worker (logged) until it is restarted.
+- Recovery after sidecar loss (up to 99 s) is within the 120 s budget but has little
+  headroom; P6-06 re-measures it.
+- The run workflow does not terminate child task workflows on cancellation;
+  enforcement is at the activity boundary to keep existing histories
+  replayable.
 
 ### P5-GATE evidence — 2026-10-22
 

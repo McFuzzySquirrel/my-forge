@@ -179,3 +179,70 @@ test("PostgreSQL run status is authoritative, sequenced, idempotent, and reconne
     await admin.end();
   }
 });
+
+test("PostgreSQL run status keeps cancellation authoritative when task failures race it", {
+  skip: !connectionString,
+}, async () => {
+  const schema = `p6_cancel_${randomUUID().replaceAll("-", "")}`;
+  const admin = new Pool({ connectionString });
+  let database: Pool | undefined;
+  let schemaCreated = false;
+
+  try {
+    await admin.query(`CREATE SCHEMA "${schema}"`);
+    schemaCreated = true;
+    database = new Pool({ connectionString, options: `-c search_path=${schema}` });
+    await database.query(await readFile(new URL("../../storage/postgres/run-status.sql", import.meta.url), "utf8"));
+    const store = new PostgresRunStatusStore(database);
+    const runId = "run-cancel-race";
+    await store.createRun({
+      schemaVersion: 1,
+      runId,
+      repositoryId: "repo-1",
+      targetRef: "refs/heads/main",
+      manifestDigest: sha256Digest("manifest"),
+      taskIds: ["fails-first", "cancelled-first"],
+    });
+    const append = (eventKey: string, fields: Record<string, unknown>) => store.appendEvent({
+      schemaVersion: 1, runId, eventKey, ...fields,
+    } as Parameters<typeof store.appendEvent>[0]);
+    await append("run.started", { eventType: "run.started", runStatus: "running" });
+    for (const taskId of ["fails-first", "cancelled-first"]) {
+      await append(`attempt:${taskId}:1:started`, {
+        eventType: "attempt.started", taskId, logicalAttempt: 1, taskStatus: "running", attemptStatus: "running",
+      });
+    }
+    await append("run.cancelling", { eventType: "run.cancelling", runStatus: "cancelling" });
+    assert.deepEqual(await store.listActiveRunIds(), [runId]);
+
+    await append("task:fails-first:failed", {
+      eventType: "task.failed", taskId: "fails-first", logicalAttempt: 1, taskStatus: "failed", attemptStatus: "failed",
+    });
+    await append("task:fails-first:cancelled", { eventType: "task.cancelled", taskId: "fails-first", taskStatus: "cancelled" });
+
+    await append("task:cancelled-first:cancelled", {
+      eventType: "task.cancelled", taskId: "cancelled-first", taskStatus: "cancelled",
+    });
+    await append("run.cancelled", { eventType: "run.cancelled", runStatus: "cancelled" });
+    await append("task:cancelled-first:failed", {
+      eventType: "task.failed", taskId: "cancelled-first", logicalAttempt: 1, taskStatus: "failed", attemptStatus: "failed",
+    });
+
+    assert.deepEqual(await store.listActiveRunIds(), []);
+    await append("attempt:cancelled-first:2:started", {
+      eventType: "attempt.started", taskId: "cancelled-first", logicalAttempt: 2, taskStatus: "running", attemptStatus: "running",
+    });
+    const snapshot = await store.getRunStatus(runId);
+    assert.equal(snapshot?.status, "cancelled");
+    assert.deepEqual(snapshot?.tasks.map((task) => [task.taskId, task.status]), [
+      ["fails-first", "cancelled"],
+      ["cancelled-first", "cancelled"],
+    ]);
+    const events = await store.listEvents(runId, 0, 50);
+    assert.deepEqual(events.events.slice(-2).map((event) => event.eventType), ["task.failed", "attempt.started"]);
+  } finally {
+    if (database) await database.end();
+    if (schemaCreated) await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
+    await admin.end();
+  }
+});

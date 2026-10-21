@@ -206,6 +206,12 @@ next `runtime` command. A separate generated `DAPR_API_TOKEN` guards the Dapr
 sidecar, so task processes in the worker cannot call the sidecar directly. See
 [ADR-069](adr/069-service-run-submission-and-repository-binding.md).
 
+For a second, isolated installation (for example, qualification runs), set
+`MYFORGE_RUNTIME_PROJECT` (Compose project name; default `myforge-runtime`),
+an absolute `MYFORGE_RUNTIME_DIR` (runtime data directory), and a different
+`MYFORGE_API_PORT` for every `runtime` and `service` command. Containers and
+volumes are named after the project, so the default installation is not affected.
+
 1. Register the repository, then restart the runtime so it is mounted:
    `runtime repo add <path>`, `runtime stop`, `runtime start`. Only the
    repository's `.git` directory is mounted. Linked worktrees and submodules

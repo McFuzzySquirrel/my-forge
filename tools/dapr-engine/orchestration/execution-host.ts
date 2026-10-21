@@ -141,6 +141,8 @@ export interface ExecutionHostDependenciesV1 {
   readonly status: {
     getTaskStatus(runId: string, taskId: string): Promise<TaskStatusResponseV1 | undefined>;
     listEvents(runId: string, afterSequence?: number, limit?: number): Promise<RunLifecycleEventPageV1>;
+    /** When present, attempts of a cancelling or cancelled run neither start nor integrate. */
+    getRunStatus?(runId: string): Promise<{ readonly status: string } | undefined>;
   };
   readonly controls: ApprovalControlStore;
   /** Absolute path of the integration-owned target repository. */
@@ -208,6 +210,13 @@ function tail(text: string): string {
  * their verified checkpoint bound into the approval evidence and integrate only
  * after an authorized approval resumes them.
  */
+const RUN_CANCELLED = {
+  status: "failed",
+  retryable: false,
+  failureCode: "run-cancelled",
+  reason: "The run was cancelled",
+} as const;
+
 export class ExecutionHost {
   private readonly integrationQueues = new Map<string, Promise<unknown>>();
   private readonly gitHome: string;
@@ -293,6 +302,7 @@ export class ExecutionHost {
     if (!claimed.ok) throw new Error(`Could not claim operation receipt: ${claimed.code}`);
     if (claimed.receipt.state !== "claimed") return this.recover(run, key, claimed.receipt, journaled);
     let receipt = await this.transition(key, claimed.receipt, "executing");
+    if (await this.runCancelled(input.runId)) return this.finishFailed(key, receipt, RUN_CANCELLED);
     if (task.contract?.kind === "human-review") return this.awaitReview(run, task, key, receipt);
 
     const workspace = await this.prepareWorkspace(run, input.operationId);
@@ -350,7 +360,8 @@ export class ExecutionHost {
     if (supervised.stopReason || supervised.error !== undefined || !supervised.result) {
       outcome = {
         status: "failed",
-        retryable: true,
+        // A cancelled attempt must not be retried under a new logical operation.
+        retryable: supervised.stopReason !== "cancel",
         failureCode: supervised.stopReason ? `execution-${supervised.stopReason}` : "execution-error",
         reason: supervised.error instanceof Error ? supervised.error.message : supervised.stopReason ?? "no result",
       };
@@ -649,6 +660,7 @@ export class ExecutionHost {
     const complete: TaskExecutionOutcomeV1 = { status: "complete", evidence };
     const bounded = boundTaskExecutionOutcome(complete);
     if (bounded.status !== "complete") return this.finishFailed(key, receipt, bounded as FailedOutcome);
+    if (await this.runCancelled(key.runId)) return this.finishFailed(key, receipt, RUN_CANCELLED);
     await this.writeJournal(key.operationId, {
       pending: { outcome: complete, repositoryId: run.repositoryId, targetRef: run.targetRef },
     });
@@ -784,6 +796,11 @@ export class ExecutionHost {
     throw new Error(`Operation ${key.operationId} is ${receipt.state} without a recoverable outcome (run ${run.runId})`);
   }
 
+  private async runCancelled(runId: string): Promise<boolean> {
+    const status = await this.dependencies.status.getRunStatus?.(runId);
+    return status?.status === "cancelling" || status?.status === "cancelled";
+  }
+
   private async finishFailed(
     key: OperationKeyV1,
     receipt: OperationReceiptV1,
@@ -797,7 +814,11 @@ export class ExecutionHost {
     key: OperationKeyV1,
     unbounded: Extract<TaskExecutionOutcomeV1, { status: "failed" }>,
   ): Promise<TaskExecutionOutcomeV1> {
-    const outcome = boundTaskExecutionOutcome(unbounded) as typeof unbounded;
+    const bounded = boundTaskExecutionOutcome(unbounded) as typeof unbounded;
+    // A cancelled run must not schedule another attempt, whatever the failure.
+    const outcome = bounded.retryable && await this.runCancelled(key.runId)
+      ? { ...bounded, retryable: false }
+      : bounded;
     await this.writeJournal(key.operationId, {
       outcome,
       failureReason: [outcome.failureCode, outcome.reason].filter(Boolean).join(": "),

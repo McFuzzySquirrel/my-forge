@@ -4,7 +4,7 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { assertHostPortAvailable, ensureRuntimeCredentials, getRuntimeDataDir, readRuntimeApiAccess, rotateRuntimeTokens, runtimeCli, unreadyServices } from "./runtime.ts";
+import { assertHostPortAvailable, DEFAULT_RUNTIME_PROJECT, ensureRuntimeCredentials, getRuntimeDataDir, getRuntimeProject, readRuntimeApiAccess, rotateRuntimeTokens, runtimeCli, unreadyServices } from "./runtime.ts";
 
 test("runtime credentials are generated once with restrictive permissions", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "forge-runtime-"));
@@ -123,6 +123,11 @@ test("runtime data directory follows platform conventions", () => {
     getRuntimeDataDir({ LOCALAPPDATA: "C:\\Users\\operator\\AppData\\Local" }, "C:\\Users\\operator", "win32"),
     "C:\\Users\\operator\\AppData\\Local\\MyForge\\runtime",
   );
+  assert.equal(
+    getRuntimeDataDir({ MYFORGE_RUNTIME_DIR: "/tmp/qual/runtime/", XDG_DATA_HOME: "/data" }, "/home/operator", "linux"),
+    "/tmp/qual/runtime/",
+  );
+  assert.throws(() => getRuntimeDataDir({ MYFORGE_RUNTIME_DIR: "relative/dir" }, "/home/operator", "linux"), /absolute path/);
 });
 
 test("runtime requires an explicit reset confirmation", async () => {
@@ -197,4 +202,13 @@ test("runtime rejects credential files carrying non-secret settings", async (t) 
   const original = await readFile(credentials, "utf8");
   await writeFile(credentials, `${original}POSTGRES_PORT=55432\n`, { mode: 0o600 });
   await assert.rejects(ensureRuntimeCredentials(directory), /refusing to replace them/);
+});
+
+test("runtime project defaults to myforge-runtime and accepts an isolated override", () => {
+  assert.equal(getRuntimeProject({}), DEFAULT_RUNTIME_PROJECT);
+  assert.equal(getRuntimeProject({ MYFORGE_RUNTIME_PROJECT: "" }), "myforge-runtime");
+  assert.equal(getRuntimeProject({ MYFORGE_RUNTIME_PROJECT: "myforge-qual_1" }), "myforge-qual_1");
+  for (const invalid of ["MyForge", "-x", "a b", "a/b", "x".repeat(64)]) {
+    assert.throws(() => getRuntimeProject({ MYFORGE_RUNTIME_PROJECT: invalid }), /MYFORGE_RUNTIME_PROJECT/);
+  }
 });

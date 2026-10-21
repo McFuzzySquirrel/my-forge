@@ -211,7 +211,10 @@ record before scheduling its workflow, and set the explicit `statusEnabled`
 input on both run and task-attempt workflows. When enabled, the workflows
 durably record run start/terminal/replay/cancel transitions and task/attempt
 start, approval-wait, resume, and outcome transitions. A status activity failure
-fails the workflow rather than silently reporting unrecorded progress.
+fails the workflow rather than silently reporting unrecorded progress. The local
+service reconciles a run whose orchestration has failed or been terminated by
+recording `run.failed` (event key `run.orchestration-failed`), so the run does
+not stay non-terminal ([ADR-072](../adr/072-runtime-failure-recovery-and-qualification.md)).
 Compatibility file exports, if added by the host, are read-only rebuildable
 views; they are never accepted as control or status input.
 
@@ -234,7 +237,10 @@ control queries are the source for later application.
   resumable. It is not process termination.
 - `cancel` is distinct and terminal. It requests owned-process cleanup, rejects
   late results, and preserves diagnostics. Dapr workflow termination alone is
-  not evidence that a harness process stopped.
+  not evidence that a harness process stopped. A cancel-stopped attempt is not
+  retried, and no attempt or integration starts once the run is `cancelling`.
+  `task.cancelled` supersedes a racing task failure; a later `task.failed` is
+  kept as an audit event without reopening the task.
 - `replay-task` creates a new `logicalAttempt`; it never rewrites an accepted
   prior attempt or reuses its side-effect operation IDs.
 - `approve-task` is operator-only and binds the decision to the run snapshot,

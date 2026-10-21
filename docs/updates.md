@@ -4,6 +4,40 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.128
+
+### Runtime recovers from worker, sidecar, and store loss; cancellation is final
+
+P6-01 qualified the local runtime against live failures (worker, sidecar, and
+PostgreSQL loss, full restarts during retry delays and approval waits,
+duplicate and stale controls, and cancellation). The run found and fixed five
+defects:
+
+- **Worker loss after a sidecar restart.** The service used to stay "ready"
+  but never ran workflows again. It now waits for the sidecar and database to
+  come back, then restarts itself so a fresh workflow worker connects.
+- **Database restart crash.** A PostgreSQL restart no longer crashes the
+  service; in-flight work retries.
+- **Work after cancellation.** A cancelled run could still retry a task and
+  commit it about a minute later. Cancellation now stops further attempts and
+  integrations.
+- **Runs stuck in `cancelling`.** A task failure racing cancellation no
+  longer blocks the run from reaching `cancelled`.
+- **Runs stuck after an orchestration failure.** The service now marks such
+  runs `failed` (at startup and every minute) and releases their repository
+  leases.
+
+Developer additions:
+
+- `MYFORGE_RUNTIME_PROJECT` and an absolute `MYFORGE_RUNTIME_DIR` select a
+  second, isolated runtime installation (see `docs/forge-launcher.md`).
+- `tools/runtime-qualification` runs the live failure suite against that
+  isolated installation (see `docs/testing-guide.md` §4a).
+- [ADR-072](adr/072-runtime-failure-recovery-and-qualification.md) records the
+  recovery decisions and residual risks.
+
+---
+
 ## October 2026 - v3.127
 
 ### P5 gate accepted; recovery qualification authorized

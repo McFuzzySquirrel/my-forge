@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { createFixtureRepo } from "./fixture.ts";
+import { captureHistories } from "./histories.ts";
 import { removeInstallation, runBackupSuite } from "./backup.ts";
+import { PREVIOUS_RELEASE, removePreviousRelease, runUpgradeSuite } from "./upgrade.ts";
 import { DETERMINISTIC_FAILURE_COVERAGE, FAILURE_SCENARIOS, runFailureSuite, type Scenario, type ScenarioContext } from "./failures.ts";
 import { connect, waitForApi } from "./service.ts";
 import { activate, hostEnvironment, isolate, launcher, Report, requireLauncher, type Isolation } from "./support.ts";
@@ -15,6 +17,12 @@ Suites:
              timer and approval, damaged archives, Git behind/ahead of stores);
              also uses a second installation (myforge-qual2, port 18484,
              data under <root>2)
+  upgrade    P6-03 upgrade/rollback from the previous release (${PREVIOUS_RELEASE},
+             checked out as a git worktree under --root) with an approval wait
+             and a pending retry timer in flight
+
+Also: capture-histories <project> <output-dir> [limit] exports recorded workflow
+histories from an isolated installation as replay fixtures (P6-03).
 
 Runs against an isolated Compose project (myforge-qual, API port 18483, data
 under --root, default /tmp/myforge-qual); the operator's myforge-runtime
@@ -71,6 +79,12 @@ async function prepare(isolation: Isolation, suite: string, scenarios: readonly 
 }
 
 async function main(): Promise<number> {
+  if (process.argv[2] === "capture-histories") {
+    const [, , , project, output, limit] = process.argv;
+    if (!project || !output) throw new Error("Usage: npm run qualify -- capture-histories <project> <output-dir> [limit]");
+    if (project === "myforge-runtime") throw new Error("Refusing to read the operator installation.");
+    return await captureHistories(project, path.resolve(output), Number(limit ?? 20)) > 0 ? 0 : 1;
+  }
   const options = parse(process.argv.slice(2));
   const isolation = isolate(options.root);
   const report = new Report(options.suite, { ...hostEnvironment(), project: isolation.project, apiPort: isolation.apiPort });
@@ -87,6 +101,9 @@ async function main(): Promise<number> {
       case "backup":
         extraInstallations.push(await runBackupSuite(report, options.root));
         break;
+      case "upgrade":
+        await runUpgradeSuite(report, isolation);
+        break;
       default:
         throw new Error(`Unknown suite '${options.suite}'.\n${USAGE}`);
     }
@@ -102,6 +119,7 @@ async function main(): Promise<number> {
       }
       activate(isolation);
       await launcher(["runtime", "reset", "--confirm"]);
+      if (options.suite === "upgrade") removePreviousRelease(options.root);
     }
   }
   const failed = report.entries.filter((entry) => !entry.passed).map((entry) => entry.id);

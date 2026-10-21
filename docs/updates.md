@@ -4,6 +4,33 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.130
+
+### Upgrades keep in-flight runs; rollback is qualified
+
+P6-03 qualified upgrades of the Forge service with work in flight, and rolling
+back to the previous release.
+
+- **Definition versions.** Each run now records the orchestration definition
+  version that started it (migration 7, `definition_version`). On startup, the
+  service refuses to run if an active run uses a definition it cannot replay.
+  The error says to finish or cancel those runs with the release that started
+  them, or to roll back.
+- **Historical replay tests.** Workflow histories recorded on a live stack are
+  committed as fixtures and replayed against the current workflow code. A
+  change that reorders activities, timers, or awaited events now fails
+  `npm test` instead of stranding runs after an upgrade.
+- **Upgrade and rollback evidence.** A new `upgrade` qualification suite starts
+  the previous release with an approval wait and a pending retry timer, then
+  upgrades in place. Both runs finished exactly once. After the upgrade, the
+  previous release refuses the newer schema. Restoring the pre-upgrade backup
+  with it resumes the waiting run.
+- **Docs:** [ADR-074](adr/074-workflow-definition-versioning-and-upgrade-qualification.md),
+  [forge-launcher upgrading](forge-launcher.md#upgrading), and
+  [testing guide §4a](testing-guide.md#4a-live-runtime-qualification-developers).
+
+---
+
 ## October 2026 - v3.129
 
 ### Backups stay consistent with Git; restore into a fresh installation

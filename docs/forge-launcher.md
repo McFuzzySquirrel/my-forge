@@ -1352,9 +1352,26 @@ event per line. Attach that output when you report a problem.
 
 Take a `runtime backup` before you upgrade `forge-launcher`. The next
 `runtime start` applies compatible schema migrations. If the worker image tag
-changed, the image is rebuilt, which needs the network. Forge never migrates
-the schema back to an earlier version, so restore a backup if you need to
-return to an older release.
+changed, the image is rebuilt, which needs the network. Runs that are waiting
+for approval, retrying, or paused continue after the upgrade; you do not need
+to drain them first.
+
+If a release cannot continue runs started by an earlier one, the service
+refuses to start. The error looks like "Active runs use orchestration
+definitions this engine cannot replay". Go back to the earlier release and
+finish or cancel those runs, then upgrade again
+([ADR-074](adr/074-workflow-definition-versioning-and-upgrade-qualification.md)).
+
+**Rolling back.** Forge never migrates the schema back to an earlier version.
+After an upgrade, an older release refuses to start ("schema version … is
+newer"). To return to it:
+
+1. Run `runtime stop`.
+2. With the older `forge-launcher`, run
+   `runtime restore --from <backup taken before the upgrade> --confirm`.
+
+Work done after that backup is lost. If a forge branch moved since the backup,
+the restore is refused unless you pass `--allow-git-drift`.
 
 #### Offline use
 

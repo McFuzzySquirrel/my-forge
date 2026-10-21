@@ -532,6 +532,16 @@ reconciling to `not-integrated`. Reconcile another attempt only after its
 execution is lost (heartbeat expired and fenced) or its receipt is `ambiguous`.
 A pending intent alone may belong to a live owner between its two transactions.
 
+**Runs record their workflow definition version.** Every run status record
+stores `definition_version`, the orchestration definition that started it. A
+compatible change keeps the version; a compatible change is one whose recorded
+histories still replay, which `tests/orchestration/history-replay.test.ts`
+checks. An incompatible change registers new workflow names and bumps the
+version, and the earlier definitions stay registered until their runs have
+drained. The service refuses to start while a non-terminal run uses a version it
+does not support
+([ADR-074](../adr/074-workflow-definition-versioning-and-upgrade-qualification.md)).
+
 **Integration never builds on lost history.** Before it moves the branch, and
 while it holds the fence lock, `integrate` checks that every commit the same run
 has already integrated on that `(repository, targetRef)` is still reachable from

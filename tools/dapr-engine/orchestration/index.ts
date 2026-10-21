@@ -29,6 +29,7 @@ export * from "./approval-control.ts";
 export * from "./run-control.ts";
 export * from "./status-activity.ts";
 export * from "./workflow.ts";
+export * from "./versioning.ts";
 export * from "./worker-capacity.ts";
 
 export function registerOrchestrationWorkflows(runtime: WorkflowRuntime): WorkflowRuntime {

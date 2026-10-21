@@ -16,6 +16,7 @@ import {
   createApplyRunControlActivity,
   createGetRunControlActivity,
   createListAcceptedRunControlsActivity,
+  assertActiveRunDefinitionsSupported,
   registerOrchestrationWorkflows,
   runOrchestrationWorkflowId,
 } from "../orchestration/index.ts";
@@ -308,6 +309,7 @@ async function start(): Promise<void> {
   await database.query("SELECT 1");
   await migrateApplicationDatabase(database);
   process.stdout.write("Application database migrations are current\n");
+  await assertActiveRunDefinitionsSupported(database);
   runtime.registerWorkflowWithName("myforgeReadinessWorkflow", async () => true);
   registerOrchestrationWorkflows(runtime);
   runtime.registerActivityWithName(

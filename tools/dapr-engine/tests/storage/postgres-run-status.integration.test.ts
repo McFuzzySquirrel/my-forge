@@ -50,11 +50,9 @@ test("PostgreSQL run status is authoritative, sequenced, idempotent, and reconne
     await admin.query(`CREATE SCHEMA "${schema}"`);
     schemaCreated = true;
     database = new Pool({ connectionString, options: `-c search_path=${schema}` });
-    const migration = await readFile(
-      new URL("../../storage/postgres/run-status.sql", import.meta.url),
-      "utf8",
-    );
-    await database.query(migration);
+    for (const name of ["run-status.sql", "run-definition-versions.sql"]) {
+      await database.query(await readFile(new URL(`../../storage/postgres/${name}`, import.meta.url), "utf8"));
+    }
 
     const store = new PostgresRunStatusStore(database);
     const run = {
@@ -192,7 +190,9 @@ test("PostgreSQL run status keeps cancellation authoritative when task failures 
     await admin.query(`CREATE SCHEMA "${schema}"`);
     schemaCreated = true;
     database = new Pool({ connectionString, options: `-c search_path=${schema}` });
-    await database.query(await readFile(new URL("../../storage/postgres/run-status.sql", import.meta.url), "utf8"));
+    for (const name of ["run-status.sql", "run-definition-versions.sql"]) {
+      await database.query(await readFile(new URL(`../../storage/postgres/${name}`, import.meta.url), "utf8"));
+    }
     const store = new PostgresRunStatusStore(database);
     const runId = "run-cancel-race";
     await store.createRun({

@@ -4,9 +4,16 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-const LAUNCHER_DIR = path.join(REPO_ROOT, "scripts", "forge-launcher");
-const TSX_LOADER = path.join(LAUNCHER_DIR, "node_modules", "tsx", "dist", "loader.mjs");
-const LAUNCHER_CLI = path.join(LAUNCHER_DIR, "scripts", "cli.ts");
+let launcherCheckout = REPO_ROOT;
+
+/**
+ * Selects which checkout's launcher (and so which engine release, since the
+ * runtime mounts the engine beside the launcher) later calls use. The upgrade
+ * suite points this at a worktree of the previous release.
+ */
+export function useLauncherFrom(checkout: string): void {
+  launcherCheckout = checkout;
+}
 const OPERATOR_PROJECT = "myforge-runtime";
 
 export interface Isolation {
@@ -49,7 +56,9 @@ export interface CommandOutput {
 export function launcher(args: readonly string[], options: { readonly cwd?: string; readonly timeoutMs?: number } = {}): Promise<CommandOutput> {
   const started = Date.now();
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, ["--import", TSX_LOADER, LAUNCHER_CLI, ...args], {
+    const launcherDir = path.join(launcherCheckout, "scripts", "forge-launcher");
+    const loader = path.join(launcherDir, "node_modules", "tsx", "dist", "loader.mjs");
+    const child = spawn(process.execPath, ["--import", loader, path.join(launcherDir, "scripts", "cli.ts"), ...args], {
       cwd: options.cwd ?? REPO_ROOT,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],

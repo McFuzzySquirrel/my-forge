@@ -14,8 +14,9 @@ decisions recorded in
 [ADR-068](docs/adr/068-local-deployment-and-access-profiles.md). P5-01–06 are
 done, and P5-GATE was accepted by the operator on 2026-10-21, authorizing P6.
 P6 is tracked in [issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17);
-P6-01 and P6-02 are complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
-[P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21)).
+P6-01 through P6-03 are complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
+[P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
+[P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21)).
 The runtime is not yet a production replacement.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
@@ -68,7 +69,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P3 — Durable execution and integration | P2 gate | Engine + storage | P3-01–06 implemented; P3-GATE accepted | [P3-GATE review #7](https://github.com/McFuzzySquirrel/my-forge/issues/7); [P3-GATE evidence](#immediate-next-work-package) |
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE accepted 2026-10-19 | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-GATE evidence](#p4-gate-acceptance-evidence--2026-10-19); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | P5-01–06 done; P5-GATE accepted 2026-10-21 ([evidence](#p5-gate-evidence--2026-10-22)) | @McFuzzySquirrel |
-| P6 — Recovery and release qualification | P5 gate | QA + security + platform | In progress; P6-01–02 done | @McFuzzySquirrel; [P6 issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17); [P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21); [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21) |
+| P6 — Recovery and release qualification | P5 gate | QA + security + platform | In progress; P6-01–03 done | @McFuzzySquirrel; [P6 issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17); [P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21); [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21); [P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21) |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Not started | Unassigned |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
 
@@ -392,7 +393,7 @@ support matrix, and release evidence.
   of workflow database, application receipts, Scheduler, artifacts, and Git refs.
   Restore into a fresh installation and check integrity and pending timers.
   Missing/out-of-sync stores must not silently accept incomplete tasks.
-- [ ] **P6-03 — Test workflow/application upgrades.** Version definitions and
+- [x] **P6-03 — Test workflow/application upgrades.** Version definitions and
   activity contracts; drain incompatible runs or retain compatible workers.
   Verify historical replay, schema upgrades, and documented rollback constraints.
 - [ ] **P6-04 — Review security boundaries.** Test unauthorized/stale approvals,
@@ -560,10 +561,11 @@ sidecar token (ADR-070). P5-06 added runtime remediation hints, JSON
 status/audit export, and troubleshooting docs. P5-04 routes Console controls
 and human-review approval to service runs. **P5-GATE was accepted by the
 operator on 2026-10-21, authorizing P6**
-([P5-GATE evidence](#p5-gate-evidence--2026-10-22)). P6-01 and P6-02 are complete
-([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
-[P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21)); P6-03
-upgrade qualification is the next work package.
+([P5-GATE evidence](#p5-gate-evidence--2026-10-22)). P6-01 through P6-03 are
+complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
+[P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
+[P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21)); P6-04
+security review is the next work package.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -745,6 +747,51 @@ registration, and drift).
 - Target repositories and working trees are not backed up. Operators keep
   forge branches consistent with runtime backups.
 - Completed runs are not re-verified against Git after a restore.
+
+### P6-03 upgrade and rollback evidence — 2026-10-21
+
+Design: [ADR-074](docs/adr/074-workflow-definition-versioning-and-upgrade-qualification.md).
+
+**Versioning and drain policy.**
+- Each run records `definition_version` (migration 7), and startup refuses
+  non-terminal runs with an unsupported version.
+- A compatible change keeps the version. An incompatible change registers new
+  workflow names and keeps the earlier ones registered until their runs drain.
+- Activity payloads keep `schemaVersion: 1`.
+- `tests/storage/postgres-definition-versions.integration.test.ts` covers the
+  stamping and the gate, including recovery once runs reach a terminal state.
+
+**Historical replay.**
+- `capture-histories` exported 126 terminal histories from the qualification
+  stacks.
+- Replaying all of them against the current code: 125 reached their recorded
+  completion. The one exception was a B04 run restored with
+  `--allow-git-drift`; its action IDs have a gap (completion is event 4, and
+  scheduled action 3 is missing). That restore-time artifact is not a
+  workflow non-determinism, and capture now skips such histories.
+- Six representative histories are committed under
+  `tools/dapr-engine/tests/orchestration/fixtures/histories/`. They cover both
+  workflows, the retry timer, task-control and run-control events, activity
+  failure, and completed and failed runs.
+- `history-replay.test.ts` replays them on every `npm test`. A negative control
+  (one inserted activity) fails with `NonDeterminismError`.
+- Engine suite: 188 pass with PostgreSQL.
+
+**Live upgrade and rollback** (`npm run -s qualify -- upgrade`):
+- The previous release is `8be6cb0`, the P6-02 release, run from a git worktree.
+- Runs 1 and 2 were identical: U01 passed in 115 s and U02 in 226 s.
+
+| Scenario | Result |
+|---|---|
+| U01 in-place upgrade with an approval wait and a 90 s retry timer pending | Schema 6 → 7 applied. Stop plus start under the new release took 20 s. Existing runs read `definition_version` 1. The approval resumed: T1/T2 one commit each. The timer fired and the retry committed T1 once. A run submitted after the upgrade completed with definition 1. |
+| U02 rollback | Under the previous release, `runtime start` was refused with "Database schema version 7 is newer than this Forge service supports (6)". Restoring the pre-upgrade backup with the previous launcher took 20 s and brought back schema 6. The approval wait resumed and completed with T1/T2 committed exactly once. |
+
+**Rollback constraint (documented in
+[forge-launcher](docs/forge-launcher.md#upgrading)).** The schema is never
+migrated back. Rolling back means restoring a backup taken with the earlier
+release, and work done after that backup is lost. The ADR-073 drift checks
+refuse the restore if Git moved since the backup, unless `--allow-git-drift` is
+passed.
 
 ### P5-GATE evidence — 2026-10-22
 

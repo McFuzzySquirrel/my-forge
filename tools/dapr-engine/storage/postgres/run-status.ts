@@ -1,3 +1,4 @@
+import { ORCHESTRATION_DEFINITION_VERSION } from "../../orchestration/versioning.ts";
 import {
   canonicalDigest,
   SCHEMA_VERSION,
@@ -364,11 +365,12 @@ export class PostgresRunStatusStore {
       const inserted = await connection.query<RunRow>(
         `INSERT INTO forge_run_statuses
           (schema_version, run_id, repository_id, target_ref, manifest_digest,
-           status, revision, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, 'queued', 1, NOW(), NOW())
+           status, revision, created_at, updated_at, definition_version)
+         VALUES ($1, $2, $3, $4, $5, 'queued', 1, NOW(), NOW(), $6)
          ON CONFLICT (run_id) DO NOTHING
          RETURNING ${RUN_COLUMNS}`,
-        [SCHEMA_VERSION, input.runId, input.repositoryId, input.targetRef, input.manifestDigest],
+        [SCHEMA_VERSION, input.runId, input.repositoryId, input.targetRef, input.manifestDigest,
+          ORCHESTRATION_DEFINITION_VERSION],
       );
       if (!inserted.rows[0]) {
         const current = await connection.query<RunRow>(

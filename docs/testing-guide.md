@@ -358,6 +358,8 @@ npm run -s qualify -- failures --report /tmp/myforge-qual/reports/failures.json
 npm run -s qualify -- failures --only F07,F08   # selected scenarios
 npm run -s qualify -- failures --teardown       # reset the isolated runtime afterwards
 npm run -s qualify -- backup                    # P6-02 backup/restore suite
+npm run -s qualify -- upgrade                   # P6-03 upgrade/rollback suite
+npm run -s qualify -- capture-histories myforge-qual ../dapr-engine/tests/orchestration/fixtures/histories
 ```
 
 The full failure suite takes about 15 minutes. The backup suite (about 7
@@ -369,6 +371,15 @@ launcher with `MYFORGE_RUNTIME_PROJECT=myforge-qual`,
 Never use `podman system reset` or change `XDG_DATA_HOME` to isolate a run; both
 affect every rootless container of the user. See
 [ADR-072](adr/072-runtime-failure-recovery-and-qualification.md).
+
+The upgrade suite (about 6 minutes) checks out the previous release as a git
+worktree under the root (`release-<commit>`), installs its launcher
+dependencies, and switches between the two launchers. Update
+`PREVIOUS_RELEASE` in `src/upgrade.ts` with each release. `capture-histories`
+exports finished workflow histories from an isolated stack. The engine's
+`tests/orchestration/history-replay.test.ts` replays them against the current
+workflow code; refresh the fixtures after a deliberate compatible workflow
+change ([ADR-074](adr/074-workflow-definition-versioning-and-upgrade-qualification.md)).
 
 ## 5. Helpful checks when debugging
 

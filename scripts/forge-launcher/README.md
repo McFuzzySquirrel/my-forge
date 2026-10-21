@@ -42,7 +42,7 @@ the queued command it prints.
 | `forge-launcher runtime reset --confirm` | Stop the runtime and remove its persistent volumes after explicit confirmation. |
 | `forge-launcher runtime backup --output <new-directory>` | Quiesce the runtime and write checksummed PostgreSQL, Scheduler, and Forge volume archives. |
 | `forge-launcher runtime restore --from <backup-directory> --confirm` | Verify an archive, replace runtime volumes, and restart the service. |
-| `forge-launcher runtime repo add <path> [--id <id>] \| list \| remove <id>` | Register repositories whose `.git` directory the service may mount; restart the runtime to apply. |
+| `forge-launcher runtime repo add <path> [--id <id>] \| list \| remove <id>` | Register repositories whose `.git` directory the service may mount; restart to apply. All repositories in one runtime share a trust domain, so register only mutually trusted projects. |
 | `forge-launcher runtime harness grant <harness> <VARIABLE> [--from-env] \| list \| revoke <harness> [VARIABLE]` | Grant, list, or revoke the credentials a worker harness (`copilot`, `claude`, `opencode`) receives; values are read from stdin or the environment. |
 | `forge-launcher service submit [--repo <path>] [--follow] ...` | Submit the compiled manifest to the local service; it integrates into `forge/<branch>`. |
 | `forge-launcher service runs \| status \| events \| control \| merge` | List, monitor, control, and fast-forward-merge service runs; `--json` exports run records and the event audit trail. |

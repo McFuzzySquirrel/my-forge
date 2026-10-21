@@ -235,6 +235,14 @@ an absolute `MYFORGE_RUNTIME_DIR` (runtime data directory), and a different
 `MYFORGE_API_PORT` for every `runtime` and `service` command. Containers and
 volumes are named after the project, so the default installation is not affected.
 
+**Shared repository trust boundary.** Every task can read Git metadata and
+objects from all repositories registered to the same runtime, although it
+cannot write sibling `.git` directories or read the shared harness-grants
+file. Register only repositories, harnesses, and task/validation work that you
+trust to share this access. Use separate runtime installations for different
+trust domains; this local profile is not multi-tenant isolation. See
+[ADR-075](adr/075-security-boundary-review.md).
+
 1. Register the repository, then restart the runtime so it is mounted:
    `runtime repo add <path>`, `runtime stop`, `runtime start`. Only the
    repository's `.git` directory is mounted. Linked worktrees and submodules

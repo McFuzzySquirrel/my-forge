@@ -19,13 +19,12 @@ before cutover.
    with its password. A repository could forge approvals, call the Dapr
    sidecar, read the database directly, or copy secrets into evidence that is
    later backed up.
-2. **HIGH — one root container holds every repository's `.git` read-write
-   (open, blocks cutover).** `runtime-repositories.ts` mounts each registered
-   repository's `.git` into the single forge container, and harness processes
-   run there as container root, which maps to the operator UID. An untrusted
-   harness or validation command can plant hooks or `core.fsmonitor` in any
-   registered repository, which leads to code execution on the host. It can
-   also read every harness grant in `/run/myforge/harness-grants/grants.json`.
+2. **HIGH — the runtime shares registered repositories' `.git` metadata
+   (write/grant access fixed; read access accepted within one trust domain).**
+   Initially, harness processes ran as container root and could modify every
+   registered repository and read every harness grant. ADR-076 removed task
+   write access to source `.git` directories and grants. Tasks can still read
+   Git metadata and objects from every registered repository.
 3. No dependency vulnerabilities. `npm audit` reports 0 in `tools/dapr-engine`,
    `scripts/forge-launcher`, `forge-workflow-engine`,
    `forge-execution-adapter`, and `tools/console-screenshots`.
@@ -40,15 +39,18 @@ before cutover.
   validation. Regression: the T-1 validation command in
   `execution-host.integration.test.ts` fails if `POSTGRES_TEST_URL`,
   `DATABASE_URL`, or `GH_TOKEN` is visible, or if `HOME` is `/root`.
-- Finding 2 stays open and is recorded as a **P6-GATE / cutover blocker**. The
-  required resolution has three parts:
+- The original write/grant portions of finding 2 are resolved by ADR-076. The
+  remaining cross-repository read is accepted only for a local runtime whose
+  registered repositories, harnesses, and task/validation work are mutually
+  trusted; this scope restriction is a P6-GATE decision, not a technical
+  isolation guarantee. The implemented controls are:
   - Run harness and validation processes as a dedicated unprivileged UID.
   - Give that UID a writable workspace and home, but no write access to
     `/repositories/*/.git` and no read access to the grants file.
   - Pass grants only to the selected harness, through its environment.
 
   Doing this needs worker image and git-ownership changes, followed by live
-  re-qualification of each harness, so it is not combined with this review.
+  re-qualification of each harness; see ADR-076 and the P6 evidence.
 
 ## Live evidence (`myforge-qual`, 2026-10-21)
 
@@ -68,13 +70,24 @@ traversal, symlink and absolute output escapes, and control size limits.
 ## Consequences
 
 - Repository-defined commands can no longer read runtime credentials.
-- Finding 2 must be resolved, or each registered repository and harness
-  explicitly trusted, before cutover.
+- The remaining Git-metadata read is permitted only when each repository and
+  harness registered to one local runtime is explicitly trusted. Use separate
+  runtime installations for distinct trust domains; this is not multi-tenant
+  isolation.
 
 ## Implementation update — 2026-10-21
 
 [ADR-076](076-task-process-privilege-isolation.md) implements per-attempt
 unprivileged UIDs. Tasks can no longer write registered source `.git` mounts
-or read the shared grants file. The mounts remain readable, however, so the
-cross-repository confidentiality risk remains open where registered
-repositories are not mutually trusted.
+or read the shared grants file. The mounts remain readable, however.
+
+## Trust-domain acceptance — 2026-10-21
+
+The operator accepted the shared-trust-domain route for P6-GATE. A task may
+read Git metadata and objects from every repository registered to the same
+local runtime. Registration is limited operationally to repositories,
+harnesses, and task/validation work that the operator trusts to share that
+access. Use separate runtime installations for repositories outside the
+trust domain. This does not protect mutually untrusted repositories from one
+another; adding such repositories or claiming multi-tenant isolation reopens
+the finding and requires a filesystem/mount boundary.

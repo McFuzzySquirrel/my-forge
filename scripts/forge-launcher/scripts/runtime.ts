@@ -537,6 +537,10 @@ tips (unless --allow-git-drift), replaces those volumes, and restarts privately.
 The service API listens on 127.0.0.1:\${MYFORGE_API_PORT:-8483} and requires the generated bearer token.
 "repo add" registers a repository's .git directory for the service; restart the runtime
 (stop, then start) to apply registration changes. Worktrees and submodules are rejected.
+All registered repositories share a trust domain: tasks may read Git metadata and objects
+from every registered repository. Register only mutually trusted repositories and harnesses;
+use separate runtime installations for distinct trust domains. This is not multi-tenant
+isolation.
 "rotate-tokens" replaces the service API and Dapr sidecar tokens; restart the runtime to apply them.
 "harness grant <harness> <VARIABLE>" grants a credential (read from stdin) to one worker harness;
 grants apply to the next task attempt and are excluded from backups.

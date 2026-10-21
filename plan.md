@@ -404,9 +404,9 @@ support matrix, and release evidence.
   [ADR-076](docs/adr/076-task-process-privilege-isolation.md)): dependency
   audit clean; validation secret exposure fixed; task processes now run under
   per-attempt unprivileged UIDs; live F11 verifies the grants file is unreadable
-  and source `.git` is unwritable. **Residual cutover blocker:** registered
-  repositories' Git metadata remains readable across tasks; deny this if
-  registered repositories are not mutually trusted.*
+  and source `.git` is unwritable. The remaining cross-repository Git-metadata
+  read is accepted only within the operator-approved, mutually trusted local
+  repository/harness domain recorded in ADR-075.*
 - [x] **P6-05 — Qualify the Linux platform and available harnesses.** Validate
   Linux rootless behavior and each available, claimed harness. Preserve the
   existing macOS and Windows implementations; do not remove desktop targets
@@ -424,13 +424,18 @@ support matrix, and release evidence.
   memory/disk, long histories, cancellation, and recovery against agreed thresholds.
   *Done 2026-10-21 ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)):
   all budgets met; cancellation has little headroom.*
-- [ ] **P6-GATE:** Release matrix below passes for every advertised profile;
+- [x] **P6-GATE:** Release matrix below passes for every advertised profile;
   backup/restore and upgrades are rehearsed; support limits and unavoidable
   duplicate provider calls are documented. Unqualified profiles are not
   advertised. Under the approved P6-05 rebaseline, native desktop and Claude
-  qualification are post-Phase-6 follow-ups, not P6-GATE prerequisites while
-  those profiles remain unadvertised. The residual cross-repository Git-metadata
-  read remains a cutover blocker.
+  qualification are post-plan follow-ups, not P6-GATE prerequisites while
+  those profiles remain unadvertised. The operator accepted a shared trust
+  domain for registered repositories and harnesses; the remaining read-only
+  cross-repository Git-metadata access is a documented restriction, not a
+  claim of isolation.
+  *Accepted 2026-10-21 under ADR-075's trust-domain decision. Linux rootless,
+  stub/Copilot/OpenCode are the qualified profile; never register mutually
+  untrusted repositories or harnesses in the same runtime.*
 
 ## P7 — Cut over and retire the legacy scheduler
 
@@ -495,7 +500,8 @@ authenticated operations without changing task semantics.
 These follow-ups are scheduled after completion of the currently planned phases
 (P6–P8). Keep the existing macOS and Windows implementations in the product,
 but do not describe those profiles as qualified until their native-host checks
-pass. These follow-ups do not waive the separate P6-GATE security blocker.
+pass. They do not change the accepted trust-domain boundary; repositories or
+harnesses outside that boundary require new isolation work before registration.
 
 - [ ] **P6-FU-01 — Qualify the native macOS Podman machine.** On a real Mac,
   verify Podman-machine networking, credentials, mounts, path translation,
@@ -612,7 +618,8 @@ macOS and Windows implementations remain included but unqualified; native
 desktop and Claude qualification are tracked in the post-Phase-6 follow-up.
 P6-06 budget evidence is recorded
 ([P6-06 evidence](#p6-06-parity-and-budget-evidence--2026-10-21)).
-P6-GATE remains blocked by residual cross-repository Git-metadata read access.
+P6-GATE was accepted on 2026-10-21 under the explicit shared-trust-domain
+restriction recorded in ADR-075.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -880,9 +887,10 @@ hooks directory. Qualification F11 automates these checks. The privilege-drop
 helper is exercised through the real harness process runner; `setpriv` is
 installed in worker image `localhost/myforge-worker:3`.
 
-**Residual risk:** the task can read other registered repositories' Git
-metadata and objects. Treat registrations as a shared trust domain until a
-mount/filesystem boundary prevents that read access.
+**Accepted residual risk:** the task can read other registered repositories'
+Git metadata and objects. Per the operator's 2026-10-21 acceptance in ADR-075,
+all repositories and harnesses in one local runtime are a mutually trusted
+domain; use separate runtime installations for distinct trust domains.
 
 **Live regression qualification after the change:** failures F01–F10 and F11
 passed; backup B01–B04 passed; upgrade U01–U02 passed. The test-only
@@ -925,8 +933,27 @@ of harness; switching harness requires no additional repository credential.
 Provider authentication is separate from GitHub repository access. macOS and
 Windows Podman-machine networking, credentials, mounts, path translation,
 watchers, and performance remain unqualified. The task-UID fix is implemented
-(ADR-076); residual read-only cross-repository access still needs a
-trust-boundary decision before cutover.
+(ADR-076); read-only cross-repository access is accepted only within the
+documented shared trust domain (ADR-075).
+
+### P6-GATE acceptance — 2026-10-21
+
+**Status: accepted by the operator under the shared-trust-domain scope.**
+P6-01–P6-06 evidence is recorded above. The Linux rootless profile and
+stub/Copilot/OpenCode harness paths are qualified; unqualified macOS, Windows,
+and Claude profiles are not advertised. Backup/restore and upgrade rehearsals
+are recorded in P6-02/P6-03; measured support budgets and cancellation limits
+are recorded in P6-06. Dapr activity execution is at least once, and provider
+calls may repeat if a result is not durably recorded; exactly-once external
+effects are not promised without provider idempotency (ADR-066).
+
+The accepted residual security limit is that a task can read Git metadata and
+objects for other repositories registered to the same runtime. Only
+repositories, harnesses, and task/validation work that the operator explicitly
+trusts as one domain may be registered together. Use separate local runtime
+installations for different trust domains. This is not multi-tenant isolation;
+registering untrusted repositories or claiming their isolation reopens P6-04
+and P6-GATE.
 
 ### P5-GATE evidence — 2026-10-22
 

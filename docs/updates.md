@@ -4,6 +4,23 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.138
+
+### Accept the local shared-trust-domain boundary for P6-GATE
+
+- P6-GATE is accepted for the qualified Linux rootless profile with the stub,
+  Copilot, and OpenCode harnesses. The operator accepted that tasks can read
+  Git metadata and objects from every repository registered to the same local
+  runtime.
+- Register only mutually trusted repositories, harnesses, and task/validation
+  work in one runtime; use separate runtime installations for distinct trust
+  domains. This is not multi-tenant isolation. Adding untrusted repositories
+  reopens the security finding and requires a real filesystem/mount boundary.
+- macOS, Windows, and Claude remain unqualified and are not advertised as
+  qualified profiles; their checks remain post-plan follow-ups.
+
+---
+
 ## October 2026 - v3.137
 
 ### Rebaseline Phase 6 platform qualification

@@ -4,6 +4,20 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.132
+
+### Platform qualification: Linux-only release (P6-05)
+
+- The Dapr runtime is qualified on **Linux with rootless Podman** (Ubuntu
+  24.04, Podman 4.9.3, cgroups v2). macOS and Windows Podman-machine hosts are
+  deferred and not supported.
+- The pinned harness CLIs (copilot 1.0.100, claude 2.1.304, opencode 1.19.3)
+  install in the worker image. A real task with a granted credential has not
+  yet been qualified, so only the stub harness is qualified end to end. See the
+  P6-05 evidence in `plan.md`.
+
+---
+
 ## October 2026 - v3.131
 
 ### Security boundary review (P6-04)

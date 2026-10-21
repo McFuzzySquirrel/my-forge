@@ -405,10 +405,13 @@ support matrix, and release evidence.
   **Open cutover blocker:** harness processes run as container root beside
   every repository's read-write `.git` and the grants file. A dedicated
   task UID is required.*
-- [ ] **P6-05 — Qualify supported platforms/harnesses.** Validate Linux rootless
+- [x] **P6-05 — Qualify supported platforms/harnesses.** Validate Linux rootless
   behavior and each claimed harness. Test Podman-machine networking, credentials,
   mounts, path translation, watchers, and performance separately on macOS/Windows.
   If desktop platforms are deferred, explicitly release as Linux-only.
+  *Done 2026-10-21 ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)):
+  **Linux-only release.** macOS and Windows (Podman machine) are deferred and
+  not advertised. Real harnesses are not qualified until a credentialed run.*
 - [ ] **P6-06 — Re-run parity and budgets.** Compare accepted outcomes, commit
   behavior, validation, audit, and controls with P0 fixtures; measure startup,
   memory/disk, long histories, cancellation, and recovery against agreed thresholds.
@@ -571,7 +574,7 @@ complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
 [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
 [P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21),
 [ADR-075](docs/adr/075-security-boundary-review.md), which records one open
-cutover blocker); P6-05 platform qualification is next.
+cutover blocker); P6-05 declared a Linux-only release ([P6-05 evidence](#p6-05-platform-and-harness-evidence--2026-10-21)); P6-06 parity and budgets is next.
 P1-06 is recorded in
 [ADR-066](docs/adr/066-dapr-workflow-full-replacement-architecture.md). The
 P2-01, P2-02, P2-04, and P2-06 contract deliverables are authored. P2-03 landed
@@ -798,6 +801,28 @@ migrated back. Rolling back means restoring a backup taken with the earlier
 release, and work done after that backup is lost. The ADR-073 drift checks
 refuse the restore if Git moved since the backup, unless `--allow-git-drift` is
 passed.
+
+### P6-05 platform and harness evidence — 2026-10-21
+
+**Release scope: Linux only.** macOS and Windows hosts (Podman machine
+networking, path translation, watchers, and performance) are deferred. They
+are not advertised and must not be listed as supported until they are
+qualified separately.
+
+| Item | Result |
+|---|---|
+| Host | Ubuntu 24.04, kernel 7.0.0, Podman 4.9.3 **rootless**, cgroups v2 |
+| User namespace | Container root maps to operator UID 1000; other UIDs map to subordinate range 100000+ |
+| Rootless runtime | P6-01–P6-03 suites passed on rootless stacks `myforge-qual` and `myforge-qual2`, covering restart, worker loss, sidecar/DB loss, backup/restore, and upgrade/rollback |
+| Mounts | Repository `.git` bind mounts and workspace integration verified by the failure and backup suites; grants file mounted `0600` root |
+| Harness CLIs in `localhost/myforge-worker:2` | `copilot` 1.0.100, `claude` 2.1.304, `opencode` 1.19.3 install and report their pinned versions |
+| Grant enforcement | A submission without a grant is rejected with the grant hint (P5-GATE evidence) |
+| Stub harness | Qualified end to end (all P6 suites) |
+| Real harness task with a granted credential | **Not run.** No operator credential was available in the isolated stack, and operator credentials were not used without consent. copilot, claude, and opencode are therefore **unqualified** for P6-GATE. |
+
+Remaining before advertising a real harness: run one credentialed task per
+harness on an isolated stack, then record its outcome, commit, and audit
+trail. This also requires the ADR-075 task-UID fix first.
 
 ### P5-GATE evidence — 2026-10-22
 

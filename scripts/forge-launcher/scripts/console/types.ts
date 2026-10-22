@@ -17,46 +17,20 @@ export interface AuditEvent {
   outputFiles?: string[];
 }
 
-export interface TaskAttemptSummary {
-  attempt: number;
-  outcome: "passed" | "failed" | "cancelled";
-  resultPath: string;
-  reason?: string;
-}
-
-export interface TaskRecord {
+export interface ServiceTaskSnapshot {
   taskId: string;
   status: string;
-  ownerAgent?: string;
+  logicalAttempt?: number;
   startedAt?: string;
   completedAt?: string;
-  attempt: number;
-  outputFiles: string[];
-  agentOutput?: string;
-  errorMessage?: string;
-  artifactId?: string;
-  inputArtifactIds?: string[];
-  validationLimitations?: string[];
-  /**
-   * Per-attempt history the engine already persists. Not part of the dispatch
-   * contract; the Board reads it to estimate how long a task takes when the
-   * current run has not measured it yet.
-   */
-  attemptHistory?: TaskAttemptSummary[];
 }
 
-export interface WorkflowState {
+export interface ServiceRunSnapshot {
   runId: string;
-  startedAt: string;
-  lastUpdatedAt: string;
-  manifestPath: string;
-  manifestVersion: string;
-  harness: string;
   status: string;
-  currentPhase?: string;
-  tasks: Record<string, TaskRecord>;
-  blockers: string[];
-  selection?: { mode: ExecutionMode; scope?: SelectionScope; taskIds: string[] };
+  createdAt?: string;
+  updatedAt?: string;
+  tasks: ServiceTaskSnapshot[];
 }
 
 export interface ManifestTask {
@@ -171,7 +145,6 @@ export interface Summary {
   manifest: ManifestSummary | null;
   run: RunSummary | null;
   live: boolean;
-  control: string | null;
   logExists: boolean;
   defaultTimeoutMs: number | null;
   /** Auto-commit after each completed task (engine-config; default on). */
@@ -245,6 +218,7 @@ export interface ArtifactMeta {
   createdAt: string;
   filesChanged: string[];
   inputs: string[];
+  validationLimitations?: string[];
 }
 
 export interface ArtifactIndex {
@@ -331,7 +305,7 @@ export interface FileContent {
   content: string;
 }
 
-export type ControlAction = "run" | "resume" | "pause" | "stop" | "replay" | "reset-changed" | "draft-prd" | "draft-existing-prd" | "draft-team" | "draft-skills" | "rederive" | "compile-manifest" | "feature-prd" | "feature-increment" | "feature-increment-continue";
+export type ControlAction = "run" | "resume" | "pause" | "stop" | "replay" | "draft-prd" | "draft-existing-prd" | "draft-team" | "draft-skills" | "rederive" | "compile-manifest" | "feature-prd" | "feature-increment" | "feature-increment-continue";
 
 import type { RederiveProgress } from "../rederive-state.ts";
 export type { RederiveProgress, RederiveStep, RederiveStepId, RederiveStepStatus } from "../rederive-state.ts";

@@ -36,6 +36,15 @@ for (const directory of ["contract", "orchestration", "service", "storage"]) {
 }
 
 copyTree(path.join(repoRoot, "templates"), path.join(resourcesDir, "templates"));
+const retiredSkillSource = path.join(repoRoot, "templates", "skills", "forge-workflow-engine");
+const retiredSkillBundle = path.join(resourcesDir, "templates", "skills", "forge-workflow-engine");
+rmSync(retiredSkillBundle, { recursive: true, force: true });
+for (const relative of ["SKILL.md", "references/engine-entry.md", "scripts/cli.ts"]) {
+  const source = path.join(retiredSkillSource, relative);
+  const destination = path.join(retiredSkillBundle, relative);
+  mkdirSync(path.dirname(destination), { recursive: true });
+  copyFileSync(source, destination);
+}
 copyTree(
   path.join(repoRoot, "tools", "dapr-engine", "execution"),
   path.join(resourcesDir, "tools", "dapr-engine", "execution"),

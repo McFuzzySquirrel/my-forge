@@ -9,3 +9,5 @@ scripts/forge-launcher/resources/prompt-playbook.md
 scripts/forge-launcher/resources/console/
 scripts/forge-launcher/resources/tools/
 .env
+.dg/graph.db
+.dg/server.db

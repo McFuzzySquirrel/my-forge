@@ -1,93 +1,86 @@
 # Architecture
 
-This document gives a high-level view of how MyForge is structured and how the main subsystems fit together.
+MyForge is a local-first authoring and execution toolchain. Requirements and agent
+instructions are authored in a target repository, then
+`forge-execution-adapter` compiles them into an execution manifest. The launcher
+submits that manifest to the registered local Dapr execution service; the
+service, not the launcher or Console, owns durable run orchestration and status.
 
-For a detailed, codebase-grounded reference covering package boundaries, runtime data flow, implementation patterns, testing, and extension guidance, see [Project Architecture Blueprint](Project_Architecture_Blueprint.md).
-
-## Overview
-
-MyForge is a PRD-first orchestration system for turning an idea into an implemented project. The flow is intentionally split into a few layers:
-
-1. **Authoring and intake** - the launcher collects the idea, creates or updates the repository, and gathers the PRD and supporting context.
-2. **Planning and agent generation** - the system turns the PRD into a team of specialist agents and, in a separate authoring stage, supporting skills.
-3. **Execution orchestration** - the workflow engine runs the tasks, tracks state, and handles replay and resumption.
-4. **Observation and control** - the console exposes runs, logs, artifacts, and task controls through a local web UI.
+For the detailed, code-grounded component map, data flow, runtime topology,
+testing boundaries, and extension guidance, see the
+[Project Architecture Blueprint](Project_Architecture_Blueprint.md).
 
 ## Core components
 
-### Launcher
-
-The launcher is the user-facing entry point. It is responsible for:
-
-- creating or selecting a repository,
-- bootstrapping the MyForge templates into the target harness,
-- collecting the idea and optional PRD context,
-- launching the build path or handing off to the execution engine.
-
-It lives in [scripts/forge-launcher](scripts/forge-launcher) and is the primary entry point for interactive and headless flows.
-
-### Workflow engine
-
-The workflow engine is the execution core. It reads the compiled manifest, schedules tasks, tracks their state, and persists progress so runs can pause and resume.
-
-Key responsibilities:
-
-- dependency-aware task execution,
-- concurrency management,
-- replay and resume behavior,
-- state persistence in the repository’s docs and runtime files.
-
-The main reference is [docs/workflow-engine.md](docs/workflow-engine.md).
-
-### Execution adapter
-
-The execution adapter compiles the authored project and team definitions into
-`docs/EXECUTION-MANIFEST.json`. It is a compile-time boundary, not the runtime
-retry or task scheduler. It is responsible for:
-
-- mapping requirements and ownership into stable task definitions,
-- producing and validating the execution manifest,
-- preserving the source layout and task metadata needed by the engine.
-
-### Workflow engine
-
-The workflow engine owns runtime execution after compilation. It schedules
-dependency-ready tasks, invokes native harness adapters, verifies outputs,
-persists task state, and applies retry, timeout, cancellation, and replay
-policy. See [docs/workflow-engine.md](docs/workflow-engine.md).
-
-### Forge Console
-
-The Forge Console is a local web UI over the same artifacts produced by the launcher and engine. It does not replace the CLI; instead, it provides a browser-based view for:
-
-- project selection,
-- run overview,
-- board and task views,
-- logs and artifacts,
-- pause, stop, resume, and replay controls.
-
-The main reference is [docs/forge-console.md](docs/forge-console.md).
+- **Launcher** (`scripts/forge-launcher/`): cross-platform CLI, bootstrap and
+  authoring orchestration, local runtime lifecycle, service API client, and
+  loopback Console.
+- **Authoring templates** (`templates/skills/`, `templates/agents/`):
+  human-reviewed PRD and feature authoring followed by reproducible team and
+  project-skill derivation.
+- **Execution adapter** (`templates/skills/forge-execution-adapter/`):
+  validates source documents and compiles `docs/EXECUTION-MANIFEST.json`.
+- **Dapr execution service** (`tools/dapr-engine/`): service API, durable Dapr
+  workflows, task/harness execution, PostgreSQL-backed run records, and
+  file-backed artifacts/checkpoints.
+- **Local runtime** (`tools/dapr-engine/deploy/`): rootless Podman Compose
+  deployment for PostgreSQL, Dapr placement/Scheduler/sidecar, and the Forge
+  worker. Registered repositories are mounted by the launcher.
+- **Forge Console** (`scripts/forge-launcher/scripts/console/`): local browser
+  projection for authoring, service-run status and controls, logs, artifacts,
+  tasks, and the Console-owned Kanban/Gantt Board.
+- **Legacy workflow-engine skill**: a fail-closed compatibility reference;
+  it is not an execution scheduler. The canonical Dapr-independent execution
+  library is owned by `tools/dapr-engine/execution/`.
 
 ## Runtime data flow
 
-A typical run follows this path:
+1. The launcher creates or selects a target repository and bootstraps harness
+   templates.
+2. Interactive authoring produces reviewed PRD and feature documents; team and
+   skill derivation follow those approved requirements.
+3. The execution adapter validates inputs and writes the manifest.
+4. The launcher authenticates to the local service API and submits a run
+   snapshot for a registered repository.
+5. Dapr Workflow coordinates durable run/task activities. PostgreSQL stores
+   submissions, statuses, events, controls, receipts, and execution ownership;
+   the worker uses the execution library and granted harness credentials.
+6. The service integrates task changes into the repository. The Console reads
+   service-backed status and exposes acknowledged controls; legacy
+   `WORKFLOW-STATE.json` remains archival and is not execution authority.
 
-1. The launcher creates or opens a project and bootstraps the harness files.
-2. The PRD and supporting docs are captured or generated.
-3. The agent team and independently authored skills are assembled; the execution adapter compiles the manifest.
-4. The workflow engine executes the manifest through native harness adapters and owns retries and verification.
-5. The console reads the generated state and artifacts to present progress to the user.
+## Architectural boundaries
+
+- Requirements, compilation, execution, and UI projection have separate
+  owners. Execution consumes the compiled manifest, not the PRD.
+- `tools/dapr-engine/contract/v1/` defines Dapr-independent application
+  contracts; `execution/` implements the reusable task/harness boundary.
+- Dapr orchestration and persistence live in `tools/dapr-engine/`; launcher
+  service clients and runtime management live in `scripts/forge-launcher/`.
+- The local service API is loopback-only and bearer-token protected.
+  Repository registration controls which project Git metadata the worker can
+  access; harness credentials are granted separately.
+- Hosted execution is not available. New runs require local runtime
+  registration; legacy histories are not imported or silently resumed.
 
 ## Repository layout
 
-- [templates](templates) - reusable agent and skill templates bootstrapped into target repos.
-- [scripts](scripts) - launcher wrappers and supporting scripts.
-- [docs](docs) - user guidance, deep dives, ADRs, release notes, and generated artifacts.
-- [README.md](README.md) - project landing page and quick-start entry point.
+- [templates](templates) — reusable agents, skills, and execution-manifest
+  compiler.
+- [scripts](scripts) — launcher package and shell/PowerShell compatibility
+  wrappers.
+- [tools/dapr-engine](tools/dapr-engine) — execution contracts, reusable
+  execution library, Dapr service, storage adapters, and deployment files.
+- [docs](docs) — user guidance, deep dives, ADRs, release notes, and contracts.
+- [README.md](README.md) — project landing page and quick start.
 
 ## Design principles
 
-- **PRD-first** - implementation should not begin until the quality gate is reviewed.
-- **Automation with review boundaries** - mechanical work can be automated, but important decisions should remain visible and reviewable.
-- **Stateful execution** - runs should be resumable and inspectable.
-- **Cross-harness portability** - the same workflow should work across supported agent runtimes.
+- **PRD-first** — review requirements before implementation.
+- **Explicit contracts** — compile a manifest and version durable run contracts.
+- **One execution authority** — the registered Dapr service owns supported run
+  state; do not add legacy fallback writers.
+- **Human review boundaries** — automate mechanical derivation, not requirement
+  decisions.
+- **Local-first, not hosted** — the current runtime is an operator-managed local
+  Podman deployment, not a hosted multi-tenant control plane.

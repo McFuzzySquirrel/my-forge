@@ -1,26 +1,40 @@
 # Workflow Engine
 
-> The autonomous execution layer for MyForge. Reads a compiled `docs/EXECUTION-MANIFEST.json` and drives every task to completion through a pluggable harness - no human prompting between tasks.
+> Historical reference for MyForge's retired in-process execution layer. It read
+> a compiled `docs/EXECUTION-MANIFEST.json` and drove tasks through a pluggable
+> harness without human prompting between tasks.
+
+> **Retired legacy reference:** this document describes the old in-process
+> scheduler. Its commands and workflow-state files are not supported for new
+> runs. Use the registered Dapr execution service described in
+> [the launcher cutover guide](forge-launcher.md#cut-over-from-the-legacy-engine);
+> legacy histories are not imported.
 
 ---
 
 ## Overview
 
-`forge-workflow-engine` is the "dark orchestration" half of MyForge. Where `project-orchestrator` runs *inside* a chat harness as a prompt-driven orchestrator, this engine runs **outside** the chat session as a standalone Node process:
+`forge-workflow-engine` was the "dark orchestration" half of MyForge. Where
+`project-orchestrator` runs *inside* a chat harness as a prompt-driven
+orchestrator, this engine ran **outside** the chat session as a standalone Node
+process:
 
 1. Reads `docs/EXECUTION-MANIFEST.json` (the compiled build contract).
 2. Builds a task DAG and walks it phase-by-phase, task-by-task.
 3. Dispatches each task to a **native harness adapter** (`opencode`, `copilot`, `claude`, `openai`, or `stub`).
 4. Persists state after every transition, so a run can be resumed, replayed, or audited at any time.
 
-It can now run in two execution modes:
+It supported two execution modes:
 
 - **Auto** - execute the full ready workflow.
 - **Manual** - execute only a selected task set (plus any transitive
   dependencies the selected tasks require), while leaving the rest of the
   manifest untouched for later runs.
 
-It is the execution alternative to the prompt-driven flows: start it from the terminal with `forge-launcher engine-run`, drive it in-harness with `@workflow-orchestrator`, or select it inside the `forge-auto-build` terminal fast-path with `GO --workflow-engine`.
+Those modes and commands describe the retired scheduler and are not supported
+for new runs. Autonomous execution now uses `forge-launcher engine-run` through
+the registered Dapr service; legacy workflow histories are not imported. See
+[the launcher cutover guide](forge-launcher.md#cut-over-from-the-legacy-engine).
 
 ---
 
@@ -61,9 +75,13 @@ explicitly. The engine fails rather than silently switching roots.
 
 ---
 
-## Getting started
+## Historical command examples (retired)
 
-### Directly (inside the repo)
+> The following commands document the former scheduler only. The
+> `workflow-engine` package command and standalone legacy runner behavior were
+> removed; use the registered Dapr service for new autonomous runs.
+
+### Former package command
 
 ```bash
 cd <harness-dir>/skills/forge-workflow-engine
@@ -71,14 +89,12 @@ npm install
 npm run workflow-engine -- run --harness opencode --yes
 ```
 
-### Standalone runner (any terminal, CI, or `nohup`)
+### Former standalone runner behavior
 
-```bash
-forge-launcher engine-run --repo <repo-dir> --harness opencode --yes
-# or the legacy wrapper: ./scripts/forge-engine-run.sh --repo <repo-dir> --harness opencode --yes
-```
-
-This installs the adapter and engine dependencies, compiles the manifest if missing, then runs the engine in the foreground. Add `--dry-run` to print the command sequence without executing it.
+Before cutover, `forge-launcher engine-run` installed legacy engine
+dependencies, compiled the manifest if missing, and ran the file-backed
+scheduler in the foreground. That behavior is retired; the current
+`forge-launcher engine-run` uses the registered Dapr service.
 
 > **Prefer a browser?** Run monitoring and control from the **Forge Console**
 > (`forge-launcher console`) - a local web UI that reads the same `docs/*`
@@ -87,7 +103,10 @@ This installs the adapter and engine dependencies, compiles the manifest if miss
 
 ### Via `forge-auto-build` (terminal/headless fast-path)
 
-At `forge-auto-build`'s pre-flight gate, type `GO --workflow-engine`. The team is generated, the manifest is compiled, and the engine starts **detached** (log: `docs/engine-run.log`) while `forge-auto-build` polls `docs/WORKFLOW-STATE.json` to completion. To pick up a run later from any terminal, use `forge-launcher resume` or `forge-launcher engine-run`.
+The retired `GO --workflow-engine` path generated the team, compiled the
+manifest, and polled file-backed engine state. It is not supported for new
+runs. Use `forge-launcher engine-run` through the registered Dapr service; see
+[the cutover guide](forge-launcher.md#cut-over-from-the-legacy-engine).
 
 For incremental work, add a Feature PRD with `forge-build-feature-prd`, update
 the affected team in Feature Increment Mode, and recompile the canonical

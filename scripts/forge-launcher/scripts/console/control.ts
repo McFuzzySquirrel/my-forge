@@ -16,15 +16,14 @@ import { jobRunnerCommand } from "../job-runner.ts";
 import { AUTHORING_STAGES, validateAuthoringConfig } from "../authoring-config.ts";
 import { engineDetachedCommand } from "../launcher.ts";
 import { currentJobForRepo, startJob, updateJob } from "./jobs.ts";
-import { findEngineDir, inferEngineHarness, repoPaths, upsertProject } from "./paths.ts";
-import { authoringBlocker, isPidAlive, refreshJobs, resetChangedCompletedTasks } from "./repo.ts";
+import { inferEngineHarness, repoPaths, upsertProject } from "./paths.ts";
+import { authoringBlocker, isPidAlive, refreshJobs } from "./repo.ts";
 import type { RederiveStepId } from "../rederive-state.ts";
 import type {
   ControlAction,
   ControlResult,
   CreateProjectRequest,
   CreateProjectResult,
-  WorkflowState,
 } from "./types.ts";
 
 // ─── Spawn seam (testable) ───────────────────────────────────────────────────
@@ -44,20 +43,11 @@ export type Spawner = (cmd: string, args: string[], opts: SpawnOptions) => Spawn
 
 export interface ControlDeps {
   spawner?: Spawner;
-  kill?: (pid: number, signal: NodeJS.Signals) => void;
   isPidAlive?: (pid: number | null) => boolean;
 }
 
 function defaultSpawner(cmd: string, args: string[], opts: SpawnOptions): SpawnResult {
   return spawnDetached(cmd, args, opts);
-}
-
-function defaultKill(pid: number, signal: NodeJS.Signals): void {
-  try {
-    process.kill(pid, signal);
-  } catch {
-    // process already gone
-  }
 }
 
 /** Builds the engine-run invocation args (console is the live view, so no --viz). */
@@ -93,7 +83,6 @@ function engineRunArgs(repoRoot: string): string[] {
 export class RunController {
   repoRoot: string;
   private readonly spawner: Spawner;
-  private readonly kill: (pid: number, signal: NodeJS.Signals) => void;
   private readonly isPidAlive: (pid: number | null) => boolean;
 
   constructor(
@@ -105,7 +94,6 @@ export class RunController {
     // poller follows.
     this.repoRoot = path.resolve(repoRoot);
     this.spawner = deps.spawner ?? defaultSpawner;
-    this.kill = deps.kill ?? defaultKill;
     this.isPidAlive = deps.isPidAlive ?? isPidAlive;
   }
 
@@ -113,34 +101,12 @@ export class RunController {
     return repoPaths(this.repoRoot);
   }
 
-  private writeControl(request: "pause" | "stop"): void {
-    fs.mkdirSync(path.dirname(this.p.controlPath), { recursive: true });
-    fs.writeFileSync(
-      this.p.controlPath,
-      `${JSON.stringify({ request, requestedAt: new Date().toISOString() }, null, 2)}\n`,
-      "utf8",
-    );
-  }
-
-  private readPid(): number | null {
-    if (!fs.existsSync(this.p.pidPath)) return null;
-    const pid = Number(fs.readFileSync(this.p.pidPath, "utf8").trim());
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  }
-
   pause(): ControlResult {
-    this.writeControl("pause");
-    return { ok: true, message: "Pause requested; the engine will stop after the current task." };
+    return { ok: false, message: "Legacy file controls are retired; pause a run through the local execution service." };
   }
 
   stop(): ControlResult {
-    this.writeControl("stop");
-    const pid = this.readPid();
-    if (pid !== null) {
-      this.kill(pid, "SIGTERM");
-      return { ok: true, message: "Stop requested; the engine will stop after the current task.", pid };
-    }
-    return { ok: true, message: "Stop request written; no live engine PID found to signal." };
+    return { ok: false, message: "Legacy PID controls are retired; stop a run through the local execution service." };
   }
 
   run(jobType: "engine-run" | "engine-resume" = "engine-run"): ControlResult {
@@ -149,7 +115,7 @@ export class RunController {
     if (blocker) return { ok: false, message: blocker };
     const logFile = this.p.logPath;
     const { cmd, args } = engineDetachedCommand(engineRunArgs(this.repoRoot));
-    const job = this.launchJob(jobType, "Engine started in the background.", cmd, args, logFile);
+    const job = this.launchJob(jobType, "Dapr service run started in the background.", cmd, args, logFile);
     const { pid } = job;
     return { ok: job.status !== "failed", message: job.message, pid, job };
   }
@@ -321,28 +287,11 @@ export class RunController {
     return { ok: job.status !== "failed", message: job.message, pid, job };
   }
 
-  replay(taskId: string): ControlResult {
-    refreshJobs();
-    const blocker = authoringBlocker(this.p);
-    if (blocker) return { ok: false, message: blocker };
-    const harness = process.env.FORGE_ENGINE_HARNESS ?? loadEngineConfig(this.repoRoot)?.harness ?? inferEngineHarness(this.repoRoot);
-    assertEngineHarnessAvailable(harness);
-    const engineDir = findEngineDir(this.repoRoot);
-    if (!engineDir) {
-      return { ok: false, message: "forge-workflow-engine not found under this repo; cannot replay." };
-    }
-    const replayArgs = ["run", "workflow-engine", "--", "replay", taskId, "--repo", this.repoRoot, "--harness", harness];
-    const job = this.launchJob(
-      "engine-replay",
-      `Replay of ${taskId} started in the background.`,
-      "npm",
-      replayArgs,
-      this.p.logPath,
-      { taskId },
-      { cwd: engineDir },
-    );
-    const { pid } = job;
-    return { ok: job.status !== "failed", message: job.message, pid, job };
+  replay(_taskId: string): ControlResult {
+    return {
+      ok: false,
+      message: "Legacy replay is retired; use the Console Service runs view or `forge-launcher service control <run-id> replay-task --task <task-id>`.",
+    };
   }
 
   createProject(req: CreateProjectRequest): CreateProjectResult {
@@ -404,26 +353,12 @@ export class RunController {
   private manualSelectionRequiredMessage(action: "run" | "resume"): ControlResult | null {
     const cfg = loadEngineConfig(this.repoRoot);
     if (normaliseExecutionMode(cfg?.executionMode) !== "manual") return null;
-    const selectedTaskIds = this.selectedTaskIdsForAction(action, cfg?.selectedTaskIds);
+    const selectedTaskIds = normaliseSelectedTaskIds(cfg?.selectedTaskIds);
     if (selectedTaskIds.length > 0) return null;
     return {
       ok: false,
       message: `Manual mode is enabled. Select at least one task in Tasks before ${action === "run" ? "running" : "resuming"} the build.`,
     };
-  }
-
-  private selectedTaskIdsForAction(action: "run" | "resume", configSelectedTaskIds: unknown): string[] {
-    const selectedTaskIds = normaliseSelectedTaskIds(configSelectedTaskIds);
-    if (selectedTaskIds.length > 0 || action !== "resume") return selectedTaskIds;
-    if (!fs.existsSync(this.p.statePath)) return selectedTaskIds;
-    try {
-      const state = JSON.parse(fs.readFileSync(this.p.statePath, "utf8")) as WorkflowState;
-      if (state.status !== "paused") return selectedTaskIds;
-      if (state.selection?.mode !== "manual") return selectedTaskIds;
-      return normaliseSelectedTaskIds(state.selection.taskIds);
-    } catch {
-      return selectedTaskIds;
-    }
   }
 
   dispatch(action: ControlAction, taskId?: string, from?: RederiveStepId): ControlResult {
@@ -437,10 +372,6 @@ export class RunController {
       case "run": return this.run();
       case "resume": return this.run("engine-resume");
       case "replay": return taskId ? this.replay(taskId) : { ok: false, message: "replay requires a taskId." };
-      case "reset-changed": {
-        const result = resetChangedCompletedTasks(this.p);
-        return { ok: result.ok, message: result.message };
-      }
       case "draft-prd":
       case "draft-existing-prd": return interactiveRequirements();
       case "draft-team": return this.draftTeam();

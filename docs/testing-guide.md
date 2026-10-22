@@ -219,8 +219,10 @@ The current package-level test suite exercises the main launcher behaviors:
 - resume flow behavior,
 - console entry-point behavior.
 
-The workflow-engine package uses an explicit recursive Node-based test
-discovery entry point. It includes root and nested `.test.ts` files and fails
+The legacy workflow-engine package is not a supported runtime and no longer
+exposes a `workflow-engine` npm command. Its test suite uses an explicit
+recursive Node-based discovery entry point. The runner includes root and nested
+`.test.ts` files and fails
 when no tests are discovered, rather than relying on shell-specific glob
 expansion. Each test file has a default 120-second timeout, so a stuck worker
 fails before the GitHub job's 15-minute deadline. From the engine package
@@ -252,8 +254,9 @@ npm ci --prefix templates/skills/forge-workflow-engine
 npm ci --prefix templates/skills/skill-review
 ```
 
-Install `tools/dapr-engine` before checking the workflow-engine package because
-that package typechecks shared engine source files from this package.
+The retired workflow-engine package now contains only its fail-closed CLI and
+compatibility tests. Dapr-independent execution utilities and their semantic
+tests are owned by `tools/dapr-engine`.
 
 ```bash
 npm run typecheck --prefix scripts/forge-launcher
@@ -362,6 +365,7 @@ npm run -s qualify -- failures --only F07,F08   # selected scenarios
 npm run -s qualify -- failures --teardown       # reset the isolated runtime afterwards
 npm run -s qualify -- backup                    # P6-02 backup/restore suite
 npm run -s qualify -- upgrade                   # P6-03 upgrade/rollback suite
+npm run -s qualify -- cutover --teardown        # P7-01/02 legacy cutover/rollback rehearsal
 npm run -s qualify -- capture-histories myforge-qual ../dapr-engine/tests/orchestration/fixtures/histories
 ```
 
@@ -383,6 +387,15 @@ exports finished workflow histories from an isolated stack. The engine's
 `tests/orchestration/history-replay.test.ts` replays them against the current
 workflow code; refresh the fixtures after a deliberate compatible workflow
 change ([ADR-074](adr/074-workflow-definition-versioning-and-upgrade-qualification.md)).
+
+The P7 cutover suite uses its own isolated project (`myforge-p7`, API port
+18485, default root `/tmp/myforge-p7-cutover`). It runs the previous-release
+legacy scheduler, drains an active task, archives completed and partial legacy
+state plus Git bundles, verifies fresh Dapr runs do not import either history,
+then stops Dapr writers before restoring legacy ownership while preserving
+post-cutover committed and uncommitted work. Use `--teardown` to reset that
+isolated runtime and remove its previous-release worktree. Its report and
+archived rehearsal fixtures remain under `--root`.
 
 ## 5. Helpful checks when debugging
 

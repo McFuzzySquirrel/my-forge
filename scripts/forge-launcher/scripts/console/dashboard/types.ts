@@ -17,35 +17,6 @@ export interface AuditEvent {
   outputFiles?: string[];
 }
 
-export interface TaskRecord {
-  taskId: string;
-  status: string;
-  ownerAgent?: string;
-  startedAt?: string;
-  completedAt?: string;
-  attempt: number;
-  outputFiles: string[];
-  agentOutput?: string;
-  errorMessage?: string;
-  artifactId?: string;
-  inputArtifactIds?: string[];
-  validationLimitations?: string[];
-}
-
-export interface WorkflowState {
-  runId: string;
-  startedAt: string;
-  lastUpdatedAt: string;
-  manifestPath: string;
-  manifestVersion: string;
-  harness: string;
-  status: string;
-  currentPhase?: string;
-  tasks: Record<string, TaskRecord>;
-  blockers: string[];
-  selection?: { mode: ExecutionMode; scope?: SelectionScope; taskIds: string[] };
-}
-
 export interface ExecutionManifest {
   version: string;
   generatedAt: string;
@@ -141,7 +112,6 @@ export interface Summary {
   manifest: ManifestSummary | null;
   run: RunSummary | null;
   live: boolean;
-  control: string | null;
   logExists: boolean;
   defaultTimeoutMs: number | null;
   /** Auto-commit after each completed task (engine-config; default on). */
@@ -407,7 +377,7 @@ export interface FileContent {
 /** ADR-060: `draft-prd` and `draft-existing-prd` are retained as accepted values
  * so older Console clients get a clear message instead of a 400, but they no
  * longer author requirements. Feature authoring is interactive too. */
-export type ControlAction = "run" | "resume" | "pause" | "stop" | "replay" | "reset-changed" | "draft-prd" | "draft-existing-prd" | "draft-team" | "draft-skills" | "rederive" | "compile-manifest" | "feature-prd" | "feature-increment" | "feature-increment-continue";
+export type ControlAction = "run" | "resume" | "pause" | "stop" | "replay" | "draft-prd" | "draft-existing-prd" | "draft-team" | "draft-skills" | "rederive" | "compile-manifest" | "feature-prd" | "feature-increment" | "feature-increment-continue";
 
 /** Interactive authoring entry points that open a pre-seeded harness terminal. */
 export type AuthoringSessionTarget = "idea" | "prd" | "feature-prd";

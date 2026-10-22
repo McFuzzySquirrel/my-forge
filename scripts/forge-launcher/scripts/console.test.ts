@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import { get as httpGet, request as httpRequest } from "node:http";
 
 import type { ConsoleServer } from "./console/server.ts";
-import { sessionHeaders, startSignedConsoleServer as startConsoleServer } from "./console-test-session.ts";
+import { sessionHeaders, signedFetch, startSignedConsoleServer as startConsoleServer } from "./console-test-session.ts";
 import type { SpawnOptions } from "./console/control.ts";
 import { writeFeatureFixture } from "./feature-fixture.ts";
 import { featureIncrementHandoffHasChange, recordFeatureIncrementHandoff } from "./authoring-state.ts";
@@ -220,7 +220,7 @@ function collectSse(url: string) {
 
 async function withServer<T>(
   fn: (server: ConsoleServer, repo: string, spawned: FakeSpawn) => Promise<T>,
-  opts: { repoRoot?: boolean } = { repoRoot: true },
+  opts: { repoRoot?: boolean; registered?: boolean } = { repoRoot: true },
 ): Promise<T> {
   const home = mkdtempSync(join(tmpdir(), "forge-home-"));
   const prevHome = process.env.FORGE_HOME;
@@ -228,16 +228,20 @@ async function withServer<T>(
 
   const repo = makeRepo();
   const spawn = fakeSpawner();
-  const kills: Array<{ pid: number; signal: string }> = [];
   const server = await startConsoleServer({
     repoRoot: opts.repoRoot ? repo : undefined,
     port: nextPort(),
     open: false,
     onLog: () => {},
     clientDir: join(repo, "docs"),
+    ...(opts.registered ? {
+      serviceRuns: {
+        repositoryId: async () => "test-repository",
+        client: async () => { throw new Error("service client is not needed in this test"); },
+      },
+    } : {}),
     deps: {
       spawner: (cmd, args, o) => { spawn.calls.push({ cmd, args, opts: o }); return { pid: 9000 + spawn.calls.length }; },
-      kill: (pid, signal) => { kills.push({ pid, signal }); },
       isPidAlive: () => false,
     },
   });
@@ -273,21 +277,19 @@ test("summary detects newly authored canonical requirements for team generation"
 
 test("serves summary, tasks, docs, team, and actions", async () => {
   await withServer(async (server, repo) => {
-    const summary = await getJson(`${server.url}/api/summary`) as { repoName: string; hasPrd: boolean; hasTeam: boolean; defaultTimeoutMs: number; run: { status: string; counts: { complete: number; running: number }; completedDurationMs: number } };
+    const summary = await getJson(`${server.url}/api/summary`) as { repoName: string; hasPrd: boolean; hasTeam: boolean; defaultTimeoutMs: number; run: null };
     assert.equal(summary.repoName, basename(repo));
     assert.equal(summary.hasPrd, true);
     assert.equal(summary.hasTeam, true);
-    assert.equal(summary.run.status, "running");
-    assert.equal(summary.run.counts.complete, 1);
-    assert.equal(summary.run.counts.running, 1);
-    assert.equal(summary.run.completedDurationMs, 120000);
+    assert.equal(summary.run, null, "legacy workflow state must not be treated as a live service run");
     assert.equal(summary.defaultTimeoutMs, 600000);
 
     const tasks = await getJson(`${server.url}/api/tasks`) as Array<{ id: string; status: string; phaseTitle: string; durationMs: number | null }>;
     assert.equal(tasks.length, 2);
-    assert.equal(tasks[0]!.status, "complete");
+    assert.equal(tasks[0]!.status, "pending");
     assert.equal(tasks[0]!.phaseTitle, "Foundation");
-    assert.equal(tasks[0]!.durationMs, 120000);
+    assert.equal(tasks[0]!.durationMs, null);
+    assert.equal((await signedFetch(`${server.url}/api/state`)).status, 404);
 
     const docs = await getJson(`${server.url}/api/docs`) as { entries: Array<{ kind: string }> };
     assert.ok(docs.entries.some((e) => e.kind === "vision"));
@@ -309,7 +311,7 @@ test("serves summary, tasks, docs, team, and actions", async () => {
     assert.equal(forgeSkill!.category, "forge");
 
     const actions = await getJson(`${server.url}/api/actions`) as { canRun: boolean; failedTasks: string[] };
-    assert.equal(actions.canRun, false);
+    assert.equal(actions.canRun, true, "archived legacy running state must not block a new Dapr run");
     assert.deepEqual(actions.failedTasks, []);
   });
 });
@@ -342,7 +344,9 @@ test("streams a snapshot and audit/log events over SSE", async () => {
   await withServer(async (server, repo) => {
     const events = collectSse(`${server.url}/api/events`);
     await sleep(200);
-    assert.ok(events.some((e) => e.type === "snapshot"));
+    const snapshot = events.find((e) => e.type === "snapshot");
+    assert.ok(snapshot);
+    assert.equal("state" in (snapshot.data as Record<string, unknown>), false);
 
     appendFileSync(join(repo, "docs", "EXECUTION-AUDIT.jsonl"), `${JSON.stringify({ timestamp: new Date().toISOString(), action: "task.complete", taskId: "1.2" })}\n`, "utf8");
     appendFileSync(join(repo, "docs", "engine-run.log"), "new log line\n", "utf8");
@@ -374,18 +378,19 @@ test("projects reconciliation details for Console review", async () => {
   });
 });
 
-test("pause and stop write the control file (stop also signals the pid)", async () => {
+test("pause and stop reject unregistered repositories without writing legacy controls", async () => {
   await withServer(async (server, repo) => {
     writeFileSync(join(repo, "docs", "engine.pid"), "12345\n", "utf8");
     const token = server.token;
 
     const pause = await postJson(`${server.url}/api/control`, { action: "pause" }, { "X-Forge-Token": token });
-    assert.equal((pause.body as { ok: boolean }).ok, true);
-    assert.deepEqual(JSON.parse(readFileSync(join(repo, "docs", "engine-control.json"), "utf8")).request, "pause");
+    assert.equal(pause.status, 409);
+    assert.equal((pause.body as { code: string }).code, "service-required");
+    assert.equal(existsSync(join(repo, "docs", "engine-control.json")), false);
 
     const stop = await postJson(`${server.url}/api/control`, { action: "stop" }, { "X-Forge-Token": token });
-    assert.equal((stop.body as { ok: boolean }).ok, true);
-    assert.deepEqual(JSON.parse(readFileSync(join(repo, "docs", "engine-control.json"), "utf8")).request, "stop");
+    assert.equal(stop.status, 409);
+    assert.equal(existsSync(join(repo, "docs", "engine-control.json")), false);
   });
 });
 
@@ -396,35 +401,28 @@ test("control POST is rejected without the token", async () => {
   });
 });
 
-test("run and replay spawn detached processes via the injected spawner", async () => {
+test("run and replay reject unregistered repositories without spawning the legacy engine", async () => {
   await withServer(async (server, repo, spawned) => {
     const token = server.token;
 
     const run = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
-    assert.equal((run.body as { ok: boolean }).ok, true);
-
-    // No persisted engine config -> default harness for a .agents root.
-    const runCall = spawned.calls.at(-1);
-    assert.ok(runCall);
-    const harnessIndex = runCall.args.indexOf("--harness");
-    assert.equal(runCall.args[harnessIndex + 1], "opencode");
+    assert.equal(run.status, 409);
+    assert.equal((run.body as { code: string }).code, "service-required");
 
     const replay = await postJson(`${server.url}/api/control`, { action: "replay", taskId: "1.2" }, { "X-Forge-Token": token });
-    assert.equal((replay.body as { ok: boolean }).ok, true);
+    assert.equal(replay.status, 409);
+    assert.equal(spawned.calls.length, 0);
   });
 });
 
-test("run infers the copilot engine harness from a GitHub harness root", async () => {
+test("run refuses unregistered repositories even when a GitHub harness root is selected", async () => {
   await withServer(async (server, repo, spawned) => {
     moveFixtureToGithub(repo);
 
     const run = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": server.token });
-    assert.equal((run.body as { ok: boolean }).ok, true);
-
-    const runCall = spawned.calls.at(-1);
-    assert.ok(runCall);
-    const harnessIndex = runCall.args.indexOf("--harness");
-    assert.equal(runCall.args[harnessIndex + 1], "copilot");
+    assert.equal(run.status, 409);
+    assert.equal((run.body as { code: string }).code, "service-required");
+    assert.equal(spawned.calls.length, 0);
   });
 });
 
@@ -665,7 +663,7 @@ test("createProject rejects non-integer concurrency values", async () => {
   });
 });
 
-test("engine-config toggles auto-commit and flows into engine-run args", async () => {
+test("engine-config toggles auto-commit and flows into service-run entrypoint args", async () => {
   await withServer(async (server, repo, spawned) => {
     const token = server.token;
     assert.equal((await getJson(`${server.url}/api/summary`) as { autoCommit: boolean }).autoCommit, true);
@@ -683,10 +681,10 @@ test("engine-config toggles auto-commit and flows into engine-run args", async (
     assert.equal((on.body as { ok: boolean }).ok, true);
     const run2 = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
     assert.ok(!spawned.calls.at(-1)!.args.includes("--no-auto-commit"), "default on: no --no-auto-commit flag");
-  });
+  }, { repoRoot: true, registered: true });
 });
 
-test("engine-config toggles harness activity logging and flows into engine-run args", async () => {
+test("engine-config toggles harness activity logging and flows into service-run entrypoint args", async () => {
   await withServer(async (server, repo, spawned) => {
     const token = server.token;
     assert.equal((await getJson(`${server.url}/api/summary`) as { logHarnessActivity: boolean }).logHarnessActivity, false);
@@ -706,7 +704,7 @@ test("engine-config toggles harness activity logging and flows into engine-run a
     const run2 = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
     assert.ok((run2.body as { ok: boolean }).ok);
     assert.ok(spawned.calls.at(-1)!.args.includes("--no-log-harness-activity"), "disabled run should pass the off flag");
-  });
+  }, { repoRoot: true, registered: true });
 });
 
 test("engine-config rejects a non-boolean harness activity value", async () => {
@@ -717,7 +715,7 @@ test("engine-config rejects a non-boolean harness activity value", async () => {
   });
 });
 
-test("engine-config sets concurrency and flows into engine-run args", async () => {
+test("engine-config sets concurrency and flows into service-run entrypoint args", async () => {
   await withServer(async (server, repo, spawned) => {
     const token = server.token;
     assert.equal((await getJson(`${server.url}/api/summary`) as { concurrency: number }).concurrency, 0);
@@ -742,10 +740,10 @@ test("engine-config sets concurrency and flows into engine-run args", async () =
     const run2 = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
     assert.ok((run2.body as { ok: boolean }).ok, "engine-run after reset should succeed");
     assert.ok(!spawned.calls.at(-1)!.args.includes("--concurrency"), "no --concurrency arg when at default");
-  });
+  }, { repoRoot: true, registered: true });
 });
 
-test("engine-config stores manual selection and passes it to engine-run", async () => {
+test("engine-config stores manual selection and passes it to the service-run entrypoint", async () => {
   await withServer(async (server, repo, spawned) => {
     const token = server.token;
 
@@ -787,7 +785,7 @@ test("engine-config stores manual selection and passes it to engine-run", async 
     assert.equal(config.executionMode, "manual");
     assert.equal(config.selectionScope, "range");
     assert.deepEqual(config.selectedTaskIds, ["1.1", "1.2"]);
-  });
+  }, { repoRoot: true, registered: true });
 });
 
 test("manual mode requires at least one selected task before run/resume", async () => {
@@ -805,11 +803,11 @@ test("manual mode requires at least one selected task before run/resume", async 
     const resume = await postJson(`${server.url}/api/control`, { action: "resume" }, { "X-Forge-Token": token });
     assert.equal((resume.body as { ok: boolean }).ok, false);
     assert.match((resume.body as { message: string }).message, /Manual mode is enabled/);
-  });
+  }, { repoRoot: true, registered: true });
 });
 
-test("manual resume accepts paused state selection when config selection is empty", async () => {
-  await withServer(async (server, repo) => {
+test("manual resume does not infer selection from legacy paused state", async () => {
+  await withServer(async (server, repo, spawned) => {
     const token = server.token;
     const docs = join(repo, "docs");
     const pausedState = {
@@ -837,13 +835,17 @@ test("manual resume accepts paused state selection when config selection is empt
     delete config.selectionScope;
     config.selectedTaskIds = [];
     writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
+    const legacyState = readFileSync(join(docs, "WORKFLOW-STATE.json"), "utf8");
 
     const resume = await postJson(`${server.url}/api/control`, { action: "resume" }, { "X-Forge-Token": token });
-    assert.equal((resume.body as { ok: boolean }).ok, true);
-  });
+    assert.equal((resume.body as { ok: boolean }).ok, false);
+    assert.match((resume.body as { message: string }).message, /Select at least one task/);
+    assert.equal(spawned.calls.length, 0);
+    assert.equal(readFileSync(join(docs, "WORKFLOW-STATE.json"), "utf8"), legacyState);
+  }, { repoRoot: true, registered: true });
 });
 
-test("updating manual selection also updates paused state selection", async () => {
+test("updating manual selection changes execution config without writing legacy state", async () => {
   await withServer(async (server, repo) => {
     const token = server.token;
     const docs = join(repo, "docs");
@@ -864,6 +866,7 @@ test("updating manual selection also updates paused state selection", async () =
       selection: { mode: "manual", scope: "single", taskIds: ["1.1"] },
     };
     writeFileSync(join(docs, "WORKFLOW-STATE.json"), JSON.stringify(pausedState), "utf8");
+    const legacyState = readFileSync(join(docs, "WORKFLOW-STATE.json"), "utf8");
 
     const mode = await postJson(`${server.url}/api/engine-config`, { executionMode: "manual" }, { "X-Forge-Token": token });
     assert.equal((mode.body as { ok: boolean }).ok, true);
@@ -874,16 +877,31 @@ test("updating manual selection also updates paused state selection", async () =
     }, { "X-Forge-Token": token });
     assert.equal((selection.body as { ok: boolean }).ok, true);
 
-    const state = JSON.parse(readFileSync(join(docs, "WORKFLOW-STATE.json"), "utf8")) as {
-      selection?: { mode: string; scope?: string; taskIds: string[] };
-    };
-    assert.equal(state.selection?.mode, "manual");
-    assert.equal(state.selection?.scope, "single");
-    assert.deepEqual(state.selection?.taskIds, ["1.2"]);
+    assert.equal(readFileSync(join(docs, "WORKFLOW-STATE.json"), "utf8"), legacyState);
 
     const summary = await getJson(`${server.url}/api/summary`) as { selectedTaskIds: string[]; selectedTaskCount: number };
     assert.deepEqual(summary.selectedTaskIds, ["1.2"]);
     assert.equal(summary.selectedTaskCount, 1);
+  });
+});
+
+test("serves the Console-owned Board renderer and its assets", async () => {
+  await withServer(async (server) => {
+    const page = await getText(`${server.url}/board`);
+    assert.equal(page.status, 200);
+    const html = page.body;
+    assert.match(html, /\/board\/app\.js/);
+    assert.match(html, /\/board\/vendor\/pixi\.min\.js/);
+
+    const app = await getText(`${server.url}/board/app.js`);
+    assert.equal(app.status, 200);
+    assert.match(app.body, /\/api\/summary/);
+    assert.match(app.body, /\/api\/tasks/);
+    assert.doesNotMatch(app.body, /\/api\/state/);
+
+    const pixi = await getText(`${server.url}/board/vendor/pixi.min.js`);
+    assert.equal(pixi.status, 200);
+    assert.ok(pixi.body.length > 100_000);
   });
 });
 
@@ -902,10 +920,9 @@ test("the board layout endpoint serves both the kanban and the gantt layout", as
     assert.equal(layout.kanban.columns.length, 4);
     assert.equal(layout.kanban.tasks.length, 2);
     assert.deepEqual(layout.gantt.bars.map((bar) => bar.taskId).sort(), ["1.1", "1.2"]);
-    // 1.1 is complete, so it renders as an actual bar; 1.2 is running, and an
-    // in-flight task reaches "now" rather than its estimate.
-    assert.equal(layout.gantt.bars.find((bar) => bar.taskId === "1.1")?.kind, "actual");
-    assert.equal(layout.gantt.bars.find((bar) => bar.taskId === "1.2")?.kind, "actual");
+    // Execution state is sourced from the service-run API, not archived legacy state.
+    assert.equal(layout.gantt.bars.find((bar) => bar.taskId === "1.1")?.kind, "planned");
+    assert.equal(layout.gantt.bars.find((bar) => bar.taskId === "1.2")?.kind, "planned");
     assert.ok(layout.gantt.rows.length >= 2);
     assert.ok(Number.isFinite(layout.gantt.axis.min));
     assert.ok(layout.gantt.forecastEndMs >= layout.gantt.axis.min);

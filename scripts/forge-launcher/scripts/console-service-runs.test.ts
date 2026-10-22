@@ -14,7 +14,21 @@ const OTHER = "run_fedcba9876543210";
 function fakeService(options: { registered?: boolean; unreachable?: boolean } = {}) {
   const controls: unknown[][] = [];
   const runs: Record<string, Record<string, unknown>> = {
-    [RUN]: { runId: RUN, status: "running", repositoryId: "demo", targetRef: "refs/heads/forge/main", tasks: [{ taskId: "T2", status: "waiting-for-approval" }] },
+    [RUN]: {
+      runId: RUN,
+      status: "running",
+      repositoryId: "demo",
+      targetRef: "refs/heads/forge/main",
+      createdAt: "2026-10-22T00:00:00.000Z",
+      updatedAt: "2026-10-22T00:02:00.000Z",
+      tasks: [{
+        taskId: "T2",
+        status: "waiting-for-approval",
+        logicalAttempt: 2,
+        updatedAt: "2026-10-22T00:02:00.000Z",
+        attempts: [{ logicalAttempt: 1, observedAt: "2026-10-22T00:01:00.000Z" }],
+      }],
+    },
     [OTHER]: { runId: OTHER, status: "running", repositoryId: "elsewhere", targetRef: "refs/heads/forge/main" },
   };
   const deps: ServiceRunsDeps = {
@@ -92,6 +106,40 @@ test("the Console lists, monitors, and controls the current repository's service
   assert.equal(rejected.status, 409);
   assert.equal((await rejected.json() as { code: string }).code, "invalid-run-state");
   assert.deepEqual(controls, [[RUN, "approve-task", { taskId: "T2" }], [RUN, "resume", {}]]);
+});
+
+test("Console overview status comes from the current Dapr run, not archived workflow state", async (t) => {
+  const { deps } = fakeService();
+  const { server, repo } = await withConsole(t, deps, 44977);
+  const docs = path.join(repo, "docs");
+  fs.mkdirSync(docs, { recursive: true });
+  fs.writeFileSync(path.join(docs, "EXECUTION-MANIFEST.json"), JSON.stringify({
+    version: 1,
+    phases: [{ id: "phase-1", title: "Phase 1", tasks: [{
+      id: "T2", title: "Review", description: "Review the result.", dependencies: [],
+      expectedOutputs: [], validationCommands: [],
+    }] }],
+  }));
+  fs.writeFileSync(path.join(docs, "WORKFLOW-STATE.json"), JSON.stringify({
+    runId: "run_legacy",
+    status: "complete",
+    tasks: { T2: { taskId: "T2", status: "complete", attempt: 1, outputFiles: [] } },
+  }));
+
+  const summary = await (await signedFetch(`${server.url}/api/summary`)).json() as {
+    run: { runId: string; status: string; counts: { running: number } };
+  };
+  assert.equal(summary.run.runId, RUN);
+  assert.equal(summary.run.status, "running");
+  assert.equal(summary.run.counts.running, 1);
+
+  const tasks = await (await signedFetch(`${server.url}/api/tasks`)).json() as { id: string; status: string; attempt: number; startedAt: string | null }[];
+  assert.deepEqual(tasks.map(({ id, status, attempt, startedAt }) => [id, status, attempt, startedAt]), [
+    ["T2", "waiting-for-approval", 2, "2026-10-22T00:01:00.000Z"],
+  ]);
+  const actions = await (await signedFetch(`${server.url}/api/actions`)).json() as { canPause: boolean; canStop: boolean };
+  assert.equal(actions.canPause, true);
+  assert.equal(actions.canStop, true);
 });
 
 test("service controls are scoped to the current repository and validated", async (t) => {
@@ -180,13 +228,18 @@ test("Console build controls route to the service run for a registered repositor
   ]);
 });
 
-test("Console build controls keep the legacy engine path for unregistered repositories", async (t) => {
+test("Console build controls fail closed for unregistered repositories", async (t) => {
   const { deps, controls } = fakeService({ registered: false });
   const { post, repo } = await withConsole(t, deps, 44975);
   const paused = await post("/api/control", { action: "pause" });
-  assert.equal(paused.status, 200);
-  assert.match((await paused.json() as { message: string }).message, /engine will stop after the current task/);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(repo, "docs", "engine-control.json"), "utf8")).request, "pause");
+  assert.equal(paused.status, 409);
+  assert.match((await paused.json() as { message: string }).message, /runtime repo add.*Legacy controls are retired/);
+  assert.equal(fs.existsSync(path.join(repo, "docs", "engine-control.json")), false);
+  assert.equal((await post("/api/control", { action: "run" })).status, 409);
+  assert.equal((await post("/api/control", { action: "resume" })).status, 409);
+  assert.equal((await post("/api/tasks/human-review", {
+    taskId: "T2", reviewer: "me", notes: "This is sufficiently long review evidence for the negative control test.",
+  })).status, 409);
   assert.deepEqual(controls, []);
 
   const down = await withConsole(t, fakeService({ unreachable: true }).deps, 44976);

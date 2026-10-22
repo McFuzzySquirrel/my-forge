@@ -23,10 +23,10 @@ import type {
   RunSummary,
   SkillInfo,
   Summary,
+  ServiceRunSnapshot,
   TaskRow,
   TeamIndex,
   TimeoutUpdateResult,
-  WorkflowState,
   ModelInventory,
 } from "./types.ts";
 import {
@@ -64,15 +64,6 @@ function readText(file: string): string | null {
   } catch {
     return null;
   }
-}
-
-export function loadState(p: RepoPaths): WorkflowState | null {
-  return readJson<WorkflowState>(p.statePath);
-}
-
-function saveState(p: RepoPaths, state: WorkflowState): void {
-  fs.mkdirSync(path.dirname(p.statePath), { recursive: true });
-  fs.writeFileSync(p.statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
 export function loadManifest(p: RepoPaths): ExecutionManifest | null {
@@ -145,32 +136,6 @@ export function setLogHarnessActivity(p: RepoPaths, enabled: boolean): { ok: boo
   };
 }
 
-/** Reset completed tasks whose contract changed during manifest reconciliation. */
-export function resetChangedCompletedTasks(p: RepoPaths): { ok: boolean; message: string; affected: number; taskIds: string[] } {
-  const manifest = loadManifest(p);
-  const state = loadState(p);
-  const changed = new Set(manifest?.reconciliation?.changedTaskIds ?? []);
-  if (!manifest || !state) return { ok: false, message: "Manifest and workflow state are required.", affected: 0, taskIds: [] };
-  const taskIds: string[] = [];
-  for (const id of changed) {
-    const record = state.tasks?.[id];
-    if (record && (record.status === "complete" || record.status === "skipped")) {
-      record.status = "pending";
-      delete record.startedAt;
-      delete record.completedAt;
-      delete record.errorMessage;
-      delete record.artifactId;
-      record.outputFiles = [];
-      taskIds.push(id);
-    }
-  }
-  if (taskIds.length) {
-    state.lastUpdatedAt = new Date().toISOString();
-    saveState(p, state);
-  }
-  return { ok: true, affected: taskIds.length, taskIds, message: taskIds.length ? `Reset ${taskIds.length} changed completed task(s) to pending.` : "No changed completed tasks needed reset." };
-}
-
 export function authoringEvents(p: RepoPaths): Record<string, unknown>[] {
   const raw = readText(p.authoringEventsPath);
   if (!raw) return [];
@@ -206,15 +171,6 @@ export function setTaskSelection(
     selectedTaskIds,
   });
   saveEngineConfig(p.repoRoot, cfg);
-  const state = loadState(p);
-  if (state?.status === "paused" && state.selection?.mode === "manual") {
-    state.selection = {
-      mode: "manual",
-      taskIds: selectedTaskIds,
-      ...(selectionScope ? { scope: selectionScope } : {}),
-    };
-    saveState(p, state);
-  }
   const count = selectedTaskIds.length;
   return { ok: true, message: count > 0 ? `Saved ${count} selected task(s).` : "Cleared the manual task selection." };
 }
@@ -233,18 +189,6 @@ export function loadAudit(p: RepoPaths): AuditEvent[] {
     }
   }
   return events;
-}
-
-export function readControl(p: RepoPaths): string | null {
-  const raw = readJson<{ request?: string }>(p.controlPath);
-  return raw?.request === "pause" || raw?.request === "stop" ? raw.request : null;
-}
-
-export function readPid(p: RepoPaths): number | null {
-  const raw = readText(p.pidPath);
-  if (!raw) return null;
-  const pid = Number(raw.trim());
-  return Number.isInteger(pid) && pid > 0 ? pid : null;
 }
 
 export function isPidAlive(pid: number | null): boolean {
@@ -279,17 +223,11 @@ function nextEngineConfig(
   };
 }
 
-function activeSelection(state: WorkflowState | null, engineCfg: ReturnType<typeof loadEngineConfig>) {
-  const stateSelection = state && (state.status === "running" || state.status === "paused") ? state.selection : undefined;
-  const selectedTaskIds = normaliseSelectedTaskIds(stateSelection?.taskIds ?? engineCfg?.selectedTaskIds);
-  const executionMode = normaliseExecutionMode(stateSelection?.mode ?? engineCfg?.executionMode);
-  const selectionScope = normaliseSelectionScope(stateSelection?.scope ?? engineCfg?.selectionScope, selectedTaskIds);
+function activeSelection(engineCfg: ReturnType<typeof loadEngineConfig>) {
+  const selectedTaskIds = normaliseSelectedTaskIds(engineCfg?.selectedTaskIds);
+  const executionMode = normaliseExecutionMode(engineCfg?.executionMode);
+  const selectionScope = normaliseSelectionScope(engineCfg?.selectionScope, selectedTaskIds);
   return { executionMode, selectionScope, selectedTaskIds };
-}
-
-function scopedTaskIds(state: WorkflowState | null): Set<string> | null {
-  const selected = normaliseSelectedTaskIds(state?.selection?.taskIds);
-  return state?.selection?.mode === "manual" && selected.length > 0 ? new Set(selected) : null;
 }
 
 function currentJob(repoRoot: string): BackgroundJob | null {
@@ -312,40 +250,37 @@ export function authoringBlocker(p: RepoPaths, readiness?: ReturnType<typeof aut
 
 // ─── Summary ─────────────────────────────────────────────────────────────────
 
-function runSummary(p: RepoPaths, state: WorkflowState | null, manifest: ExecutionManifest | null): RunSummary | null {
-  if (!state) return null;
+const ACTIVE_SERVICE_RUN_STATUSES = new Set(["queued", "running", "pausing", "paused", "stopping", "cancelling"]);
+
+function runSummary(run: ServiceRunSnapshot | null): RunSummary | null {
+  if (!run) return null;
   const counts = { pending: 0, running: 0, complete: 0, failed: 0, skipped: 0 };
-  const visible = scopedTaskIds(state);
-  const tasks = Object.values(state.tasks ?? {}).filter((task) => !visible || visible.has(task.taskId));
-  let completedDurationMs = 0;
-  for (const t of tasks) {
-    if (t.status in counts) (counts as unknown as Record<string, number>)[t.status] += 1;
-    if (t.status === "complete" && t.startedAt && t.completedAt) {
-      const durationMs = Date.parse(t.completedAt) - Date.parse(t.startedAt);
-      if (!Number.isNaN(durationMs) && durationMs >= 0) completedDurationMs += durationMs;
-    }
-  }
-  let currentPhaseTitle: string | null = null;
-  if (state.currentPhase && manifest) {
-    currentPhaseTitle = manifest.phases.find((ph) => ph.id === state.currentPhase)?.title ?? null;
+  for (const task of run.tasks) {
+    if (task.status === "complete") counts.complete += 1;
+    else if (task.status === "failed" || task.status === "cancelled") counts.failed += 1;
+    else if (task.status === "running" || task.status === "waiting-for-approval") counts.running += 1;
+    else counts.pending += 1;
   }
   return {
-    runId: state.runId,
-    status: state.status,
-    startedAt: state.startedAt ?? null,
-    lastUpdatedAt: state.lastUpdatedAt ?? null,
-    completedDurationMs,
-    currentPhase: state.currentPhase ?? null,
-    currentPhaseTitle,
+    runId: run.runId,
+    status: run.status,
+    startedAt: run.createdAt ?? null,
+    lastUpdatedAt: run.updatedAt ?? null,
+    completedDurationMs: run.tasks.reduce((total, task) => {
+      if (!task.startedAt || !task.completedAt) return total;
+      const durationMs = Date.parse(task.completedAt) - Date.parse(task.startedAt);
+      return Number.isFinite(durationMs) && durationMs > 0 ? total + durationMs : total;
+    }, 0),
+    currentPhase: null,
+    currentPhaseTitle: null,
     counts,
-    total: tasks.length,
-    blockers: state.blockers ?? [],
+    total: run.tasks.length,
+    blockers: [],
   };
 }
 
-export function summary(p: RepoPaths): Summary {
+export function summary(p: RepoPaths, serviceRun: ServiceRunSnapshot | null = null): Summary {
   refreshJobs();
-  const state = loadState(p);
   const manifest = loadManifest(p);
   const harness = detectHarnessRoot(p.repoRoot);
   const team = harness ? listAgents(p.repoRoot, harness) : [];
@@ -370,7 +305,7 @@ export function summary(p: RepoPaths): Summary {
     : DEFAULT_TASK_TIMEOUT_MS;
 
   const engineCfg = loadEngineConfig(p.repoRoot);
-  const selection = activeSelection(state, engineCfg);
+  const selection = activeSelection(engineCfg);
   const job = currentJob(p.repoRoot);
   const readiness = authoringReadiness(p.repoRoot, harness ?? ".agents");
   const blocker = authoringBlocker(p, readiness);
@@ -392,9 +327,8 @@ export function summary(p: RepoPaths): Summary {
     hasTeam: team.length > 0,
     hasManifest: manifest !== null,
     manifest: manifestSummary,
-    run: runSummary(p, state, manifest),
-    live: isPidAlive(readPid(p)),
-    control: readControl(p),
+    run: runSummary(serviceRun),
+    live: serviceRun !== null && ACTIVE_SERVICE_RUN_STATUSES.has(serviceRun.status),
     logExists: fs.existsSync(p.logPath),
     defaultTimeoutMs,
     autoCommit: engineCfg?.autoCommit !== false,
@@ -417,10 +351,10 @@ function findPhaseFor(manifest: ExecutionManifest, taskId: string): { id: string
   return null;
 }
 
-export function tasks(p: RepoPaths): TaskRow[] {
+export function tasks(p: RepoPaths, serviceRun: ServiceRunSnapshot | null = null): TaskRow[] {
   const manifest = loadManifest(p);
-  const state = loadState(p);
   if (!manifest) return [];
+  const serviceTasks = new Map((serviceRun?.tasks ?? []).map((task) => [task.taskId, task]));
   const agentModels = new Map(team(p).agents.map((agent) => [agent.name, {
     primary: agent.modelOverride ?? agent.model,
     fallback: agent.modelFallbackOverride ?? agent.modelFallback,
@@ -434,7 +368,13 @@ export function tasks(p: RepoPaths): TaskRow[] {
     return (phase.tasks ?? []).map((task) =>
       [task.id, [...(task.dependencies ?? []), ...phaseDependencies]] as const);
   }));
-  const ownGaps = (taskId: string) => (state?.tasks?.[taskId]?.validationLimitations ?? []).map((gap) => `${taskId}: ${gap}`);
+  const limitationsByTask = new Map<string, string[]>();
+  for (const artifact of artifacts(p).artifacts) {
+    if (artifact.taskId && !limitationsByTask.has(artifact.taskId)) {
+      limitationsByTask.set(artifact.taskId, artifact.validationLimitations ?? []);
+    }
+  }
+  const ownGaps = (taskId: string) => (limitationsByTask.get(taskId) ?? []).map((gap) => `${taskId}: ${gap}`);
   // Mirrors the engine's dispatch rule (engine.ts `nextReadyTasks`): a task is
   // dispatchable only once its direct dependencies and every task of a phase it
   // depends on are complete or skipped. The engine exports this as
@@ -445,11 +385,9 @@ export function tasks(p: RepoPaths): TaskRow[] {
   // approval.
   const unmetPrerequisites = (taskId: string): string[] =>
     (dependenciesByTask.get(taskId) ?? []).filter((id) => {
-      const status = state?.tasks?.[id]?.status;
+      const status = serviceTasks.get(id)?.status;
       return status !== "complete" && status !== "skipped";
     });
-  // A human reviewer must see every "not run" check the reviewed work depends on,
-  // not only the review task's own record (which never has any).
   const upstreamGaps = (taskId: string): string[] => {
     const seen = new Set<string>([taskId]);
     const gaps: string[] = [];
@@ -466,11 +404,11 @@ export function tasks(p: RepoPaths): TaskRow[] {
   };
   for (const phase of manifest.phases) {
     for (const task of phase.tasks ?? []) {
-      const rec = state?.tasks?.[task.id];
-      const durationMs = rec?.startedAt && rec?.completedAt
-        ? Date.parse(rec.completedAt) - Date.parse(rec.startedAt)
+      const current = serviceTasks.get(task.id);
+      const durationMs = current?.startedAt && current.completedAt
+        ? Date.parse(current.completedAt) - Date.parse(current.startedAt)
         : null;
-      const ownerAgent = task.ownerAgent ?? rec?.ownerAgent ?? null;
+      const ownerAgent = task.ownerAgent ?? null;
       const models = ownerAgent ? agentModels.get(ownerAgent) : undefined;
       rows.push({
         id: task.id,
@@ -481,14 +419,14 @@ export function tasks(p: RepoPaths): TaskRow[] {
         ownerAgent,
         effectiveModel: models?.primary ?? null,
         effectiveFallbackModel: models?.fallback ?? null,
-        status: rec?.status ?? "pending",
-        attempt: rec?.attempt ?? 0,
-        startedAt: rec?.startedAt ?? null,
-        completedAt: rec?.completedAt ?? null,
-        durationMs: durationMs !== null && !Number.isNaN(durationMs) ? durationMs : null,
-        outputFiles: rec?.outputFiles ?? [],
-        errorMessage: rec?.errorMessage ?? null,
-        artifactId: rec?.artifactId ?? null,
+        status: current?.status ?? "pending",
+        attempt: current?.logicalAttempt ?? 0,
+        startedAt: current?.startedAt ?? null,
+        completedAt: current?.completedAt ?? null,
+        durationMs: durationMs !== null && Number.isFinite(durationMs) ? durationMs : null,
+        outputFiles: [],
+        errorMessage: null,
+        artifactId: null,
         inputs: task.inputs ?? [],
         produces: task.produces ?? null,
         dependencies: task.dependencies ?? [],
@@ -615,6 +553,9 @@ export function artifacts(p: RepoPaths): ArtifactIndex {
           createdAt: String(a.createdAt ?? ""),
           filesChanged: Array.isArray(a.filesChanged) ? (a.filesChanged as string[]) : [],
           inputs: Array.isArray(a.inputs) ? (a.inputs as string[]) : [],
+          validationLimitations: Array.isArray(a.validationLimitations)
+            ? a.validationLimitations.filter((value): value is string => typeof value === "string")
+            : undefined,
         });
         types.add(String(a.type ?? subdir));
       }
@@ -795,30 +736,23 @@ export function team(p: RepoPaths): TeamIndex {
 
 // ─── Actions ─────────────────────────────────────────────────────────────────
 
-export function actions(p: RepoPaths): Actions {
-  const state = loadState(p);
+export function actions(p: RepoPaths, serviceRun: ServiceRunSnapshot | null = null): Actions {
   const manifest = loadManifest(p);
-  const live = isPidAlive(readPid(p));
-
-  const failedTasks: string[] = [];
-  if (state) {
-    for (const t of Object.values(state.tasks ?? {})) {
-      if (t.status === "failed") failedTasks.push(t.taskId);
-    }
-  }
-
-  const hasIncomplete = state ? Object.values(state.tasks ?? {}).some((t) => !["complete", "skipped"].includes(t.status)) : false;
+  const serviceRunActive = serviceRun !== null && ACTIVE_SERVICE_RUN_STATUSES.has(serviceRun.status);
 
   // The engine can compile a missing manifest itself when forge-execution-adapter
   // is bootstrapped, so allow Run when the adapter is present even without a manifest.
   const canCompile = manifest !== null || findAdapterDir(p.repoRoot) !== null;
   const ready = !authoringBlocker(p);
+  const failedTasks = (serviceRun?.tasks ?? [])
+    .filter((task) => task.status === "failed")
+    .map((task) => task.taskId);
 
   return {
-    canRun: ready && !live && canCompile && (state === null || state.status === "complete" || state.status === "failed"),
-    canResume: ready && manifest !== null && state !== null && hasIncomplete && !live,
-    canPause: live && state !== null && state.status === "running",
-    canStop: live,
+    canRun: ready && canCompile && !serviceRunActive,
+    canResume: ready && manifest !== null && serviceRun?.status === "paused",
+    canPause: serviceRun?.status === "running",
+    canStop: serviceRunActive,
     failedTasks,
   };
 }
@@ -828,8 +762,6 @@ export function actions(p: RepoPaths): Actions {
 export function projectStage(repoPath: string): string {
   const p = repoPaths(repoPath);
   if (!looksLikeForgeRepo(repoPath)) return "unknown";
-  const state = loadState(p);
-  if (state) return state.status;
   if (fs.existsSync(p.manifestPath)) return "manifest";
   if (detectHarnessRoot(repoPath) && listAgents(repoPath, detectHarnessRoot(repoPath)!).length > 0) return "team";
   if (fs.existsSync(p.prdPath) || (fs.existsSync(p.visionPath) && fs.existsSync(p.featuresDir))) return "prd";
@@ -1001,10 +933,7 @@ function resolveJobOutcome(job: BackgroundJob): { status: BackgroundJob["status"
       return { status: "failed", message: "Feature increment exited without producing an execution manifest." };
     }
     if (job.run) {
-      const state = loadState(p);
-      if (state?.status === "complete") return { status: "complete", message: "Feature increment and build completed." };
-      if (state?.status === "paused") return { status: "paused", message: "Feature increment prepared and build paused." };
-      return { status: "failed", message: "Feature increment build exited before reaching a terminal state." };
+      return { status: "complete", message: "Feature increment and service run command completed; see Service Runs for execution status." };
     }
     return { status: "complete", message: "Feature increment prepared; manifest compiled." };
   }
@@ -1051,22 +980,10 @@ function resolveJobOutcome(job: BackgroundJob): { status: BackgroundJob["status"
         ? { status: "complete", message: "Execution manifest compiled." }
         : { status: "failed", message: "Manifest compile exited without producing a manifest." };
     case "engine-run":
-    case "engine-resume": {
-      const state = loadState(p);
-      if (!state) return { status: "failed", message: "Engine exited without writing workflow state." };
-      if (state.status === "complete") return { status: "complete", message: "Build completed." };
-      if (state.status === "paused") return { status: "paused", message: "Build paused." };
-      if (state.status === "failed") return { status: "failed", message: "Build failed." };
-      return { status: "failed", message: "Engine exited before reaching a terminal state." };
-    }
-    case "engine-replay": {
-      const state = loadState(p);
-      const record = state?.tasks?.[job.taskId ?? ""];
-      if (record?.status === "complete") return { status: "complete", message: `Replay of ${job.taskId} completed.` };
-      if (record?.status === "failed") return { status: "failed", message: `Replay of ${job.taskId} failed.` };
-      if (state?.status === "paused") return { status: "paused", message: `Replay of ${job.taskId} paused.` };
-      return { status: "failed", message: `Replay of ${job.taskId ?? "task"} exited before completion.` };
-    }
+    case "engine-resume":
+      return { status: "complete", message: "Service run command completed; see Service Runs for execution status." };
+    case "engine-replay":
+      return { status: "complete", message: `Replay command for ${job.taskId ?? "task"} completed; see Service Runs for execution status.` };
   }
 }
 

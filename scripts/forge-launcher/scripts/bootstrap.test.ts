@@ -45,8 +45,11 @@ test("bootstrap copies agents, skills, prompt-playbook, and excludes artifacts",
   const executionDir = path.join(engineDir, "scripts", "execution");
   assert.ok(fs.existsSync(path.join(executionDir, "index.ts")));
   assert.ok(fs.existsSync(path.join(executionDir, "harness", "run.ts")));
-  assert.ok(!fs.readFileSync(path.join(engineDir, "scripts", "request.ts"), "utf8").includes("../../../../tools/"));
-  assert.ok(fs.readFileSync(path.join(engineDir, "scripts", "request.ts"), "utf8").includes("./execution/request.ts"));
+  assert.ok(fs.existsSync(path.join(engineDir, "references", "engine-entry.md")));
+  assert.match(fs.readFileSync(path.join(engineDir, "scripts", "cli.ts"), "utf8"), /retired/);
+  for (const retired of ["engine.ts", "state.ts", "control.ts", "request.ts", "package.json"]) {
+    assert.ok(!fs.existsSync(path.join(engineDir, "scripts", retired)) && !fs.existsSync(path.join(engineDir, retired)));
+  }
   const stagedContext = await import(pathToFileURL(path.join(executionDir, "task-context.ts")).href) as {
     taskReferenceContext?: unknown;
   };

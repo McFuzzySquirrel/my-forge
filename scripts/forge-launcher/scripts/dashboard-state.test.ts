@@ -32,11 +32,11 @@ test("store subscriptions can be removed without affecting later listeners", () 
   const store = new AppStore();
   let calls = 0;
   const unsubscribe = store.subscribe(() => { calls += 1; });
-  store.applySnapshot({ summary: null, manifest: null, state: null, layout: null });
+  store.applySnapshot({ summary: null, manifest: null, layout: null });
   assert.equal(calls, 1);
 
   unsubscribe();
-  store.applySnapshot({ summary: null, manifest: null, state: null, layout: null });
+  store.applySnapshot({ summary: null, manifest: null, layout: null });
   assert.equal(calls, 1);
 });
 

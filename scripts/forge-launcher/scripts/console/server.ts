@@ -12,6 +12,8 @@ import { resolveResources } from "../resources.ts";
 import { resolveInputFile } from "../paths.ts";
 import { launchCliInTerminal } from "../terminal.ts";
 import { RunController, type ControlDeps } from "./control.ts";
+import { layoutGantt } from "./board-gantt.ts";
+import { layoutManifest } from "./board-layout.ts";
 import { IncrementalLineReader } from "./incremental-reader.ts";
 import { consoleAuthoringInventory, selectedAuthoringRunner } from "./authoring.ts";
 import { isRunnerChoice, loadAuthoringConfig, saveAuthoringConfig, validateAuthoringConfig } from "../authoring-config.ts";
@@ -31,8 +33,8 @@ import { harnessCliForHarness } from "./dashboard/harness-rules.ts";
 import * as repo from "./repo.ts";
 import { removeProjects, sameProjectPath } from "./remove-projects.ts";
 import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
-import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
-import type { ControlAction, CreateProjectRequest, ManifestTask } from "./types.ts";
+import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, latestServiceRun, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
+import type { ControlAction, CreateProjectRequest, ManifestTask, ServiceRunSnapshot } from "./types.ts";
 
 const CLIENT_DIR = fileURLToPath(new URL("../../resources/console/client", import.meta.url));
 
@@ -50,7 +52,6 @@ export interface ConsoleServerOptions {
   /** Test overrides. */
   clientDir?: string;
   boardDir?: string;
-  engineScriptsDir?: string;
   deps?: ControlDeps;
   allowExternalOpen?: boolean;
   /** Injectable "launch a harness CLI in a terminal" seam (defaults to launchCliInTerminal). */
@@ -71,8 +72,46 @@ export interface ConsoleServer {
 }
 
 function boardDir(): string {
-  const { templatesDir } = resolveResources();
-  return path.join(templatesDir, "skills", "forge-workflow-engine", "scripts", "viz", "dashboard");
+  const { usingBundled } = resolveResources();
+  if (!usingBundled) return path.join(path.dirname(fileURLToPath(import.meta.url)), "board-assets");
+  const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+  return path.join(packageDir, "resources", "console", "board-assets");
+}
+
+function asServiceRunSnapshot(value: unknown): ServiceRunSnapshot | null {
+  if (!value || typeof value !== "object") return null;
+  const run = value as Record<string, unknown>;
+  if (typeof run.runId !== "string" || typeof run.status !== "string") return null;
+  const tasks = Array.isArray(run.tasks)
+    ? run.tasks.flatMap((item) => {
+      if (!item || typeof item !== "object") return [];
+      const task = item as Record<string, unknown>;
+      if (typeof task.taskId !== "string" || typeof task.status !== "string") return [];
+      const attempts = Array.isArray(task.attempts)
+        ? task.attempts.filter((attempt): attempt is Record<string, unknown> =>
+          Boolean(attempt) && typeof attempt === "object")
+        : [];
+      const observedStart = attempts
+        .map((attempt) => attempt.observedAt)
+        .find((timestamp): timestamp is string => typeof timestamp === "string");
+      return [{
+        taskId: task.taskId,
+        status: task.status,
+        ...(typeof task.logicalAttempt === "number" ? { logicalAttempt: task.logicalAttempt } : {}),
+        ...(observedStart ? { startedAt: observedStart } : {}),
+        ...(typeof task.updatedAt === "string" && ["complete", "failed", "skipped", "cancelled"].includes(task.status)
+          ? { completedAt: task.updatedAt }
+          : {}),
+      }];
+    })
+    : [];
+  return {
+    runId: run.runId,
+    status: run.status,
+    ...(typeof run.createdAt === "string" ? { createdAt: run.createdAt } : {}),
+    ...(typeof run.updatedAt === "string" ? { updatedAt: run.updatedAt } : {}),
+    tasks,
+  };
 }
 
 // ─── Board layout ─────────────────────────────────────────────────────────────
@@ -84,32 +123,8 @@ function boardDir(): string {
 // whose forecast must agree with the engine's dispatch rule — it would be two
 // implementations of a scheduling algorithm.
 //
-// The engine's viz modules are imported through the same `tsx` seam the
-// human-review approval already uses, and memoized: `tsImport` re-transpiles on
-// every call, which would be paid on every layout request.
-
-type LayoutModules = {
-  layoutManifest: (manifest: unknown, options?: unknown) => unknown;
-  layoutGantt: (manifest: unknown, state: unknown, options?: unknown) => unknown;
-};
-
-const layoutModuleCache = new Map<string, Promise<LayoutModules>>();
-
-function loadLayoutModules(engineScriptsDir?: string): Promise<LayoutModules> {
-  const engineScripts = engineScriptsDir ?? path.join(resolveResources().templatesDir, "skills", "forge-workflow-engine", "scripts");
-  const cached = layoutModuleCache.get(engineScripts);
-  if (cached) return cached;
-  const loaded = (async () => {
-    const layout = await tsImport(pathToFileURL(path.join(engineScripts, "viz", "layout.ts")).href, import.meta.url) as LayoutModules;
-    const gantt = await tsImport(pathToFileURL(path.join(engineScripts, "viz", "gantt.ts")).href, import.meta.url) as LayoutModules;
-    return { layoutManifest: layout.layoutManifest, layoutGantt: gantt.layoutGantt };
-  })();
-  layoutModuleCache.set(engineScripts, loaded);
-  // A failed import must not be cached, or one transient error would leave the
-  // board without a layout until the Console restarts.
-  loaded.catch(() => layoutModuleCache.delete(engineScripts));
-  return loaded;
-}
+// These Console-owned layout modules are pure and shared by both the API and
+// their focused tests.
 
 /**
  * Durations observed so far in this run, keyed by task id.
@@ -129,12 +144,21 @@ function observedDurations(audit: ReturnType<typeof repo.loadAudit>): Record<str
   return samples;
 }
 
-async function buildLayout(repoRoot: string, engineScriptsDir?: string): Promise<unknown> {
+async function buildLayout(
+  repoRoot: string,
+  serviceRun: ServiceRunSnapshot | null = null,
+): Promise<unknown> {
   const p = repoPaths(repoRoot);
   const manifest = repo.loadManifest(p);
   if (!manifest) return null;
-  const state = repo.loadState(p);
-  const { layoutManifest, layoutGantt } = await loadLayoutModules(engineScriptsDir);
+  const state = serviceRun ? {
+    startedAt: serviceRun.createdAt,
+    tasks: Object.fromEntries(serviceRun.tasks.map((task) => [task.taskId, {
+      status: task.status,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
+    }])),
+  } : null;
   const concurrency = Math.max(0, Number(loadEngineConfig(repoRoot)?.concurrency) || 0);
   return {
     kanban: layoutManifest(manifest, {}),
@@ -143,41 +167,6 @@ async function buildLayout(repoRoot: string, engineScriptsDir?: string): Promise
       observedDurationsMs: observedDurations(repo.loadAudit(p)),
     }),
   };
-}
-
-async function approveConsoleHumanReview(repoRoot: string, taskId: string, reviewer: string, notes: string, engineScriptsDir?: string): Promise<string> {
-  const engineScripts = engineScriptsDir ?? path.join(resolveResources().templatesDir, "skills", "forge-workflow-engine", "scripts");
-  const context = await tsImport(pathToFileURL(path.join(engineScripts, "task-context.ts")).href, import.meta.url) as {
-    writeHumanReviewEvidence: (repoRoot: string, task: ManifestTask, reviewer: string, notes: string) => string;
-    approveHumanTask: (repoRoot: string, task: ManifestTask, reviewer: string, evidence: string[]) => void;
-  };
-  // The task graph is the engine's own dispatch gate, in a module with no
-  // runtime dependencies: the Console serves a project directory whose engine
-  // copy may not have `node_modules` installed, so importing `engine.ts` here
-  // would drag in the harness and fail. `task-graph.ts` is the shared
-  // definition, and the engine re-exports it.
-  const engine = await tsImport(pathToFileURL(path.join(engineScripts, "task-graph.ts")).href, import.meta.url) as {
-    unmetPrerequisites: (manifest: unknown, state: unknown, taskId: string) => string[];
-  };
-  const manifest = repo.loadManifest(repoPaths(repoRoot));
-  const task = manifest?.phases.flatMap((phase) => phase.tasks).find((entry) => entry.id === taskId);
-  if (!task) throw new Error(`Unknown task '${taskId}'.`);
-  if (task.contract?.kind !== "human-review") throw new Error(`Task '${taskId}' is not a human-review task.`);
-  // A review attests to delivered work, and the engine only dispatches a
-  // human-review task once its prerequisites are done. Ask the engine rather
-  // than re-deriving the rule here, so this guard and the dispatch gate cannot
-  // drift apart - the same class of bug as the preflight and the Console
-  // surface disagreeing about what a run is allowed to start on.
-  const state = repo.loadState(repoPaths(repoRoot));
-  if (state) {
-    const unmet = engine.unmetPrerequisites(manifest, state, taskId);
-    if (unmet.length > 0) {
-      throw new Error(`Cannot approve '${taskId}' yet: ${unmet.join(", ")} must be complete or skipped first. A human review attests to delivered work.`);
-    }
-  }
-  const generatedEvidence = context.writeHumanReviewEvidence(repoRoot, task, reviewer, notes);
-  context.approveHumanTask(repoRoot, task, reviewer, [generatedEvidence]);
-  return task.contract.reviewFile!;
 }
 
 /**
@@ -191,10 +180,9 @@ async function writeServiceReviewRecord(
   reviewer: string,
   notes: string,
   approval: { runId?: unknown; controlId?: unknown },
-  engineScriptsDir?: string,
 ): Promise<string> {
-  const engineScripts = engineScriptsDir ?? path.join(resolveResources().templatesDir, "skills", "forge-workflow-engine", "scripts");
-  const context = await tsImport(pathToFileURL(path.join(engineScripts, "task-context.ts")).href, import.meta.url) as {
+  const executionDir = resolveResources().executionDir;
+  const context = await tsImport(pathToFileURL(path.join(executionDir, "task-context.ts")).href, import.meta.url) as {
     writeHumanReviewEvidence: (repoRoot: string, task: ManifestTask, reviewer: string, notes: string) => string;
   };
   const task = repo.loadManifest(repoPaths(repoRoot))?.phases.flatMap((phase) => phase.tasks).find((entry) => entry.id === taskId);
@@ -406,6 +394,23 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
   const sessions = new OperatorSessions({ port });
   let serviceRunsDeps = options.serviceRuns;
   const serviceRuns = (): ServiceRunsDeps => (serviceRunsDeps ??= defaultServiceRunsDeps());
+  let serviceRunCache: {
+    repoRoot: string;
+    expiresAt: number;
+    value: Promise<ServiceRunSnapshot | null>;
+  } | null = null;
+  function currentServiceRun(repoRoot: string | null): Promise<ServiceRunSnapshot | null> {
+    if (!repoRoot) return Promise.resolve(null);
+    if (serviceRunCache?.repoRoot === repoRoot && serviceRunCache.expiresAt > Date.now()) {
+      return serviceRunCache.value;
+    }
+    const value = latestServiceRun(serviceRuns(), repoRoot).then((response) =>
+      response.status === 200 && response.body.available === true
+        ? asServiceRunSnapshot(response.body.run)
+        : null);
+    serviceRunCache = { repoRoot, expiresAt: Date.now() + 1000, value };
+    return value;
+  }
 
   // ── SSE clients ────────────────────────────────────────────────────────────
   type Send = (event: string, data: unknown) => void;
@@ -417,7 +422,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
 
   function snapshotEvent(): unknown {
     const p = currentPaths();
-    if (!p) return { summary: null, manifest: null, state: null, layout: null };
+    if (!p) return { summary: null, manifest: null, layout: null };
     // Each source is read independently. A repository in a half-authored state (a
     // harness root that does not exist yet, an unreadable manifest) must not take
     // down the whole event stream, or every other view stops updating as well.
@@ -432,7 +437,6 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
     return {
       summary: safe(() => repo.summary(p)),
       manifest: safe(() => repo.loadManifest(p)),
-      state: safe(() => repo.loadState(p)),
       layout: null,
     };
   }
@@ -545,9 +549,9 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         switch (urlPath) {
           case "/api/summary":
             repo.refreshJobs();
-            return p ? sendJson(res, 200, repo.summary(p)) : sendJson(res, 200, null);
+            return p ? sendJson(res, 200, repo.summary(p, await currentServiceRun(currentRepo))) : sendJson(res, 200, null);
           case "/api/tasks":
-            return p ? sendJson(res, 200, repo.tasks(p)) : sendJson(res, 200, []);
+            return p ? sendJson(res, 200, repo.tasks(p, await currentServiceRun(currentRepo))) : sendJson(res, 200, []);
           case "/api/audit":
             return p ? sendJson(res, 200, repo.loadAudit(p)) : sendJson(res, 200, []);
           case "/api/authoring-events":
@@ -573,7 +577,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             return sendJson(res, 200, await consoleAuthoringInventory(p?.repoRoot, query.get("runner") ?? undefined));
           }
           case "/api/actions":
-            return p ? sendJson(res, 200, repo.actions(p)) : sendJson(res, 200, { canRun: false, canResume: false, canPause: false, canStop: false, failedTasks: [] });
+            return p ? sendJson(res, 200, repo.actions(p, await currentServiceRun(currentRepo))) : sendJson(res, 200, { canRun: false, canResume: false, canPause: false, canStop: false, failedTasks: [] });
           case "/api/rederive":
             return p ? sendJson(res, 200, rederiveProgress(p.repoRoot)) : sendJson(res, 200, null);
           case "/api/projects": {
@@ -585,11 +589,9 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           }
           case "/api/manifest":
             return p ? sendJson(res, 200, repo.loadManifest(p)) : sendJson(res, 200, null);
-          case "/api/state":
-            return p ? sendJson(res, 200, repo.loadState(p)) : sendJson(res, 200, null);
           case "/api/layout":
             if (!p) return sendJson(res, 200, null);
-            return buildLayout(p.repoRoot, options.engineScriptsDir)
+            return buildLayout(p.repoRoot, await currentServiceRun(currentRepo))
               .then((layout) => sendJson(res, 200, layout))
               .catch((error: unknown) => {
                 // The board degrades to its own client-side geometry rather than
@@ -671,6 +673,16 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             ? body.from as RederiveStepId
             : undefined;
           if (!currentRepo) return sendJson(res, 400, { ok: false, message: "no repo selected" });
+          if (action === "run" || action === "resume") {
+            const repositoryId = await serviceRuns().repositoryId(currentRepo);
+            if (!repositoryId) {
+              return sendJson(res, 409, {
+                ok: false,
+                code: "service-required",
+                message: `Register this repository with "forge-launcher runtime repo add ${currentRepo}", then restart the runtime. Legacy execution is retired.`,
+              });
+            }
+          }
           if (action === "feature-increment-continue" && !featureIncrementHandoffHasChange(currentRepo)) {
             return sendJson(res, 200, { ok: false, message: "Add or change a feature in the interactive authoring session before continuing." });
           }
@@ -688,17 +700,10 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             return sendJson(res, 200, controller.featureIncrement());
           }
           if (action === "pause" || action === "stop" || action === "replay") {
-            // Registered repositories build in the local execution service.
             const routed = await routeServiceControl(serviceRuns(), currentRepo, action, taskId);
-            if (routed) return sendJson(res, routed.status, routed.body);
+            return sendJson(res, routed.status, routed.body);
           }
           return sendJson(res, 200, controller.dispatch(action, taskId, from));
-        }
-        if (urlPath === "/api/tasks/reset-changed") {
-          if (!currentRepo) return sendJson(res, 400, { ok: false, message: "no repo selected" });
-          const result = repo.resetChangedCompletedTasks(currentPaths()!);
-          if (result.ok) broadcast("snapshot", snapshotEvent());
-          return sendJson(res, result.ok ? 200 : 400, result);
         }
         if (urlPath === "/api/tasks/timeout") {
           const timeoutMs = Number(body.timeoutMs);
@@ -729,31 +734,16 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           // Service runs record the approval as an acknowledged control from
           // the local operator; the run is already following, so no resume job.
           const routed = await routeServiceControl(serviceRuns(), currentRepo, "approve", taskId);
-          if (routed) {
-            if (!routed.body.ok) return sendJson(res, routed.status, { ...routed.body, resumed: false });
-            let reviewRecord: string | undefined;
-            let message = String(routed.body.message ?? "");
-            try {
-              reviewRecord = await writeServiceReviewRecord(currentRepo, taskId, reviewer, notes, routed.body, options.engineScriptsDir);
-            } catch (error) {
-              message += ` The review record was not written: ${error instanceof Error ? error.message : String(error)}`;
-            }
-            broadcast("snapshot", snapshotEvent());
-            return sendJson(res, routed.status, { ...routed.body, message, reviewRecord, resumed: false });
-          }
+          if (!routed.body.ok) return sendJson(res, routed.status, { ...routed.body, resumed: false });
+          let reviewRecord: string | undefined;
+          let message = String(routed.body.message ?? "");
           try {
-            const reviewFile = await approveConsoleHumanReview(currentRepo, taskId, reviewer, notes, options.engineScriptsDir);
-            let job;
-            if (body.resume !== false) {
-              const result = controller.run("engine-resume");
-              if (!result.ok) return sendJson(res, 400, { ...result, reviewFile });
-              job = result.job;
-            }
-            broadcast("snapshot", snapshotEvent());
-            return sendJson(res, 200, { ok: true, message: job ? "Human review approved; the build is resuming." : "Human review approved.", reviewFile, resumed: Boolean(job), job });
+            reviewRecord = await writeServiceReviewRecord(currentRepo, taskId, reviewer, notes, routed.body);
           } catch (error) {
-            return sendJson(res, 400, { ok: false, message: error instanceof Error ? error.message : String(error) });
+            message += ` The review record was not written: ${error instanceof Error ? error.message : String(error)}`;
           }
+          broadcast("snapshot", snapshotEvent());
+          return sendJson(res, routed.status, { ...routed.body, message, reviewRecord, resumed: false });
         }
         if (urlPath === "/api/projects/remove") {
           if (!body || !Array.isArray(body.paths) || body.paths.length === 0

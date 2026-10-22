@@ -18,9 +18,9 @@ import {
 
 /**
  * Execution entry points select a deployment, not a scheduler: a repository
- * registered with the local runtime runs in the local execution service.
- * Unregistered repositories keep the legacy in-process engine until it is
- * retired; hosted deployment is not available yet.
+ * must be registered with the local runtime to run in the local execution
+ * service. Unregistered repositories fail closed; hosted deployment is not
+ * available yet.
  */
 export function assertLocalDeployment(env: NodeJS.ProcessEnv = process.env): void {
   const value = env.FORGE_DEPLOYMENT?.trim().toLowerCase();
@@ -45,6 +45,20 @@ export interface ServiceRunDependencies {
 async function registeredRepositoryId(repoRoot: string): Promise<string | undefined> {
   if (!fs.existsSync(repoRoot)) return undefined;
   return (await findRegisteredRepository(getRuntimeDataDir(), repoRoot))?.id;
+}
+
+function registrationError(repoRoot: string): Error {
+  return new Error(
+    `Repository is not registered with the local execution service: ${repoRoot}. ` +
+    `Register it with "forge-launcher runtime repo add ${repoRoot}", restart the runtime, then retry. ` +
+    "Legacy workflow histories are not imported.",
+  );
+}
+
+export async function requireRegisteredRepository(repoRoot: string): Promise<string> {
+  const repositoryId = await registeredRepositoryId(path.resolve(repoRoot));
+  if (!repositoryId) throw registrationError(path.resolve(repoRoot));
+  return repositoryId;
 }
 
 async function defaultClient(): Promise<RunClient> {
@@ -142,20 +156,20 @@ function integrateCompletedRun(repoRoot: string, runId: string, forgeBranch: str
 }
 
 /**
- * `engine-run` for a registered repository. Returns undefined when the
- * repository is not registered, so the caller can use the legacy engine.
+ * `engine-run` through the local service. Legacy execution is not a fallback.
  */
 export async function serviceEngineRun(
   args: readonly string[],
   dependencies: ServiceRunDependencies = {},
-): Promise<number | undefined> {
+): Promise<number> {
   assertLocalDeployment();
   const repoIndex = args.indexOf("--repo");
   const repoArgument = repoIndex >= 0 ? args[repoIndex + 1] : undefined;
   const repoRoot = repoArgument ? path.resolve(repoArgument) : detectRepoRoot();
   const repositoryId = await (dependencies.repositoryId ?? registeredRepositoryId)(repoRoot);
-  // Unregistered repositories keep the legacy engine and its own argument parsing.
-  if (!repositoryId) return undefined;
+  if (!repositoryId) {
+    throw registrationError(repoRoot);
+  }
   const flags = parseEngineRunArgs(args);
 
   const write = dependencies.write ?? teeWriter(repoRoot);

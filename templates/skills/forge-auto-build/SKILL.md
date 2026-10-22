@@ -1,6 +1,6 @@
 ---
 name: forge-auto-build
-description: "Terminal/headless build pipeline from validated docs/PRD.md and docs/features/*.md through team generation, optional model assignment and one execution path. Use when approved canonical features should become a built, validated project after one pre-flight gate. Inside a chat harness use @project-orchestrator or @workflow-orchestrator instead."
+description: "Terminal/headless build pipeline from validated docs/PRD.md and docs/features/*.md through team generation, optional model assignment and one execution path. Use when approved canonical features should become a built, validated project after one pre-flight gate. Autonomous execution uses the registered Dapr service."
 ---
 
 # Skill: Full Auto Build (End-to-End Pipeline)
@@ -12,8 +12,9 @@ You are running the **build pipeline** on behalf of the user in one continuous, 
 > `opencode run --auto` / `copilot -p --yolo`. It is **not** the in-harness
 > interactive entry point. If you are already inside a chat harness, drive the
 > build with `@project-orchestrator` (`forge-orchestrate-build`, interactive,
-> per-phase approval) or `@workflow-orchestrator` (`forge-workflow-engine`,
-> autonomous) instead. Both orchestrators expect the agent team to already exist
+> per-phase approval). Autonomous execution uses `forge-launcher engine-run`
+> against a repository registered with the local Dapr service. The service
+> expects the agent team and execution manifest to already exist
 > (generate it via `forge-launcher resume` or `/forge-build-agent-team`).
 > This skill exists so a terminal/CI flow can chain team generation → build
 > without a chat session.
@@ -31,8 +32,8 @@ The underlying skills (`forge-build-agent-team`, `forge-assign-models`, `forge-o
 | `forge-auto-build-prd` | idea to reviewed canonical vision and features (always interactive) | Review gate inside authoring flow |
 | `forge-build-prd` | idea/seed docs to vision and features directly (always interactive) | Review gate before save |
 | `@project-orchestrator` | In-harness interactive build execution only (no PRD, no team) | Optional pause between each phase |
-| `@workflow-orchestrator` | In-harness build execution via the workflow engine only | One pre-run gate |
-| **`forge-auto-build`** | **Terminal/headless** fast-path: existing PRD → agent team → (optional models) → choose manual or engine build path → committed result | **One** pre-flight gate, then fully autonomous |
+| `forge-launcher engine-run` | Autonomous execution through the registered Dapr service | Service run controls |
+| **`forge-auto-build`** | **Terminal/headless** fast-path: existing PRD → agent team → (optional models) → choose interactive or Dapr service execution → committed result | **One** pre-flight gate, then fully autonomous |
 
 Use this skill when you want the build pipeline to run hands-free after a single approval, from a PRD that has already been reviewed and confirmed.
 
@@ -71,19 +72,19 @@ When the user invokes this skill, perform the following before touching any file
    - Stage 2 (optional): `forge-assign-models` → recommend or apply per-agent models *(opt-in -include if user passed `--assign-models`)*
    - Stage 3: Build execution *(choose one path)*:
      - Default: `forge-orchestrate-build` - execute all phases continuously, committing after each phase
-     - With `--workflow-engine`: compile `docs/EXECUTION-MANIFEST.json` and execute the build through `forge-workflow-engine`
+     - With `--dapr-service`: compile `docs/EXECUTION-MANIFEST.json` and execute through the registered Dapr service
 6. **State the commit strategy** explicitly:
    - After Stage 1: `chore: bootstrap MyForge agent templates and skill candidates`
    - After Stage 1b: `feat: generate project skills`
    - After each build phase N: `feat: complete Phase N -<phase name>`
    - After all phases: `chore: auto-build complete -all phases delivered`
 7. **Present the pre-flight checklist** (see below).
-8. **Prompt**: *"Review the plan above. Type `GO` to start the auto-build on the default prompt-driven path, `GO --assign-models` to also run model assignment, `GO --workflow-engine` to use the workflow-engine path instead of `forge-orchestrate-build`, or `stop` to exit."*
+8. **Prompt**: *"Review the plan above. Type `GO` to start the auto-build on the default prompt-driven path, `GO --assign-models` to also run model assignment, `GO --dapr-service` to use the registered Dapr service instead of `forge-orchestrate-build`, or `stop` to exit."*
 
 > **Headless invocation.** When this skill is driven from a non-interactive
 > terminal (`opencode run` / `copilot -p --yolo`, e.g. via `forge-launcher
 > --headless`), the confirmation gate is satisfied by the invocation itself:
-> a `GO` (optionally with `--assign-models` / `--workflow-engine`) embedded in
+> a `GO` (optionally with `--assign-models` / `--dapr-service`) embedded in
 > the invocation message counts as the user's approval. Present the pre-flight
 > summary and checklist as the run's audit trail, then proceed without pausing
 > for a separate reply.
@@ -178,7 +179,9 @@ If `--assign-models` was not requested, skip this stage and note: "Stage 2 skipp
 
 ### Stage 3: Execute the Build - Choose One Path
 
-By default, use the prompt-driven path below. If the user included `--workflow-engine` in the `GO` command, skip Path A and run Path B instead. Do **not** run both paths in the same auto-build invocation.
+By default, use the prompt-driven path below. If the user included
+`--dapr-service` in the `GO` command, skip Path A and run Path B instead. Do
+**not** run both paths in the same auto-build invocation.
 
 #### Path A (default): Run `forge-orchestrate-build` - All Phases
 
@@ -211,13 +214,11 @@ If any validation check fails, do **not** commit and do **not** proceed. Stop an
 
 ---
 
-#### Path B (`--workflow-engine`): Run `forge-workflow-engine` - Harness-Driven Build
+#### Path B (`--dapr-service`): Run through the Dapr service
 
-Run this path only if the user included `--workflow-engine` in their `GO` command.
-
-This path uses the workflow engine as the build executor instead of `forge-orchestrate-build`. The manifest is the execution plan; the engine performs the actual autonomous run through the selected harness. The engine is a **detached, standalone process** - it is never run as a blocking child of this session. You author in the chat; the engine executes on its own (dark orchestration), survives this session ending, and can be resumed with `run`.
-
-Select the per-task harness with the `FORGE_ENGINE_HARNESS` environment variable (`opencode`, `copilot`, `claude`, `openai`, or `stub`; the launcher defaults to `claude` for a `.claude` repo, `copilot` for `.github`, and `opencode` otherwise).
+Run this path only if the user included `--dapr-service` in the `GO` command.
+The Dapr service is the only supported autonomous execution backend; legacy
+workflow histories and `docs/WORKFLOW-STATE.json` are not imported.
 
 **Step 3a: Compile the execution manifest**
 
@@ -227,54 +228,44 @@ npm install
 npm run forge-execution-adapter -- compile
 ```
 
-The adapter requires the canonical layout (`docs/PRD.md` + `docs/features/*.md`)
-compiled from the features in dependency-graph order. It also runs a
-team-validation gate and writes `docs/agent-responsibility-matrix.md`
-(owner × phase × task × outputs).
+Verify that `docs/EXECUTION-MANIFEST.json` was written and contains at least
+one phase with tasks. Surface adapter warnings before continuing.
 
-Verify that `docs/EXECUTION-MANIFEST.json` was written and contains at least one phase with tasks. If the adapter reports warnings, surface them to the user before continuing.
+**Step 3b: Verify service registration and run**
 
-**Step 3b: Install the engine and start it detached**
-
-```bash
-cd .agents/skills/forge-workflow-engine
-npm install
-FORGE_ENGINE_HARNESS="${FORGE_ENGINE_HARNESS:-opencode}" \
-  nohup npm run workflow-engine -- run --harness "$FORGE_ENGINE_HARNESS" --yes \
-  >> docs/engine-run.log 2>&1 &
-echo "Engine started detached. Log: docs/engine-run.log"
-```
-
-- `nohup ... &` detaches the engine from this session: the build keeps running even if the chat session ends.
-- `--yes` skips the engine's pre-run gate (required here because the engine has no TTY).
-- `FORGE_ENGINE_HARNESS` picks the per-task harness; default `opencode`, or set it to `copilot` to drive per-task `copilot -p --yolo` calls.
-
-**Local execution service (registered repositories).** If `forge-launcher runtime repo list` lists this repository, run the build through the service instead of Step 3b:
+The repository must be registered with the local runtime. If it is not already
+registered, add it and restart the runtime:
 
 ```bash
-nohup forge-launcher engine-run --repo . --harness "${FORGE_ENGINE_HARNESS:-opencode}" --yes \
-  >> docs/engine-run.log 2>&1 &
+forge-launcher runtime repo add "$PWD"
+forge-launcher runtime restart
 ```
 
-The service owns the run: it commits each task to `forge/<branch>` and fast-forwards the checked-out branch when the run completes. Poll with `forge-launcher service runs --json` (the newest run's `status`) or follow `forge-launcher service events <run-id> --follow`; a run is finished when its status is `complete`, `failed`, or `cancelled`. Use `forge-launcher service control <run-id> replay-task --task <id>` instead of the engine's `replay`. CLI harnesses need a credential grant (`forge-launcher runtime harness grant <harness> <VARIABLE>`); the run is rejected with a `harness-unavailable` hint otherwise.
+Then start or attach to the service run:
 
-**Step 3c: Poll to completion**
+```bash
+forge-launcher engine-run --repo "$PWD" --harness "${FORGE_ENGINE_HARNESS:-opencode}" --yes
+```
 
-Poll `docs/WORKFLOW-STATE.json` until its `status` is `"complete"` or `"failed"` (suggested: check every 30s). You may also tail `docs/engine-run.log` and `docs/PROGRESS.md` while the build runs. Do not start the engine a second time while one is already running.
+The service owns run history and repository integration. Harness CLI execution
+requires a credential grant (`forge-launcher runtime harness grant <harness>
+<VARIABLE>`); ungranted harnesses fail closed. The command follows service
+events and returns when the run completes, fails, or pauses.
 
-**Step 3d: Verify completion**
+**Step 3c: Verify completion and recover**
 
-- [ ] `docs/WORKFLOW-STATE.json` exists and `status` is `"complete"`
-- [ ] All tasks in the manifest are `"complete"` or `"skipped"`
-- [ ] `docs/PROGRESS.md` reflects the completed state
-- [ ] `docs/EXECUTION-AUDIT.jsonl` contains a `run.complete` event
+Use `forge-launcher service runs --repo "$PWD"` and
+`forge-launcher service status <run-id>` to inspect durable run state. A
+completed service run has status `complete`; report task failures and blockers
+from the service snapshot. After fixing a failed task, replay it with
+`forge-launcher service control <run-id> replay-task --task <task-id>`, then
+resume with `forge-launcher engine-run --repo "$PWD" --yes`.
 
-If the engine reports failures, surface the failing task IDs and error messages (from `docs/WORKFLOW-STATE.json` or the log tail) and suggest `npm run workflow-engine -- replay <task-id>`. Do not mark Stage 3 complete until the run status is `"complete"`.
+When it finishes, report: "Stage 3 complete - Dapr service run finished. All
+tasks complete."
 
-When it finishes:
-- Report: "Stage 3 complete - workflow-engine path finished. All tasks complete."
-
-If `--workflow-engine` was not requested, skip this path and note: "Workflow-engine path not selected. Using `forge-orchestrate-build` for Stage 3."
+If `--dapr-service` was not requested, use `forge-orchestrate-build` for
+Stage 3; never invoke the retired workflow-engine scheduler.
 
 ---
 
@@ -296,7 +287,7 @@ Stages completed:
   ✅ Stage 1: Agent team generated (N agents, M skill candidates)
   ✅ Stage 1b: Project skills [generated | not required]
   [✅ or ⏭️] Stage 2: Per-agent models [applied | skipped]
-  ✅ Stage 3: Build execution completed via [forge-orchestrate-build | forge-workflow-engine]
+  ✅ Stage 3: Build execution completed via [forge-orchestrate-build | Dapr service]
 
 Commits made: <N>
 Files produced: <list key output files>
@@ -308,7 +299,7 @@ Next steps:
   - Add a new feature: @workspace /forge-build-feature-prd I want to add [feature]...
   - Audit generated skills (automated): cd .agents/skills/skill-review && npm install && npm run skill-review -- --provider stdout --min-score 1.5
   - Audit generated skills (manual): @workspace /forge-optimize-skills Audit all skills...
-   - Run the alternate build path later if desired: cd .agents/skills/forge-workflow-engine && npm run workflow-engine -- run --harness opencode --yes
+   - Run the service path later if desired: `forge-launcher engine-run --repo . --yes` (repository registration required)
 ```
 
 ---
@@ -322,7 +313,7 @@ If this skill is invoked in a repo that has an incomplete auto-build (detected b
    - If interrupted mid-Stage 1: re-invoke `forge-build-agent-team`.
    - If interrupted mid-Stage 2: re-run the affected stage from the beginning.
    - If interrupted mid-Stage 3 on the prompt-driven path: invoke `forge-orchestrate-build` with `resume from last checkpoint`.
-   - If interrupted mid-Stage 3 on the workflow-engine path: run `npm run workflow-engine -- run --harness opencode --yes` in the `forge-workflow-engine` skill directory (pass the same harness that was used before; the engine resumes from `docs/WORKFLOW-STATE.json`). For a repository registered with the local execution service, run `forge-launcher engine-run --repo .` instead; it resumes or attaches to the active service run.
+   - If interrupted mid-Stage 3 on the Dapr service path: run `forge-launcher engine-run --repo . --yes`; it resumes or attaches to the active service run.
 3. Report to the user: "Resuming auto-build from Stage N, last completed: [task description]."
 4. Do not re-run stages whose outputs are already committed and verified.
 
@@ -337,8 +328,8 @@ If this skill is invoked in a repo that has an incomplete auto-build (detected b
 | Stage 2 model assignment fails | Log the failure, skip Stage 2, continue to Stage 3 -report at the end |
 | Stage 3 prompt-driven phase fails validation | Stop after the failing phase; report error, blocked phase, and responsible agent |
 | Stage 3 prompt-driven commit fails | Stop immediately; report the git error |
-| Stage 3 workflow-engine manifest compile fails | Surface adapter warnings; do not start the engine until resolved |
-| Stage 3 workflow-engine task fails | Surface the failing task ID and error; suggest `npm run workflow-engine -- replay <task-id>` |
+| Stage 3 Dapr manifest compile fails | Surface adapter warnings; do not start the service run until resolved |
+| Stage 3 Dapr task fails | Surface the failing task ID and error; use the service replay control |
 | Any unexpected file conflict | Stop and ask the user whether to overwrite, merge, or abort |
 
 ---
@@ -349,7 +340,7 @@ If this skill is invoked in a repo that has an incomplete auto-build (detected b
 - **Never generate a PRD or interview for an idea.** This skill requires an existing PRD. If none exists, stop and point the user to `forge-auto-build-prd` / `forge-build-prd`. Manufacturing requirements inside the build pipeline is forbidden.
 - **Never auto-apply models without `--assign-models`.** Stage 2 is opt-in. Writing to agent YAML frontmatter without explicit intent is a violation of `forge-assign-models`'s safety constraint.
 - **Commit after every phase, not at the end.** Batching commits defeats the purpose of phase-level checkpoints and makes debugging harder.
-- **Choose exactly one build path per run.** `--workflow-engine` switches Stage 3 to the engine path; without it, use `forge-orchestrate-build`. Do not run one path and then replay the whole build through the other in the same invocation.
+- **Choose exactly one build path per run.** `--dapr-service` switches Stage 3 to the Dapr service path; without it, use `forge-orchestrate-build`. Do not run one path and then replay the whole build through the other in the same invocation.
 - **Do not suppress validation errors.** If a phase fails its build/test validation, stopping is the correct behavior -not retrying silently or moving on with a warning.
 - **Respect agent boundaries.** When driving Stage 3, do not instruct agents to do work outside their documented expertise. Delegate cross-cutting tasks to the correct owner agents.
 - **One invocation, one run.** This skill does not support running two independent projects simultaneously. If the workspace has multiple PRDs or project roots, ask the user to clarify which one to build before starting.

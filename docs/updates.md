@@ -4,6 +4,57 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.141
+
+### Stop using legacy Console state as execution authority (P7)
+
+- Console manual selection is stored in engine configuration only; legacy
+  `WORKFLOW-STATE.json` is no longer rewritten or consulted to select a Dapr
+  run.
+- Overview, Tasks, and Board status now come from the latest registered Dapr
+  service run. The Console has no legacy workflow-state polling endpoint.
+- Removed the retired DAG scheduler, file state/control writers, legacy harness
+  adapters, and standalone engine visualization from the legacy skill package.
+  The active Console Board remains supported, with its renderer, vendor assets,
+  and layout logic owned by the launcher package and its status sourced from
+  Dapr-backed APIs. The unused launcher wrapper was removed; the packed launcher
+  and bootstrap keep only the compatibility stub, Dapr entry guidance, and
+  canonical Dapr-independent execution utilities.
+- Removed the legacy "Reset changed tasks" control. Reconciliation now explains
+  that changed task contracts apply to a new service run, whose manifest and
+  history remain immutable.
+- Added isolated P7 migration/rollback qualification for completed and drained
+  legacy histories, archival Git bundles, fresh Dapr runs, and preservation of
+  committed and uncommitted work during rollback.
+- See [ADR-079](adr/079-dapr-execution-cutover.md), the
+  [cutover procedure](forge-launcher.md#cut-over-from-the-legacy-engine), and
+  [live runtime qualification](testing-guide.md#4a-live-runtime-qualification-developers).
+
+---
+
+## October 2026 - v3.140
+
+### Begin the Dapr execution cutover (P7)
+
+- Launcher `engine-run` and Console build controls no longer fall back to the
+  legacy in-process engine or file/PID controls. Register a repository with the
+  local runtime and restart it before execution; otherwise commands fail closed
+  with registration guidance.
+- `forge-launcher resume` treats legacy `WORKFLOW-STATE.json` as read-only
+  history; it does not infer that an old process is running, resume it, or
+  offer legacy PID/file controls.
+- The `forge-workflow-engine` skill is marked retired and its documented
+  `workflow-engine` npm command is removed. Its direct CLI entry point now
+  refuses to start or control runs; reusable implementation files and semantic
+  tests remain only while their retirement is completed.
+- Legacy workflow state is not imported into Dapr history. Added pre-cutover
+  preservation and rollback guidance; the migration and rollback procedures
+  still require rehearsal against disposable repositories before P7-GATE.
+- See [ADR-079](adr/079-dapr-execution-cutover.md) and the
+  [cutover procedure](forge-launcher.md#cut-over-from-the-legacy-engine).
+
+---
+
 ## October 2026 - v3.139
 
 ### Enforce Git-metadata isolation between registered repositories

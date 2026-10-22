@@ -31,7 +31,6 @@ import type {
   AuthoringSessionTarget,
   TimeoutUpdateResult,
   UploadResult,
-  WorkflowState,
   ServiceControlResult,
   ServiceRunDetail,
   ServiceRunsResponse,
@@ -215,9 +214,6 @@ export const api = {
   setAllTaskTimeouts(timeoutMs: number): Promise<TimeoutUpdateResult> {
     return post<TimeoutUpdateResult>("/api/tasks/timeout", { timeoutMs });
   },
-  resetChangedTasks(): Promise<{ ok: boolean; message: string; affected?: number; taskIds?: string[] }> {
-    return post("/api/tasks/reset-changed", {});
-  },
   authoringEvents(): Promise<Record<string, unknown>[]> { return request<Record<string, unknown>[]>("/api/authoring-events"); },
   rederiveState(): Promise<RederiveProgress | null> { return request<RederiveProgress | null>("/api/rederive"); },
   openExternal(path: string): Promise<OpenResult> {
@@ -225,9 +221,6 @@ export const api = {
   },
   manifest(): Promise<ExecutionManifest | null> {
     return request<ExecutionManifest | null>("/api/manifest");
-  },
-  state(): Promise<WorkflowState | null> {
-    return request<WorkflowState | null>("/api/state");
   },
   completeHumanReview(taskId: string, reviewer: string, notes: string, resume = true): Promise<ControlResult & { reviewFile?: string; resumed?: boolean }> {
     return post("/api/tasks/human-review", { taskId, reviewer, notes, resume });

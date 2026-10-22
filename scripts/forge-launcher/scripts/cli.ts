@@ -2,7 +2,6 @@
 import path from "node:path";
 import { bootstrapCli } from "./bootstrap.ts";
 import { consoleCli } from "./console/cli.ts";
-import { engineRunCli } from "./engine-run.ts";
 import { fail } from "./format.ts";
 import { continueFeatureIncrement, runCompileManifest, runDraftExistingPrd, runDraftPrd, runDraftTeam, runDraftSkills, runFeaturePrd, runLauncher, runRederive, runResume } from "./launcher.ts";
 import { REDERIVE_STEPS, type RederiveStepId } from "./rederive-state.ts";
@@ -73,18 +72,18 @@ Model and runner flags are saved to docs/authoring-config.json when creating a p
 On draft/feature/resume subcommands they override only that invocation.
 
 Deployment:
-  engine-run and resume use the local execution service for repositories registered
-  with "forge-launcher runtime repo add"; other repositories use the legacy in-process
-  engine until it is retired. Service runs integrate into forge/<branch> and fast-forward
-  the checked-out branch when they complete. FORGE_DEPLOYMENT=hosted is not available yet.
+  engine-run uses the local Dapr execution service. Register each repository with
+  "forge-launcher runtime repo add <path>", then restart the runtime. Unregistered
+  repositories fail closed; legacy histories are not imported. Service runs integrate
+  into forge/<branch> and fast-forward the checked-out branch when they complete.
+  FORGE_DEPLOYMENT=hosted is not available yet.
   Service runs ignore --task-timeout-ms, --heartbeat-ms, --viz, --run-validation,
   harness-activity, and auto-commit options (the service owns those behaviors).
 
 engine-run control:
-  --stop              Stop a running detached engine after the current task
-                      (writes docs/engine-control.json + SIGTERMs docs/engine.pid).
-  --pause             Pause a running engine after the current task (same, no signal).
-                      For service runs, both send an acknowledged control to the active run.
+  --stop              Stop the active local service run after the current task.
+  --pause             Pause the active local service run after the current task.
+                      Both send an acknowledged service control; legacy file/PID controls are retired.
 
 engine-run auto-commit:
   --auto-commit       Commit the working tree after each completed task (default: on).
@@ -189,10 +188,9 @@ async function main(): Promise<number> {
   if (args[0] === "runtime") return runtimeCli(args.slice(1));
   if (args[0] === "service") return serviceCli(args.slice(1));
   if (args[0] === "engine-run") {
-    // Registered repositories run in the local execution service.
     const rest = args.slice(1);
     if (rest.includes("-h") || rest.includes("--help")) { process.stdout.write(USAGE); return 0; }
-    return (await serviceEngineRun(rest)) ?? engineRunCli(rest);
+    return serviceEngineRun(rest);
   }
   if (args[0] === "draft-prd" || args[0] === "draft-existing-prd" || args[0] === "draft-team" || args[0] === "draft-skills" || args[0] === "compile-manifest" || args[0] === "rederive" || args[0] === "feature-prd" || args[0] === "feature-increment" || args[0] === "feature-increment-continue") {
     let repo: string | undefined;

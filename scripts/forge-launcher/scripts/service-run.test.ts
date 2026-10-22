@@ -80,10 +80,12 @@ test("deployment selection accepts local and rejects hosted or unknown values", 
   assert.throws(() => assertLocalDeployment({ FORGE_DEPLOYMENT: "cloud" }), /Unknown FORGE_DEPLOYMENT/);
 });
 
-test("unregistered repositories fall back to the legacy engine without strict parsing", async () => {
+test("unregistered repositories fail closed instead of starting the legacy engine", async () => {
   const repo = readyRepo();
-  const result = await serviceEngineRun(["--repo", repo, "--some-legacy-flag"], { repositoryId: async () => undefined });
-  assert.equal(result, undefined);
+  await assert.rejects(
+    serviceEngineRun(["--repo", repo, "--some-legacy-flag"], { repositoryId: async () => undefined }),
+    /not registered with the local execution service.*runtime repo add.*restart the runtime.*histories are not imported/s,
+  );
   assert.equal(await serviceResume({ repo }, { repositoryId: async () => undefined }), undefined);
 });
 

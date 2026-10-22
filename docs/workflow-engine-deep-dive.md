@@ -1,8 +1,15 @@
 # How the `forge-workflow-engine` Works - A Deep-Dive Learning Guide
 
+> **Retired legacy reference:** the DAG loop and file-backed state described
+> here are no longer supported for new runs. Use the registered Dapr execution
+> service described in [the launcher cutover guide](forge-launcher.md#cut-over-from-the-legacy-engine).
+> Legacy histories are not imported.
+
 ## What we're exploring
 
-MyForge lets you describe a software project as a Product Requirements Document (PRD), decompose it into agents and tasks, and then build it. The *workflow engine* is the piece that takes over once all the planning is done and actually **runs** the build - autonomously, without a human prompting each step. This guide walks through exactly how it does that.
+In the legacy architecture, MyForge used a workflow engine to execute a
+manifest after planning was complete. This guide explains how that retired
+in-process scheduler worked; it is not an operational guide for current runs.
 
 ---
 

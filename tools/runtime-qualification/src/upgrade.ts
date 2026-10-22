@@ -23,7 +23,7 @@ export const PREVIOUS_RELEASE = "8be6cb0";
 const RETRY_DELAY_MS = 90_000;
 
 /** A detached worktree of the previous release with launcher dependencies installed. */
-function previousRelease(root: string): string {
+export function previousRelease(root: string): string {
   const checkout = path.join(root, `release-${PREVIOUS_RELEASE}`);
   if (!existsSync(path.join(checkout, "scripts", "forge-launcher", "node_modules", "tsx"))) {
     run("git", ["worktree", "remove", "--force", checkout], REPO_ROOT);

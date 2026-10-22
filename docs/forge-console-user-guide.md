@@ -73,13 +73,15 @@ validation and downstream derivation.
 
 The Overview is the main control center for a project. It shows:
 
-- the run header (Live/Idle indicator, harness badge, and control state),
+- the run header (Dapr Live/Idle indicator and harness badge),
 - progress counters,
 - blockers or failures,
 - the **Manifest** panel (compiled phase/task counts),
 - the latest detached-job status,
 - the pipeline status,
-- and the run controls.
+- and the run controls. Run status, task progress, and controls come from the
+  latest Dapr service run; see **Service Runs** for event history and
+  run-specific controls.
 
 When a project is still at an earlier stage, the pipeline card advances the workflow one step at a time. The same actions are available from the terminal launcher, but the console lets you review the generated artifacts before moving on.
 
@@ -100,9 +102,11 @@ Typical progression:
 5. **Manifest → build**: start the build, or stop after compilation for review.
 6. **Paused or incomplete run**: resume the build.
 
-The console polls for state changes and updates the button label as each stage
-completes. When a detached step finishes or fails, Overview keeps the result
-visible and links you straight to **Logs**.
+The console refreshes authoring and detached-job state as each stage completes.
+Execution status comes from the Dapr service, not archived
+`WORKFLOW-STATE.json`; use **Service Runs** for the run's task progress and
+event history. When a detached authoring step finishes or fails, Overview keeps
+the result visible and links you straight to **Logs**.
 
 To use MyForge with an application that already exists, open **Projects** and
 choose **Bootstrap an existing repo**. The folder must be a Git repository;
@@ -117,8 +121,9 @@ Feature PRD (interactive)**. The terminal session interviews you and writes an
 additive document under `docs/features/`, leaving the original PRD intact. Once
 the feature document is saved, choose **Continue after authoring** to update
 affected agents and reconcile the manifest. Review the new tasks before running
-them; stable task IDs preserve completed work, and changed contracts are called
-out for review.
+them; the reconciliation view calls out changed contracts for review. Dapr runs
+keep their submitted manifest and history immutable, so manifest changes apply
+to a new service run rather than resetting an existing run.
 
 ---
 
@@ -269,36 +274,21 @@ completing. Export the trail with `forge-launcher service events <run-id>
 
 #### Approve from the CLI
 
-Create or identify a repository-relative evidence file containing the review
-notes, then run the installed workflow engine command:
+Approve a task through the Dapr service CLI with the run ID and task ID:
 
 ```bash
-cd .agents/skills/forge-workflow-engine
-npm run workflow-engine -- approve-task <task-id> \
-  --repo /path/to/project \
-  --reviewer "Your Name" \
-  --evidence docs/reviews/my-review.md \
-  --confirm-human-review
+forge-launcher service control <run-id> approve-task --task <task-id>
 ```
 
-The command refuses while any prerequisite of the task is pending or failed, and
-names them, so an approval cannot be recorded against work that does not exist
-yet. The attestation is fingerprinted over the task and its references, so it
-self-invalidates when those change - but not when the reviewed output changes,
-which is what this check exists to prevent.
-
-The command writes the configured `reviewFile` attestation and prints a
-confirmation. Resume the detached build with:
+This records an authenticated service control and the event trail shows the
+review task resuming and completing. It does not write a legacy `reviewFile`
+attestation. Resume or attach to the service run with:
 
 ```bash
 forge-launcher engine-run --repo /path/to/project --yes
 ```
 
-To prove the CLI approval, show the evidence file, the configured JSON
-`reviewFile`, and the engine status/log confirming that the review task was
-verified and completed. Evidence paths must stay inside the repository and
-contain non-empty review material; agents must never run `approve-task` or
-fabricate an attestation.
+Export the trail with `forge-launcher service events <run-id> --json`.
 
 ### Authoring stages and model settings
 
@@ -402,15 +392,11 @@ It does not replace the original PRD or start the engine. After authoring, choos
 **Continue after authoring** to prepare the affected team and recompile the
 manifest.
 
-The Manifest panel shows preserved, new, changed, and removed task IDs. Stable
-task IDs preserve completed work. Review changed contracts, use **Reset changed
-tasks for review** when those tasks need to run again, and select new pending
-tasks in **Tasks** before a targeted run.
-
-**Reset changed tasks for review** sits in the Manifest panel, next to the
-reconciliation it acts on, and lists each changed task with a link into **Tasks**.
-The reset is behind a confirmation naming every task it will discard, because it
-clears their recorded outputs, artifacts and timings so they run again.
+The Manifest panel shows preserved, new, changed, and removed task IDs. Review
+changed contracts before submitting a new service run. The retired file-state
+reset control is not available: existing service runs keep their submitted
+manifest and history, and legacy `WORKFLOW-STATE.json` is read-only archive data.
+Select tasks in **Tasks** when you want to submit a targeted new run.
 
 ### When the requirements change
 
@@ -499,8 +485,8 @@ bootstrap it again.
 - If **Run selected** is disabled, switch to **Tasks**, select one or more
   tasks, and click **Save selection**.
 - If a feature increment reports changed tasks, review the reconciliation in
-  Manifest before running; reset changed tasks only when they should execute
-  again.
+  Manifest before starting a new service run. Existing run history is not reset
+  or imported from legacy state.
 - If you want to inspect the underlying documents, open the Plan & Team view or read the files in the repo directly.
 
 For more detail on the console’s architecture and capabilities, see [forge-console.md](forge-console.md).

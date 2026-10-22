@@ -85,15 +85,13 @@ export function touchProject(repoPath: string): void {
 
 // ─── Repo file paths ──────────────────────────────────────────────────────────
 //
-// The console reads the same docs/* artifacts the engine and launcher write.
+// Console repository paths shared by authoring, service-run, and artifact views.
 
 export interface RepoPaths {
   repoRoot: string;
   manifestPath: string;
-  statePath: string;
   auditPath: string;
   progressPath: string;
-  controlPath: string;
   pidPath: string;
   logPath: string;
   authoringEventsPath: string;
@@ -113,10 +111,8 @@ export function repoPaths(repoRoot: string): RepoPaths {
   return {
     repoRoot: root,
     manifestPath: path.join(docs, "EXECUTION-MANIFEST.json"),
-    statePath: path.join(docs, "WORKFLOW-STATE.json"),
     auditPath: path.join(docs, "EXECUTION-AUDIT.jsonl"),
     progressPath: path.join(docs, "PROGRESS.md"),
-    controlPath: path.join(docs, "engine-control.json"),
     pidPath: path.join(docs, "engine.pid"),
     logPath: path.join(docs, "engine-run.log"),
     authoringEventsPath: path.join(docs, "AUTHORING-EVENTS.jsonl"),
@@ -146,17 +142,6 @@ export function detectHarnessRoot(repoRoot: string): HarnessRoot | null {
  */
 export function inferEngineHarness(repoRoot: string): string {
   return engineHarnessForHarness(detectHarnessRoot(repoRoot));
-}
-
-/** Locates the bootstrapped forge-workflow-engine skill dir (any harness root). */
-export function findEngineDir(repoRoot: string): string | null {
-  const selected = detectHarnessRoot(repoRoot);
-  for (const root of [...new Set([selected, ...HARNESS_ROOTS])]) {
-    if (!root) continue;
-    const candidate = path.join(repoRoot, root, "skills", "forge-workflow-engine");
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
 }
 
 /** Locates the bootstrapped forge-execution-adapter skill dir (any harness root). */

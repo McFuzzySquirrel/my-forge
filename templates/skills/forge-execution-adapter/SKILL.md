@@ -76,8 +76,9 @@ npm run forge-execution-adapter -- compile --granularity coarse  # legacy 1-bull
 
 The chosen granularity is recorded on the manifest as `granularity: "coarse" |
 "fine"`, so a run's decomposition is traceable. Recompiling a manifest at a
-different granularity produces a new task set — start a fresh engine run
-(`rm docs/WORKFLOW-STATE.json`) rather than mixing with an in-progress run.
+different granularity produces a new task set — start a fresh Dapr service run
+rather than mixing definitions with an active run. Never delete or rewrite
+legacy workflow state as part of this change; the service does not import it.
 
 ### Compile Source: Canonical Features
 
@@ -153,7 +154,7 @@ Convert the forge outputs into a structured manifest containing:
 - validation commands
 - approval gates
 - compile warnings for anything ambiguous
-- **`inputs`** — artifact types consumed as context by the task (optional, used by forge-workflow-engine for context projection)
+- **`inputs`** — artifact types consumed as context by the task (optional, used by the Dapr service for context projection)
 - **`produces`** — artifact type the task must create on completion (optional)
 
 The manifest is a **contract**, not a prompt. Preserve uncertainty as warnings instead of inventing certainty.
@@ -177,7 +178,7 @@ Once the manifest exists and progress is synchronized, hand the structured contr
 
 ## Artifact Directory Convention
 
-When `forge-workflow-engine` runs a build against the compiled manifest, it stores task output artifacts in:
+When the Dapr service runs a build against the compiled manifest, it stores task output artifacts in:
 
 ```
 docs/artifacts/

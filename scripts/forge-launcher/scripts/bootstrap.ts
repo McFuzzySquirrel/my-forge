@@ -78,6 +78,24 @@ function copyTree(srcDir: string, destDir: string, rewrite?: { from: string; to:
   }
 }
 
+function copyRetiredWorkflowSkill(
+  srcDir: string,
+  destDir: string,
+  rewrite?: { from: string; to: string },
+): void {
+  for (const relative of ["SKILL.md", "references/engine-entry.md", "scripts/cli.ts"]) {
+    const source = path.join(srcDir, relative);
+    if (!fs.existsSync(source)) throw new Error(`Retired workflow skill resource is missing: ${source}`);
+    const destination = path.join(destDir, relative);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.copyFileSync(source, destination);
+    if (rewrite && relative.endsWith(".md")) {
+      const text = fs.readFileSync(destination, "utf8");
+      fs.writeFileSync(destination, text.split(rewrite.from).join(rewrite.to));
+    }
+  }
+}
+
 function ensureGitignore(targetDir: string): void {
   const gi = path.join(targetDir, ".gitignore");
   const entries = ["node_modules/", "docs/engine-run.log", "docs/artifacts/"];
@@ -184,12 +202,14 @@ export async function bootstrap(opts: BootstrapOptions): Promise<number> {
         }
       }
       fs.rmSync(destDir, { recursive: true, force: true });
-      copyTree(srcDir, destDir, rewrite);
       if (skillName === "forge-workflow-engine") {
+        copyRetiredWorkflowSkill(srcDir, destDir, rewrite);
         const packagedExecutionDir = path.join(destDir, "scripts", "execution");
         fs.rmSync(packagedExecutionDir, { recursive: true, force: true });
         copyTree(executionDir, packagedExecutionDir);
         rewriteExecutionImports(destDir);
+      } else {
+        copyTree(srcDir, destDir, rewrite);
       }
       log.ok(`Copied:  ${skillName}/`);
     }

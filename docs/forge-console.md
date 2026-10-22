@@ -1,6 +1,6 @@
 # Forge Console
 
-> A local web UI that fronts `forge-launcher` (authoring) and `forge-launcher engine-run` → `workflow-engine` (build). Create a project, author a reviewed PRD interactively, generate the agent team, generate project skills, compile the manifest, and monitor/control the build - all from your browser.
+> A local web UI that fronts `forge-launcher` authoring and the local Dapr execution service. Create a project, author a reviewed PRD interactively, generate the agent team and project skills, compile the manifest, and monitor/control the build - all from your browser.
 
 > [!WARNING]
 > The Visual Tour uses current-browser captures from a deterministic local
@@ -17,12 +17,10 @@
 ## Overview
 
 The Forge Console is a self-contained, loopback-only web app served by
-`forge-launcher console`. It is a **projection layer** over the same files the
-terminal tools already write (`docs/WORKFLOW-STATE.json`, `EXECUTION-AUDIT.jsonl`,
-`engine-run.log`, `engine-control.json`, `engine.pid`, `docs/artifacts/`, …) and
-a thin supervisor over the launcher and engine processes. It does not reimplement
-authoring or execution - the terminal commands remain first-class and produce
-identical results.
+`forge-launcher console`. It is a **projection layer** over authoring files,
+read-only legacy status artifacts during migration, and the local Dapr service's
+run/event API. It does not reimplement authoring or execution - the terminal
+commands remain first-class and use the same service.
 
 For a compiled project, Console build and team operations use the manifest's
 `harnessRoot` before automatic discovery. An explicit authoring CLI selection
@@ -162,8 +160,8 @@ so you can review each result and come back later:
 | PRD (no team) | **Generate team** (headless `forge-build-agent-team`) | agent files and ownership metadata |
 | Team (skills incomplete) | **Generate project skills** | project skill candidates and review result |
 | Skills ready (no manifest) | **Compile manifest** (`forge-execution-adapter`) | `docs/EXECUTION-MANIFEST.json` |
-| Manifest ready | **Start build** (`forge-launcher engine-run`) | durable workflow-engine run |
-| Paused/incomplete run | **Resume build** | engine resumes from `WORKFLOW-STATE.json` |
+| Manifest ready | **Start build** (`forge-launcher engine-run`) | durable Dapr service run |
+| Paused/incomplete run | **Resume build** | service resumes from its durable workflow history |
 
 The derivation steps run detached in the background (output is appended to
 `docs/engine-run.log`, visible in the **Logs** view). This includes bootstrap,
@@ -310,8 +308,8 @@ The Overview **Controls** panel points here rather than duplicating the button.
 
 ## The Forge Board
 
-The Board is the engine's PixiJS dashboard, framed inside the Console. It has
-two modes, chosen above the frame and remembered per project.
+The Board is the Console-owned PixiJS dashboard, framed inside the Console. It
+has two modes, chosen above the frame and remembered per project.
 
 **Kanban** is the original board: one band per phase, four status columns, task
 cards flowing left to right.
@@ -335,8 +333,9 @@ screen-reader use. Hovering a card or bar offers **Open in Tasks**, **Logs** and
 **Artifacts**, so the board is not a dead end. Failures stay listed in the lower
 left with a link into Tasks, rather than only flashing once.
 
-The Board is still available standalone via `workflow-engine run --viz`, where
-it keeps its own mode switch and Table toggle.
+The former standalone Board was available via `workflow-engine run --viz`; its
+legacy scheduler and visualization server are retired. The Console-owned Board
+reads service-backed execution state and has its own mode switch and Table toggle.
 
 ---
 
@@ -378,7 +377,7 @@ button shows the exact command to run manually.
 | View | What it shows |
 |---|---|
 | **Home** | create a new project or open an existing one (landing), including live status labels for detached work. |
-| **Overview** | run status, progress + counts, blockers, the pipeline next-step card with a **Manual build** checkbox, background-job status, run controls, an **auto-commit** toggle, a **Log harness activity** toggle, and a **Launch \<harness\> CLI** button. Also the **Re-derive team & skills** panel when authoring is stale, and manifest reconciliation with a confirmed **Reset changed tasks for review**. |
+| **Overview** | latest Dapr run status, progress + counts, blockers, the pipeline next-step card with a **Manual build** checkbox, background-job status, run controls, an **auto-commit** toggle, a **Log harness activity** toggle, and a **Launch \<harness\> CLI** button. Also the **Re-derive team & skills** panel when authoring is stale, and manifest reconciliation with a confirmed **Reset changed tasks for review**. |
 | **Board** | the PixiJS Forge Board in **Kanban** or **Gantt** mode, with status filters and a **Table** view of the same data. |
 | **Tasks** | every task in a filterable/sortable table with a detail drawer, editable per-task timeout, explicit/range selection controls for manual mode, and a **Launch \<harness\> CLI** button. |
 | **Logs** | `docs/engine-run.log` tail + the audit event stream (live via SSE). |
@@ -407,11 +406,11 @@ does:
 
 | Action | Equivalent |
 |---|---|
-| **Pause** | writes `docs/engine-control.json` (`request: pause`); the engine stops after the current task. |
-| **Stop** | writes `request: stop` **and** SIGTERMs `docs/engine.pid`. |
-| **Resume** | `forge-launcher engine-run --repo <path> …` (resumes from `WORKFLOW-STATE.json`). |
-| **Replay** | `workflow-engine replay <task-id> --repo <path>` for a failed task. |
-| **Create manifest** *(pipeline card, manual pre-build only)* | `forge-launcher compile-manifest --repo <path>` (installs the adapter if needed and writes `docs/EXECUTION-MANIFEST.json` without starting the engine). |
+| **Pause** | Acknowledged `pause` control to the active service run; pauses after its current task. |
+| **Stop** | Acknowledged `stop` control to the active service run; stops after its current task and can be resumed. |
+| **Resume** | `forge-launcher engine-run --repo <path> …` (resumes or attaches to the active service run). |
+| **Replay** | Acknowledged service `replay-task` control for a failed task. |
+| **Create manifest** *(pipeline card, manual pre-build only)* | `forge-launcher compile-manifest --repo <path>` (installs the adapter if needed and writes `docs/EXECUTION-MANIFEST.json` without starting a run). |
 
 ### Service runs
 
@@ -448,12 +447,18 @@ service ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)):
   `docs/reviews/<task-id>-console-review.md` with the notes and the run and
   control IDs. It writes no `reviewFile` attestation or `WORKFLOW-STATE.json`.
 - The Overview's **Execution deployment** panel shows whether the open
-  repository uses the local execution service or the legacy engine. If the
-  repository is registered but the runtime is unreachable, controls report the
-  error instead of falling back to the legacy engine.
+  repository is registered with the local execution service. An unregistered
+  repository cannot run or control builds; register it with
+  `forge-launcher runtime repo add <path>` and restart the runtime. If a
+  registered repository's runtime is unreachable, controls report the error
+  rather than falling back to another scheduler.
 
-Unregistered repositories keep the legacy engine and the file-based controls
-above.
+Legacy file/PID controls and Console-triggered legacy execution are retired.
+The Console does not read or poll legacy `WORKFLOW-STATE.json`; the Overview,
+Tasks, Board, and controls project the latest Dapr service run. Archived legacy
+files are retained only as migration records and are not imported into Dapr
+workflow history. See the migration and rollback procedure in
+[Forge Launcher](forge-launcher.md#cut-over-from-the-legacy-engine).
 
 ### Execution mode
 
@@ -494,7 +499,7 @@ takes precedence over `FORGE_ENGINE_LOG_HARNESS_ACTIVITY`. When enabled, harness
 CLI stdout/stderr streams into `docs/engine-run.log` and appears live in the
 **Logs** view. It can contain sensitive repository content and increase log
 volume; command invocation logging is always on regardless of this setting (see
-[workflow-engine.md](workflow-engine.md#harness-invocation-and-activity-logging)
+[legacy workflow-engine reference](workflow-engine.md#harness-invocation-and-activity-logging)
 and [ADR-052](adr/052-harness-invocation-activity-logging.md)).
 
 ### Task timeouts
@@ -564,14 +569,13 @@ job status keeps updating even if you switch between **Home**, **Projects**, and
 
 ## Relationship to the CLI
 
-The console does not replace `forge-launcher`, `forge-launcher engine-run`, or
-`workflow-engine`. It is a convenience front end over them:
+The Console complements `forge-launcher` and the local Dapr execution service:
 
 - The terminal is still the canonical path for scripting, CI, and headless runs.
-- A run started from the terminal is visible in the console (and vice versa),
-  because both read the same `docs/*` artifacts.
-- The Forge Board is still available standalone via `workflow-engine run --viz`
-  (see [workflow-engine](workflow-engine.md)).
+- Terminal and Console runs share the registered repository and durable service
+  state, so either surface can monitor or control the same service run.
+- The standalone workflow-engine Board is retired; use the service-backed
+  Console Board for current runs.
 
 See [ADR-034](adr/034-forge-console-web-ui.md) for the design decisions
 (web-first, tsc-only client, iframe board embed, registry, CSRF guard).

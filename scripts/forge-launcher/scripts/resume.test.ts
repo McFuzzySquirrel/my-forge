@@ -204,7 +204,7 @@ test("explicit env overrides persisted engine config on resume", async () => {
   assert.ok(out.includes("--log-harness-activity"), out);
 });
 
-test("resume with a complete engine run suggests monitoring, not a resume", async () => {
+test("resume treats complete legacy engine state as read-only history", async () => {
   const repo = makeRepo();
   write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
   write(repo, ".agents/agents/api-engineer.md", "---\nname: api-engineer\ndescription: API specialist.\n---\n");
@@ -218,10 +218,13 @@ test("resume with a complete engine run suggests monitoring, not a resume", asyn
   const { code, out } = await runCli(["resume", "--repo", repo, "--non-interactive"]);
   assert.equal(code, 0, out);
   assert.ok(out.includes("Status   : complete"), out);
-  assert.ok(out.includes("tail -f"), out);
+  assert.ok(out.includes("legacy workflow-engine state"), out);
+  assert.ok(out.includes("not imported"), out);
+  assert.ok(out.includes("service-backed run"), out);
+  assert.doesNotMatch(out, /resume the engine|already running|engine-control\.json/);
 });
 
-test("resume with a running engine run warns against starting a second one", async () => {
+test("resume does not treat a running legacy state file as an active service run", async () => {
   const repo = makeRepo();
   write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
   write(repo, ".agents/agents/api-engineer.md", "---\nname: api-engineer\ndescription: API specialist.\n---\n");
@@ -235,5 +238,8 @@ test("resume with a running engine run warns against starting a second one", asy
   const { code, out } = await runCli(["resume", "--repo", repo, "--non-interactive"]);
   assert.equal(code, 0, out);
   assert.ok(out.includes("Status   : running"), out);
-  assert.ok(out.includes("already running"), out);
+  assert.ok(out.includes("legacy workflow-engine state"), out);
+  assert.ok(out.includes("not imported"), out);
+  assert.ok(out.includes("service-backed run"), out);
+  assert.doesNotMatch(out, /already running|SIGTERM|workflow-engine -- stop/);
 });

@@ -75,6 +75,28 @@ export async function listServiceRuns(deps: ServiceRunsDeps, repoRoot: string | 
   }
 }
 
+/** Returns the newest owned service run with its current task-status snapshot. */
+export async function latestServiceRun(deps: ServiceRunsDeps, repoRoot: string | null): Promise<ServiceResponse> {
+  const repositoryId = await scope(deps, repoRoot);
+  if (typeof repositoryId !== "string") return repositoryId;
+  try {
+    const client = await deps.client();
+    const { runs } = await client.list(repositoryId);
+    const latest = newestFirst(runs)[0];
+    if (!latest) return { status: 200, body: { ok: true, available: true, run: null } };
+    if (typeof latest.runId !== "string" || !RUN_ID.test(latest.runId)) {
+      return { status: 503, body: { ok: false, code: "invalid-run", message: "The service returned a run without a valid id." } };
+    }
+    const run = await client.get(latest.runId);
+    if (run.repositoryId !== repositoryId) {
+      return { status: 404, body: { ok: false, code: "unknown-run", message: `Run '${latest.runId}' does not belong to this repository.` } };
+    }
+    return { status: 200, body: { ok: true, available: true, run } };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
 async function ownedRun(
   deps: ServiceRunsDeps,
   repoRoot: string | null,
@@ -152,9 +174,8 @@ function newestFirst(runs: readonly Record<string, unknown>[]): Record<string, u
 const ACTIVE_STATUSES = new Set(["queued", "running", "pausing", "paused", "stopping", "cancelling"]);
 
 /**
- * Routes a Console build control to the repository's service run. Returns
- * undefined when the repository is not registered with the local runtime, so
- * the caller keeps the legacy engine control path.
+ * Routes a Console build control to the repository's service run. Unregistered
+ * repositories fail closed instead of using legacy file/PID controls.
  *
  * pause/stop and approve target the newest active run; replay targets the
  * newest run, which the service reopens if it already finished.
@@ -164,9 +185,20 @@ export async function routeServiceControl(
   repoRoot: string | null,
   action: RoutedConsoleAction,
   taskId?: string,
-): Promise<ServiceResponse | undefined> {
+): Promise<ServiceResponse> {
   const repositoryId = await scope(deps, repoRoot);
-  if (typeof repositoryId !== "string") return repositoryId.status === 200 ? undefined : repositoryId;
+  if (typeof repositoryId !== "string") {
+    if (repositoryId.status !== 200) return repositoryId;
+    return {
+      status: 409,
+      body: {
+        ...repositoryId.body,
+        ok: false,
+        code: "service-required",
+        message: `${String(repositoryId.body.message ?? "Repository is not registered.")} Legacy controls are retired.`,
+      },
+    };
+  }
   const needsTask = action === "replay" || action === "approve";
   if (needsTask && (typeof taskId !== "string" || !TASK_ID.test(taskId))) {
     return { status: 400, body: { ok: false, code: "unknown-task", message: `${action} requires a task id.` } };

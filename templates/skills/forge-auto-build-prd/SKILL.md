@@ -61,6 +61,7 @@ skill and rerun validation. Do not substitute file existence or JSON parsing.
 
 Report the vision and feature paths, assumptions, and validation outcome.
 Next: `forge-launcher resume` or `forge-build-agent-team`, then project skills
-generation and `project-orchestrator` / `workflow-orchestrator` execution.
+generation and `project-orchestrator` execution. Autonomous execution uses the
+registered Dapr service through `forge-launcher engine-run`.
 Do not generate teams or skills, assign models, compile manifests, or build here.
 Re-entry resumes the earliest incomplete stage, not the entire pipeline.

@@ -315,7 +315,7 @@ test("router preserves pending current-project removal when the null SSE snapsho
   const requestCount = projects.mock.callCount();
 
   current = { current: null, projects: current.projects.slice(1) };
-  store.applySnapshot({ summary: null, manifest: null, state: null, layout: null });
+  store.applySnapshot({ summary: null, manifest: null, layout: null });
   await flush();
   assert.equal(projects.mock.callCount(), requestCount, "SSE must not refresh while removal is pending");
   assert.equal(ui.button("Remove selected (1)").disabled, true);

@@ -398,9 +398,6 @@ function renderHeader(summary: Summary): HTMLElement {
     [el("span", { className: summary.live ? "live-dot on" : "live-dot" }), summary.live ? "Live" : "Idle"],
   );
   const harness = summary.harness ? el("span", { className: "badge" }, summary.harness) : null;
-  const control = summary.control
-    ? el("span", { className: "badge badge-paused" }, `control: ${summary.control}`)
-    : null;
 
   const launch = el("button", { className: "btn btn-sm" }, `Launch ${summary.harness ?? "harness"} CLI`);
   launch.addEventListener("click", () => void launchCli());
@@ -408,7 +405,7 @@ function renderHeader(summary: Summary): HTMLElement {
   return el("div", { className: "panel" }, [
     el("div", { className: "row between" }, [
       el("div", null, [el("h1", { className: "no-margin" }, summary.repoName), el("div", { className: "dim mono small" }, summary.repoRoot)]),
-      el("div", { className: "row gap" }, [live, harness, control, launch].filter(Boolean) as HTMLElement[]),
+      el("div", { className: "row gap" }, [live, harness, launch].filter(Boolean) as HTMLElement[]),
     ]),
   ]);
 }
@@ -439,9 +436,9 @@ function fillServiceProfile(panel: HTMLElement, response: ServiceRunsResponse | 
   }
   if (!response.available && response.reason === "not-registered") {
     panel.replaceChildren(
-      el("div", { className: "row gap" }, [statusBadge("legacy"), el("strong", null, "Execution: in-process engine")]),
-      el("p", { className: "dim" }, "Builds run in this machine's legacy engine. Register the repository with the local runtime " +
-        "(forge-launcher runtime repo add <path>) to run builds in the local execution service."),
+      el("div", { className: "row gap" }, [statusBadge("unavailable"), el("strong", null, "Execution: local service required")]),
+      el("p", { className: "dim" }, "Execution is disabled until this repository is registered with the local runtime " +
+        "(forge-launcher runtime repo add <path>) and the runtime is restarted. Legacy workflow histories are not imported."),
     );
     return;
   }
@@ -481,7 +478,10 @@ function renderServiceProfile(): HTMLElement {
 function renderRun(run: RunSummary | null): HTMLElement {
   if (!run) {
     return el("div", { className: "panel" }, [
-      el("div", { className: "row gap" }, [statusBadge("no run"), el("span", { className: "dim" }, "No workflow run yet.")]),
+      el("div", { className: "row gap" }, [
+        statusBadge("service runs"),
+        el("span", { className: "dim" }, ["Execution history and controls are available in ", el("a", { href: "#/service" }, "Service Runs"), "."]),
+      ]),
     ]);
   }
 
@@ -569,7 +569,7 @@ function renderReconciliation(summary: Summary, reconciliation: NonNullable<Summ
 
   const children: HTMLElement[] = [
     el("h4", null, "Reconciliation"),
-    el("p", { className: "dim small" }, "Completed task records are preserved by stable task ID. Review changed contracts before running."),
+    el("p", { className: "dim small" }, "Review changed contracts before submitting a new service run; existing runs keep their compiled manifest and history."),
     el("div", { className: "stats" }, [
       stat("Preserved", String(reconciliation.preservedTaskIds.length)),
       stat("New", String(added.length)),
@@ -581,7 +581,7 @@ function renderReconciliation(summary: Summary, reconciliation: NonNullable<Summ
   if (changed.length > 0) {
     children.push(el("h5", { className: "group-title" }, `Changed tasks (${changed.length})`));
     children.push(el("ul", { className: "reconcile-list" }, rows));
-    children.push(resetChangedControl(changed));
+    children.push(el("p", { className: "dim small" }, "Changed tasks run only in a new service run; previous run history is not reset or rewritten."));
   }
   if (added.length > 0) {
     children.push(el("h5", { className: "group-title" }, `New tasks (${added.length})`));
@@ -592,36 +592,6 @@ function renderReconciliation(summary: Summary, reconciliation: NonNullable<Summ
     children.push(el("p", { className: "dim small" }, "No task contracts changed since the previous compile."));
   }
   return el("div", { className: "detail" }, children);
-}
-
-/**
- * Reset completed tasks whose contract changed.
- *
- * This discards their recorded outputs and artifacts so the engine will run them
- * again, so it is never automatic — not even as the tail of a re-derivation —
- * and never a single unconfirmed click.
- */
-function resetChangedControl(changedTaskIds: string[]): HTMLElement {
-  const button = el("button", { className: "btn btn-sm" }, "Reset changed tasks for review") as HTMLButtonElement;
-  const host = el("div", { className: "row gap wrap" }, [
-    button,
-    el("span", { className: "dim small" }, "Re-run completed tasks whose contract changed."),
-  ]);
-  button.addEventListener("click", () => {
-    if (!window.confirm(
-      `Reset ${changedTaskIds.length} changed task${changedTaskIds.length === 1 ? "" : "s"} to pending so they run again?\n\n`
-      + `Their recorded outputs, artifacts and timings will be cleared:\n  ${changedTaskIds.join("\n  ")}`,
-    )) return;
-    button.disabled = true;
-    void api.resetChangedTasks()
-      .then((res) => {
-        toast(res.message);
-        if (overviewContainer) void renderOverview(overviewContainer);
-      })
-      .catch((err) => toast(err instanceof Error ? err.message : "reset failed"))
-      .finally(() => { button.disabled = false; });
-  });
-  return host;
 }
 
 interface PipelineStep {

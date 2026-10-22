@@ -10,8 +10,7 @@ import { detectRepoRoot, expandPath, resolveInputFile } from "./paths.ts";
 import { prompt as defaultPrompt, promptMultiline as defaultPromptMultiline, promptPath as defaultPromptPath, promptPathLoop as defaultPromptPathLoop, promptSelect as defaultPromptSelect, promptYesNo as defaultPromptYesNo, prompts, withPromptSession } from "./prompts.ts";
 import { launchCliInTerminal } from "./terminal.ts";
 import { assertEngineHarnessAvailable, loadEngineConfig, saveEngineConfig } from "./engine-config.ts";
-import { engineRunCli } from "./engine-run.ts";
-import { serviceEngineRun } from "./service-run.ts";
+import { requireRegisteredRepository, serviceEngineRun } from "./service-run.ts";
 import { createSessionScope } from "./launcher-session.ts";
 import { type AuthoringOptions, type AuthoringRunnerChoice, type AuthoringRunnerSelection, type AuthoringStage, loadAuthoringConfig, saveAuthoringConfig, selectAuthoringModel, selectAuthoringRunner } from "./authoring-config.ts";
 import { authoringArgv, interactiveAuthoringArgv, inventoryForRunner, readAuthoringInventory, refreshAuthoringInventory, resolveAuthoringModel, type AuthoringInvocation, type AuthoringRunner, type InventoryProbe } from "./authoring-inventory.ts";
@@ -233,15 +232,6 @@ function harnessRootDir(): HarnessRoot {
 
 function skillPathFor(skillName: string): string {
   return path.join(state.repoDir, harnessRootDir(), "skills", skillName, "SKILL.md");
-}
-
-/** Locates the bootstrapped forge-workflow-engine package dir (any harness root). */
-function findEngineDir(repoDir: string): string | null {
-  for (const root of new Set([harnessRootDir(), ".agents", ".opencode", ".claude", ".github"])) {
-    const candidate = path.join(repoDir, root, "skills", "forge-workflow-engine");
-    if (fs.existsSync(candidate)) return candidate;
-  }
-  return null;
 }
 
 function findAdapterDir(repoDir: string): string | null {
@@ -482,7 +472,7 @@ const EXISTING_PROJECT_PRD_MSG =
   "Produce docs/PRD.md plus docs/features/*.md directly, even for one feature. Feature-based authoring is mandatory for every solution; " +
   "there is no size threshold or monolithic execution path. Preserve accepted requirement meanings and stable task IDs, but keep each definition and " +
   "task in one canonical document. Use compact version-2 contracts and ID-only traceability. Supplied legacy documents are historical source " +
-  "material, never active task catalogues. Do not implement code, generate agents or skills, compile a manifest, or start the workflow engine.";
+  "material, never active task catalogues. Do not implement code, generate agents or skills, compile a manifest, or start a Dapr service run.";
 
 const TASK_AUTHORING_CHECK = " Author bounded executable tasks inside Phase N headings, not one task per roadmap increment. Separate independently testable behaviors and ownership boundaries; retain atomic safety invariants together. Name concrete output files and validation commands covering every touched surface, including UI and infrastructure. Separate human rubric scores and sign-off into dependent human-review tasks. Name the composition root that mounts each new component in some task's outputs, and give every external-service integration a dependent live integration check. References and outputs must not overlap. Review each task against forge-build-prd/references/task-contract.md.";
 
@@ -521,9 +511,6 @@ export function headlessSkillMsg(): string {
 
 function headlessSkillMsgForSession(): string {
   if (hasPrd()) {
-    if (envFlag("FORGE_WORKFLOW_ENGINE")) {
-      return "/forge-auto-build Use docs/PRD.md and docs/features/*.md as canonical requirements. GO --workflow-engine";
-    }
     return "/forge-auto-build Use docs/PRD.md and docs/features/*.md as canonical requirements. GO";
   }
   // No PRD: a headless session cannot author requirements (ADR-060). The team
@@ -1066,7 +1053,7 @@ function engineRunArgs(): string[] {
 function printEngineCommand(): void {
   command(`npx forge-launcher ${engineRunArgs().join(" ")}`);
   out("");
-  info("Run it from anywhere later to execute the build through the workflow engine.");
+  info("Run it from anywhere later to execute the build through the registered Dapr service.");
 }
 
 /** Coerce a numeric prompt to a positive integer, falling back on garbage/empty. */
@@ -1083,7 +1070,7 @@ function cleanPositiveInt(value: string, fallback: string): string {
 async function configureEngineOptions(opts: LauncherOptions): Promise<void> {
   if (opts.nonInteractive) return;
   out("");
-  step("Configure the workflow engine");
+  step("Configure the Dapr service run");
   info("Press Enter to accept the default for each option (Esc/Ctrl+C keeps defaults).");
   const cfg = state.engineConfig;
   try {
@@ -1152,39 +1139,22 @@ async function configureEngineOptions(opts: LauncherOptions): Promise<void> {
   saveEngineConfig(state.repoDir, state.engineConfig);
 }
 
-async function stopEngine(_opts: LauncherOptions): Promise<void> {
-  if (await serviceEngineRun(["--repo", state.repoDir, "--stop"], { write: (text) => out(text.trimEnd()) }) !== undefined) return;
-  const engineDir = findEngineDir(state.repoDir);
-  if (!engineDir) {
-    warn("forge-workflow-engine not found under the repo; cannot stop the engine from here.");
-    warn(`Stop it manually: write {"request":"stop"} to ${path.join(state.repoDir, "docs", "engine-control.json")} and SIGTERM the engine process.`);
-    return;
-  }
-  info("Requesting a graceful stop after the current task …");
-  const result = await runCommand("npm", ["run", "workflow-engine", "--", "stop", "--repo", state.repoDir], { cwd: engineDir });
-  if (result.code !== 0) {
-    warn("The engine stop command did not exit cleanly; the control file may still be honored on its next wave.");
-  } else {
-    info("Stop requested. The engine saves state as paused after the current task; resume with the command below.");
-    command(`npx forge-launcher ${engineRunArgs().join(" ")}`);
-  }
-}
-
 async function runEngineDetached(opts: LauncherOptions): Promise<void> {
   if (opts.dryRun) {
-    warn("Dry-run: would start the engine detached:");
+    warn("Dry-run: would start a Dapr service-backed run:");
     printEngineCommand();
     return;
   }
   if (!hasPrd()) {
     warn("Canonical requirements are missing (docs/PRD.md + docs/features/*.md).");
-    warn("The engine compiles the manifest from the PRD, so the detached run will");
+    warn("The service run compiles the manifest from the PRD, so execution will");
     warn("fail at the compile step until a PRD exists.");
     warn("Requirements are always authored interactively (ADR-060):");
     command(`    /forge-auto-build-prd Use docs/IDEA.md as the project idea. ${PRD_INTERACTIVE_MSG}`);
     out("");
     return;
   }
+  await requireRegisteredRepository(state.repoDir);
   const logDir = path.join(state.repoDir, "docs");
   fs.mkdirSync(logDir, { recursive: true });
   const logFile = path.join(logDir, "engine-run.log");
@@ -1201,9 +1171,9 @@ async function runEngineDetached(opts: LauncherOptions): Promise<void> {
   if (startupError) throw startupError;
   if (!child.pid) throw new Error("Engine process did not start; inspect docs/engine-run.log.");
   state.engineStarted = true;
-  ok(`Engine started detached. Log: ${logFile}`);
+  ok(`Dapr service run started. Log: ${logFile}`);
   out("");
-  info("The engine runs in the background, even after this launcher exits.");
+  info("The service owns durable execution; this launcher follows the run in the background.");
   info("Monitor progress from another terminal with:");
   command(`tail -f ${logFile}`);
   command(`tail -f ${path.join(state.repoDir, "docs", "PROGRESS.md")}`);
@@ -1216,8 +1186,8 @@ async function runEngineDetached(opts: LauncherOptions): Promise<void> {
 
 async function engineDecision(opts: LauncherOptions): Promise<void> {
   out("");
-  out("  The agent team is ready. You can run the build now through the");
-  out("  workflow engine, run it later, or build manually.");
+  out("  The agent team is ready. You can start a Dapr service-backed run now,");
+  out("  print the command for later, or build manually.");
   out("");
   if (opts.nonInteractive) {
     if (!envFlag("FORGE_AUTO_DRAFT") && !opts.draft) return;
@@ -1228,8 +1198,8 @@ async function engineDecision(opts: LauncherOptions): Promise<void> {
   const choice = await promptSelect(
     "How do you want to run the build?",
     [
-      { value: "1", label: "Run the workflow-engine build now (detached)" },
-      { value: "2", label: "Print the engine command to run later", hint: "default" },
+      { value: "1", label: "Run a Dapr service-backed build now" },
+      { value: "2", label: "Print the service command to run later", hint: "default" },
       { value: "3", label: "Skip - I will launch the CLI / build manually" },
     ],
     { initial: "2", nonInteractiveValue: "2" },
@@ -1238,7 +1208,7 @@ async function engineDecision(opts: LauncherOptions): Promise<void> {
     case "1": await configureEngineOptions(opts); await runEngineDetached(opts); break;
     case "2": await configureEngineOptions(opts); printEngineCommand(); await pauseForResume(opts, "build configured"); break;
     default:
-      info("Skipping the engine for now. Run the build manually or use the printed command later.");
+      info("Skipping autonomous execution for now. Run the build manually or use the printed command later.");
       await pauseForResume(opts, "build configured");
   }
 }
@@ -1703,13 +1673,13 @@ async function launchAutobuild(opts: LauncherOptions): Promise<void> {
       out("  The repository is bootstrapped, PRD in place, and the agent team");
       out("  is generated. In the harness, run /forge-orchestrate-build (project-");
       out("  orchestrator) for an interactive build, or forge-launcher engine-run");
-      out("  for autonomous execution through the workflow engine.");
+      out("  for autonomous execution through the Dapr service.");
     } else {
       out("  The repository is bootstrapped and ready for team generation.");
       out("  Requirements are authored in an interactive session first; once your");
       out("  PRD is in place, forge-auto-build generates the agent team, then executes");
-      out("  the build (add 'GO --workflow-engine' at its pre-flight gate to run via");
-      out("  the workflow engine instead of the prompt-driven orchestrator).");
+      out("  the build through the registered Dapr service by choosing the");
+      out("  service-backed execution option at the pre-flight gate.");
     }
   } else {
     out("  The repository is bootstrapped. Author the PRD next in an interactive");
@@ -1744,7 +1714,7 @@ async function launchAutobuild(opts: LauncherOptions): Promise<void> {
 
   if (state.engineStarted) {
     out("");
-    info("The workflow engine is already running this build in the background.");
+    info("The Dapr service-backed run is already running in the background.");
     info("Skipping the interactive CLI launch prompt - monitor or resume it with forge-launcher resume.");
     return;
   }
@@ -1785,7 +1755,7 @@ async function launchAutobuild(opts: LauncherOptions): Promise<void> {
         out("");
         out(`    ${autobuildCommand()}`);
         out("");
-        info("The skill will present a pre-flight summary. Type GO to start the pipeline (use GO --workflow-engine for the workflow-engine build path).");
+        info("The skill will present a pre-flight summary. Type GO to start the pipeline; autonomous runs use the registered Dapr service.");
       }
       break;
     case "claude":
@@ -1933,7 +1903,7 @@ function printResumeWhere(): void {
     out(`    - ${stage} model : ${selection.requestedModel ?? "inherit runner default"} (${selection.source})`);
   }
   out(`    - Execution manifest : ${manifest ? "yes" : "no"}`);
-  if (engine) out(`    - Engine run         : ${engine.status ?? "unknown"}${engine.runId ? ` (run ${engine.runId})` : ""}`);
+  if (engine) out(`    - Legacy state      : ${engine.status ?? "unknown"}${engine.runId ? ` (run ${engine.runId})` : ""} (read-only)`);
   out("");
 }
 
@@ -2173,7 +2143,7 @@ async function runFeaturePrdInternal(repoDir: string, featurePrompt?: string): P
     info("Then re-run: forge-launcher resume");
     return 1;
   }
-  const message = `/forge-build-feature-prd I want to add ${featurePrompt.trim()} to this project. Analyze the existing PRD, features, codebase and team. Author the new canonical feature under docs/features/ and register it in the PRD feature table with exact dependency names. Preserve existing feature definitions and task IDs; reuse shared canonical requirements via version-2 contracts. Do not generate agents or skills, compile a manifest, or start the workflow engine.` + (retryFiles.length ? ` Repair the failed feature documents in place: ${retryFiles.join(", ")}. Preserve unrelated existing features.` : "");
+  const message = `/forge-build-feature-prd I want to add ${featurePrompt.trim()} to this project. Analyze the existing PRD, features, codebase and team. Author the new canonical feature under docs/features/ and register it in the PRD feature table with exact dependency names. Preserve existing feature definitions and task IDs; reuse shared canonical requirements via version-2 contracts. Do not generate agents or skills, compile a manifest, or start a Dapr service run.` + (retryFiles.length ? ` Repair the failed feature documents in place: ${retryFiles.join(", ")}. Preserve unrelated existing features.` : "");
   const ran = await runSkillHeadless(message, { nonInteractive: true });
   if (state.options.dryRun) return 0;
   if (!ran) {
@@ -2268,7 +2238,7 @@ async function engineRunCliForIncrement(repoDir: string, featureNames: string[])
     if (cfg.viz) args.push("--viz", ...(cfg.vizPort ? ["--viz-port", cfg.vizPort] : []));
     if (cfg.autoCommit === false) args.push("--no-auto-commit");
     args.push(cfg.logHarnessActivity ? "--log-harness-activity" : "--no-log-harness-activity");
-    return (await serviceEngineRun(args)) ?? engineRunCli(args);
+    return serviceEngineRun(args);
   } catch {
     fail("Cannot run feature increment: execution manifest is missing or invalid.");
     return 1;
@@ -2506,7 +2476,7 @@ async function runRederiveInternal(repoDir: string, from?: RederiveStepId): Prom
 }
 
 function printEngineStatus(engine: ResumeEngineState): void {
-  info("Engine run state:");
+  info("Preserved legacy workflow-engine state (read-only):");
   out(`    - Run id   : ${engine.runId ?? "unknown"}`);
   out(`    - Status   : ${engine.status ?? "unknown"}`);
   out(`    - Harness  : ${engine.harness ?? "-"}`);
@@ -2530,10 +2500,9 @@ function printEngineStatus(engine: ResumeEngineState): void {
 }
 
 function printMonitorCommands(): void {
-  info("Monitor the build from another terminal:");
+  info("Inspect preserved legacy artifacts (read-only):");
   command(`tail -f ${path.join(state.repoDir, "docs", "engine-run.log")}`);
   command(`tail -f ${path.join(state.repoDir, "docs", "PROGRESS.md")}`);
-  command(`npx forge-launcher ${engineRunArgs().join(" ")}`);
   out("");
 }
 
@@ -2586,47 +2555,22 @@ async function resumeEngineStep(opts: ResumeOptions): Promise<void> {
 
   if (engine) {
     printEngineStatus(engine);
+    warn("This is legacy workflow-engine state. It is not imported, resumed, or controlled by the Dapr service.");
+    warn("The launcher cannot stop a legacy process; use the legacy artifacts above only for historical reference.");
     if (opts.nonInteractive) {
-      if (engine.status === "complete") {
-        out("  The engine run is complete. Next:");
-        command(`tail -f ${path.join(state.repoDir, "docs", "PROGRESS.md")}`);
-      } else if (engine.status === "running") {
-        warn("The engine is already running in the background - do not start a second run.");
-        printMonitorCommands();
-      } else {
-        out("  Next: resume the engine run from WORKFLOW-STATE.json:");
-        command(`npx forge-launcher ${engineRunArgs().join(" ")}`);
-      }
+      out("  To start a new service-backed run, register this repository and run:");
+      command(`npx forge-launcher ${engineRunArgs().join(" ")}`);
       return;
     }
-    if (engine.status === "complete") {
-      ok("The build is complete.");
-      const open = await promptYesNo("Open the harness CLI to continue (add features, review, etc.)?", "n");
-      if (open === "y") await openCliFor("/forge-orchestrate-build");
-      return;
-    }
-    if (engine.status === "running") {
-      warn("The engine is currently running in the background.");
-      const stopChoice = await promptSelect("The engine is running. What would you like to do?", [
-        { value: "monitor", label: "Monitor the build (print commands)", hint: "default" },
-        { value: "stop", label: "Stop the engine after the current task" },
-        { value: "back", label: "Go back" },
-      ], { initial: "monitor" });
-      if (stopChoice === "stop") {
-        await stopEngine(opts);
-      } else if (stopChoice === "monitor") {
-        printMonitorCommands();
-      }
-      return;
-    }
+    printMonitorCommands();
     const choice = await promptSelect("What would you like to do?", [
-      { value: "resume", label: "Resume the engine run", hint: "continues from WORKFLOW-STATE.json" },
+      { value: "run", label: "Start a new Dapr service-backed run" },
       { value: "cli", label: "Open the harness CLI for project-orchestrator" },
-      { value: "logs", label: "Print monitor / log commands" },
+      { value: "logs", label: "Show preserved legacy artifacts" },
       { value: "stop", label: "Stop here" },
-    ], { initial: "resume" });
+    ], { initial: "run" });
     switch (choice) {
-      case "resume": await runEngineDetached(opts); break;
+      case "run": await runEngineDetached(opts); break;
       case "cli": await openCliFor(autobuildCommand()); break;
       case "logs": printMonitorCommands(); break;
     }
@@ -2635,7 +2579,7 @@ async function resumeEngineStep(opts: ResumeOptions): Promise<void> {
 
   // No engine run yet (the team-absent case is handled by the earlier stages).
   if (opts.nonInteractive) {
-    out("  Next: compile the manifest and start the engine:");
+    out("  Next: compile the manifest and start a service-backed run:");
     command(`npx forge-launcher ${engineRunArgs().join(" ")}`);
     return;
   }
@@ -2661,7 +2605,7 @@ function resumeSummary(): void {
   out("  Next steps:");
   out("");
   if (state.engineStarted) {
-    out(`  1. The workflow engine is building in the background.`);
+    out(`  1. The Dapr service is executing the build in the background.`);
     out(`     Monitor: tail -f ${path.join(state.repoDir, "docs", "PROGRESS.md")}`);
   } else if (!hasPrd()) {
     out(`  1. Run forge-launcher to continue: forge-launcher`);
@@ -2733,15 +2677,14 @@ function completionSummary(): void {
   out("  Next steps:");
   out("");
   if (state.engineStarted) {
-    const engineHarness = state.env.FORGE_ENGINE_HARNESS ?? "opencode";
-    out("  1. The workflow engine is building the project in the background");
-    out("     (it keeps running after this launcher exits).");
+    out("  1. The Dapr service is executing the project in the background");
+    out("     (the service owns workflow history after this launcher exits).");
     out("  2. Monitor progress from another terminal:");
     out("");
     out(`       tail -f ${path.join(state.repoDir, "docs", "engine-run.log")}`);
     out(`       tail -f ${path.join(state.repoDir, "docs", "PROGRESS.md")}`);
     out("");
-    out(`  3. Re-run or resume the engine later if needed:`);
+    out(`  3. Attach to or resume the service run later with:`);
     out("");
     out(`       npx forge-launcher ${engineRunArgs().join(" ")}`);
     if (state.engineConfig.viz) {
@@ -2760,8 +2703,8 @@ function completionSummary(): void {
       out("      forge-launcher engine-run for autonomous execution instead.)");
     } else {
       out("  3. Review the pre-flight summary that the skill presents.");
-      out("  4. Type GO to start the pipeline (add --workflow-engine to run the");
-      out("     build through the workflow engine once the agent team is generated).");
+      out("  4. Type GO to start the interactive pipeline; select service-backed");
+      out("     execution at the pre-flight gate for autonomous Dapr orchestration.");
     }
   }
   out("");
@@ -2769,7 +2712,7 @@ function completionSummary(): void {
   out(`   • Prompt playbook : ${path.join(state.repoDir, "docs", "prompt-playbook.md")}`);
   const skillsRoot = state.harness === "github" ? ".github" : state.harness === "claude" ? ".claude" : state.harness === "opencode" ? ".opencode" : ".agents";
   out(`   • project-orchestrator   : ${path.join(state.repoDir, skillsRoot, "skills", "forge-orchestrate-build", "SKILL.md")}`);
-  out(`   • workflow-engine        : ${path.join(state.repoDir, skillsRoot, "skills", "forge-workflow-engine", "SKILL.md")}`);
+  out(`   • execution guide        : ${path.join(state.repoDir, "docs", "forge-launcher.md")}`);
   out(`   • forge-auto-build-prd   : ${path.join(state.repoDir, skillsRoot, "skills", "forge-auto-build-prd", "SKILL.md")}`);
   out(`   • forge-auto-build       : ${path.join(state.repoDir, skillsRoot, "skills", "forge-auto-build", "SKILL.md")} (terminal/headless fast-path)`);
   out("       (paths may vary by harness)");

@@ -30,6 +30,7 @@ Before completing the change:
 | [`AGENTS.md`](../AGENTS.md) | Instructions for AI coding agents, repository layout, conventions, and verification commands. | Agent workflow, repository-wide conventions, or validation expectations change. Keep this concise. |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contributor workflow and contribution expectations. | Contributor-facing workflow or contribution policy changes. |
 | [`ARCHITECTURE.md`](../ARCHITECTURE.md) | High-level repository architecture. | Component boundaries, data flow, or system structure changes. |
+| [`Project_Architecture_Blueprint.md`](../Project_Architecture_Blueprint.md) | Detailed, code-grounded architecture reference and extension guide. | Package boundaries, runtime topology, persisted contracts, or architecture governance change. |
 | [`plan.md`](../plan.md) | Project-level planning and direction. | Roadmap, priorities, or planned work changes. |
 
 ### Product and user-facing documentation
@@ -64,17 +65,17 @@ requirements. Legacy layouts and migration rules are documented in
 
 | Document | Authority and purpose | Update when |
 |---|---|---|
-| [`docs/workflow-engine.md`](workflow-engine.md) | Workflow-engine commands, state, execution, controls, and harness behavior. | Engine commands, lifecycle, state handling, retries, timeouts, or harness behavior change. |
-| [`docs/workflow-engine-deep-dive.md`](workflow-engine-deep-dive.md) | Detailed engine internals and implementation model. | Engine architecture or non-obvious execution internals change. |
+| [`docs/workflow-engine.md`](workflow-engine.md) | Historical reference for the retired in-process scheduler; not an active command guide. | Preserve historical accuracy when the retired implementation changes; point current usage to the Dapr service guide. |
+| [`docs/workflow-engine-deep-dive.md`](workflow-engine-deep-dive.md) | Historical internals of the retired scheduler. | Preserve historical accuracy when the retired implementation changes; do not use it as the active execution model. |
 | [`docs/workforce-compiler-deep-dive.md`](workforce-compiler-deep-dive.md) | Workforce compiler and kernel handoff details. | Workforce compilation or handoff behavior changes. |
-| [`docs/artifact-store-deep-dive.md`](artifact-store-deep-dive.md) | Artifact storage, projection, and context flow. | Artifact schemas, projection defaults, or context propagation changes. |
+| [`docs/artifact-store-deep-dive.md`](artifact-store-deep-dive.md) | Historical artifact projection and context flow from the retired scheduler; the current artifact contract is [`docs/contracts/dapr-execution-v1.md`](contracts/dapr-execution-v1.md). | Preserve historical accuracy there; update the Dapr contract and its implementation for current artifact behavior. |
 | [`docs/testing-guide.md`](testing-guide.md) | Repository testing and validation guidance. | Supported test commands, package setup, or verification practice changes. |
-| `templates/skills/forge-workflow-engine/SKILL.md` | Bootstrapped engine usage and operational contract. | Engine CLI, configuration, generated artifacts, or run procedures change. |
+| `templates/skills/forge-workflow-engine/SKILL.md` | Retirement notice and Dapr entry guidance; bootstrap excludes the legacy scheduler implementation. | Update if retirement status, the supported Dapr entrypoint, or bootstrap filtering changes. |
 | `templates/skills/forge-execution-adapter/SKILL.md` | Bootstrapped manifest compiler usage and contract. | Compilation inputs, options, output manifest, or validation behavior change. |
 | [`docs/contracts/dapr-execution-v1.md`](contracts/dapr-execution-v1.md) | Versioned application-owned run, control, receipt, artifact, checkpoint, and fencing contract for the Dapr replacement. | Contract fields, state transitions, package ownership, or conformance expectations change. |
 | `tools/dapr-engine/contract/v1/`, `tools/dapr-engine/tests/conformance/` | Dapr-independent contract v1 primitives and the runnable §5 conformance fixtures with their in-memory reference model. | Contract cases, rejection codes, state transitions, or digest rules change. |
-| `tools/runtime-qualification/` | Dev-only live qualification harness for P6 (failure, backup/restore, and upgrade/rollback suites against isolated rootless Podman runtimes, plus workflow-history capture for replay fixtures). | Scenarios, isolation settings, or qualification evidence requirements change. |
-| `tools/dapr-engine/execution/` | Canonical Dapr-independent task/harness execution utilities staged into the legacy workflow-engine skill by the launcher. | Utility APIs, legacy-engine adapters, or bootstrap packaging changes. |
+| `tools/runtime-qualification/` | Dev-only live qualification harness for P6/P7 (failure, backup/restore, upgrade/rollback, and legacy-scheduler cutover suites against isolated rootless Podman runtimes, plus workflow-history capture for replay fixtures). | Scenarios, isolation settings, or qualification evidence requirements change. |
+| `tools/dapr-engine/execution/` | Canonical Dapr-independent task/harness execution utilities staged into the retired workflow-engine skill directory by the launcher. | Utility APIs, adapters, or bootstrap packaging changes. |
 
 ### Architecture decisions and research
 

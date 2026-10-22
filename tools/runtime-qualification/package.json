@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "description": "Developer tool that qualifies the local MyForge runtime against an isolated rootless Podman stack (P6 failure, backup, upgrade, security, and budget evidence).",
+  "description": "Developer tool that qualifies the local MyForge runtime against isolated rootless Podman stacks (P6 failure, backup, and upgrade plus P7 cutover evidence).",
   "scripts": {
     "typecheck": "../../scripts/forge-launcher/node_modules/.bin/tsc --noEmit -p .",
     "qualify": "node --import ../../scripts/forge-launcher/node_modules/tsx/dist/loader.mjs src/cli.ts"

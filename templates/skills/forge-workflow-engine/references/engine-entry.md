@@ -1,24 +1,19 @@
-# Native workflow engine entry
+# Workflow engine execution entry (retired)
 
-The launcher is the canonical entry point for native execution:
+The legacy in-process scheduler has no supported command entry point. Its
+`workflow-engine` npm command has been removed, and direct invocation of
+`scripts/cli.ts` fails closed without reading or writing workflow state.
 
-```bash
-forge-launcher engine-run --repo <repo> --harness opencode --yes
-forge-launcher resume --repo <repo>
-```
-
-For direct use:
+For supported autonomous execution, register the repository with the local
+Dapr service and use:
 
 ```bash
-cd .agents/skills/forge-workflow-engine
-npm install
-npm run workflow-engine -- run --harness opencode --yes
-npm run workflow-engine -- run --harness copilot --yes
-npm run workflow-engine -- run --harness openai --yes
-npm run workflow-engine -- run --harness stub --yes
+forge-launcher runtime repo add <path>
+forge-launcher runtime restart
+forge-launcher engine-run --repo <path> --yes
 ```
 
-The engine consumes the native execution manifest and writes workflow state,
-progress, and audit artifacts. It does not compile or invoke external
-workflow-package runtimes. Use `--yes` for headless execution and
-`--max-retries 0` for fail-fast CI behavior.
+`forge-launcher resume` handles authoring and service runs; preserved
+`docs/WORKFLOW-STATE.json` files are read-only history. Legacy workflow
+histories and artifacts are not imported into Dapr. Follow the migration and
+rollback procedure in [`docs/forge-launcher.md`](../../../docs/forge-launcher.md#cut-over-from-the-legacy-engine).

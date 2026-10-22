@@ -1,7 +1,7 @@
 // ─── Board: full-screen PixiJS board in an iframe ───────────────────────────
 //
-// The board itself is the engine's PixiJS dashboard (Kanban + Gantt), served at
-// `/board` and framed here. This view owns the chrome around it: the mode
+// The Console-owned PixiJS dashboard (Kanban + Gantt) is served at `/board` and
+// framed here. This view owns the chrome around it: the mode
 // switch, filters and the accessible-table toggle are mirrored in the iframe's
 // own HUD, so the two stay in step via `postMessage`.
 

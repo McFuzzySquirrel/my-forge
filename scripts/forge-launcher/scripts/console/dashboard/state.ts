@@ -1,11 +1,10 @@
 // ─── Shared app state + event bus for SSE-driven views ───────────────────────
 
-import type { AuditEvent, ExecutionManifest, Summary, WorkflowState } from "./types.js";
+import type { AuditEvent, ExecutionManifest, Summary } from "./types.js";
 
 export interface Snapshot {
   summary: Summary | null;
   manifest: ExecutionManifest | null;
-  state: WorkflowState | null;
   layout: unknown;
 }
 
@@ -34,7 +33,6 @@ export class Epoch {
 export class AppStore {
   summary: Summary | null = null;
   manifest: ExecutionManifest | null = null;
-  state: WorkflowState | null = null;
 
   private changeListeners = new Set<ChangeListener>();
   private auditListeners = new Set<AuditListener>();
@@ -70,7 +68,6 @@ export class AppStore {
   applySnapshot(snapshot: Snapshot): void {
     this.summary = snapshot.summary;
     this.manifest = snapshot.manifest;
-    this.state = snapshot.state;
     for (const fn of [...this.changeListeners]) fn();
   }
 

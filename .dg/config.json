@@ -1,0 +1,10 @@
+{
+  "project": "my-forge",
+  "projectType": "cli-tool",
+  "adrDir": "docs/adr",
+  "sdrDir": "docs/decisions/sdr",
+  "agentsMd": "AGENTS.md",
+  "tokenBudget": 1500,
+  "remote": null,
+  "agentSkill": "agents"
+}

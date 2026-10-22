@@ -7,7 +7,7 @@
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 
-**Latest: v3.139** — see [docs/updates.md](docs/updates.md) for release notes.
+**Latest: v3.141** — see [docs/updates.md](docs/updates.md) for release notes.
 
 MyForge is a PRD-first workflow for turning product requirements into working software. It combines structured planning, agent-based implementation, and execution orchestration in one path so a project can move from concept to build without losing the review checkpoints that matter.
 
@@ -26,13 +26,15 @@ converted before building. See [Canonical Features](docs/canonical-features.md).
 
 ## Dapr replacement work in this fork
 
-The [implementation tracker](plan.md) records the accepted P0–P4 gates and
-the remaining work for replacing orchestration with Dapr Workflow.
+The [implementation tracker](plan.md) records the accepted P0–P6 gates and
+the remaining Dapr Workflow cutover and hosted-profile work.
 The [foundation PRD](docs/PRD.md) and
 [feature contracts](docs/features/dapr-foundation.md) cover the first increment.
-The isolated `tools/dapr-spike` experiment is not the production engine and must
-not be used for repository execution. Existing quick-start commands still use
-the current engine; replacement and retirement remain gated by later phases.
+The isolated `tools/dapr-spike` experiment is not the production engine. The
+launcher requires a running local Dapr service and registered repositories for
+execution; the runtime uses rootless Podman, and legacy histories are not
+imported. See the
+[cutover and rollback procedure](docs/forge-launcher.md#cut-over-from-the-legacy-engine).
 
 
 
@@ -50,6 +52,7 @@ the full screenshot walkthrough, including current responsive captures.
 - Node.js 18+
 - Git
 - A compatible agent harness such as GitHub Copilot, Claude Code, or opencode
+- Rootless Podman for Dapr-backed build execution
 
 ### Option 1: Run from a clone
 
@@ -101,9 +104,9 @@ For the manual prompting flow and the CLI’s expected prompts, see [docs/prompt
 ## Main components
 
 - `forge-launcher` - the entry point for onboarding, authoring, and launching builds
-- `forge-workflow-engine` - the execution engine for orchestration, checkpoints, replay, and state
-- `forge-execution-adapter` - compiles the authored plan into the execution manifest consumed by the workflow engine
-- Native harness adapters - dispatch execution through Copilot, OpenCode, OpenAI text tasks, or the offline stub
+- Dapr execution service - the supported engine for durable orchestration, checkpoints, replay, and run state
+- `forge-execution-adapter` - compiles the authored plan into the execution manifest consumed by the Dapr service
+- Legacy workflow-engine package - historical reference only; new runs use the registered Dapr service
 - Forge Console - a local web UI for authoring, monitoring, and controlling runs
 
 ## Documentation
@@ -112,8 +115,9 @@ For the manual prompting flow and the CLI’s expected prompts, see [docs/prompt
 - [docs/forge-launcher.md](docs/forge-launcher.md)
 - [docs/forge-console.md](docs/forge-console.md)
 - [docs/forge-console-user-guide.md](docs/forge-console-user-guide.md)
-- [docs/workflow-engine.md](docs/workflow-engine.md)
-- [docs/workflow-engine-deep-dive.md](docs/workflow-engine-deep-dive.md)
+- [Dapr cutover and rollback](docs/forge-launcher.md#cut-over-from-the-legacy-engine)
+- [Legacy workflow-engine reference](docs/workflow-engine.md)
+- [Legacy workflow-engine deep dive](docs/workflow-engine-deep-dive.md)
 - [docs/artifact-store-deep-dive.md](docs/artifact-store-deep-dive.md)
 - [docs/research/myforge-agentic-development-value-chain.md](docs/research/myforge-agentic-development-value-chain.md)
 - [docs/THE-STORY.md](docs/THE-STORY.md)
@@ -123,6 +127,7 @@ For the manual prompting flow and the CLI’s expected prompts, see [docs/prompt
 - [docs/prompt-playbook.md](docs/prompt-playbook.md)
 - [docs/updates.md](docs/updates.md)
 - [ARCHITECTURE.md](ARCHITECTURE.md)
+- [Project Architecture Blueprint](Project_Architecture_Blueprint.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Development

@@ -146,7 +146,7 @@ matrix are in the [versioned contract](../contracts/dapr-execution-v1.md).
     "acceptanceCriteria":["Reusable execution APIs have no dependency on the old scheduler state machine or Dapr SDK.","All preserved legacy call paths use the extracted modules without semantic changes.","Launcher bootstrap stages the canonical execution library into the legacy skill and does not install a second scheduler.","The existing engine test suite and typecheck pass."],
     "constraints":[],
     "constraintRefs":["docs/PRD.md#DAPR-C-01","docs/PRD.md#DAPR-C-02"],
-    "references":["templates/skills/forge-workflow-engine/scripts/request.ts","templates/skills/forge-workflow-engine/scripts/task-context.ts","templates/skills/forge-workflow-engine/scripts/task-execution.ts","templates/skills/forge-workflow-engine/scripts/verify.ts","templates/skills/forge-workflow-engine/scripts/artifacts.ts","templates/skills/forge-workflow-engine/scripts/sandbox.ts","templates/skills/forge-workflow-engine/scripts/harness/run.ts"]
+    "references":["tools/dapr-engine/execution/request.ts","tools/dapr-engine/execution/task-context.ts","tools/dapr-engine/execution/task-execution.ts","tools/dapr-engine/execution/verify.ts","tools/dapr-engine/execution/artifacts.ts","tools/dapr-engine/execution/sandbox.ts","tools/dapr-engine/execution/harness/run.ts"]
   }
 }
 ```

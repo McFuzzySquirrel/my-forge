@@ -196,25 +196,20 @@ Field reviews that verify a running system rather than a file have no path to
 match and are not covered. The Forge Console task detail now offers
 **Complete human review** for these tasks. The form shows the task criteria,
 captures the reviewer's name and notes, requires an explicit attestation, writes
-repository-local Markdown evidence, records the canonical engine attestation,
-and resumes the build through the normal background engine controller. The CLI
-approval flow remains available as a fallback.
+repository-local Markdown evidence, records an authenticated service control,
+and resumes the Dapr workflow. Legacy file attestations are not imported.
 
 After performing the review, an operator writes a repository-local evidence file
-and runs the following from the installed workflow-engine skill directory:
+and approves the task through the Dapr service:
 
 ```bash
-npm run workflow-engine -- approve-task ACCESSIBILITY-REVIEW --repo /path/to/project --reviewer "Reviewer Name" --evidence docs/reviews/accessibility-evidence.md --confirm-human-review
-npm run workflow-engine -- run --repo /path/to/project --harness copilot --yes
+forge-launcher service control <run-id> approve-task --task ACCESSIBILITY-REVIEW
+forge-launcher engine-run --repo /path/to/project --yes
 ```
 
-Repeat `--evidence` for multiple files. The command writes the contract's
-`reviewFile`, recording reviewer, timestamp, task/reference fingerprint and
-evidence hashes. Resume verifies these before completing the task. Changes to
-the task, references or evidence invalidate approval. A resumed run reopens
-stale completed human gates and their dependents; replay rejects invalid human
-prerequisites. Keep references/evidence narrowly scoped to avoid unnecessary
-invalidation.
+The service records approval as a durable control and event; it does not write
+the legacy `reviewFile` attestation. Legacy workflow histories and file
+attestations are not imported during cutover.
 
 When using the Console, expand the paused human-review task on the Tasks view,
 select **Complete human review**, enter the reviewer identity and findings, and

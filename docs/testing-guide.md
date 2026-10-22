@@ -238,7 +238,7 @@ matrix for Linux and
 Windows across the launcher, execution adapter, workflow engine, and skill
 review packages. It also runs the team validation gate plus launcher build and
 version checks. In run
-[34192337962](https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge/actions/runs/34192337962),
+[34192337962](https://github.com/McFuzzySquirrel/my-forge/actions/runs/34192337962),
 all seven other matrix jobs passed, but the Windows engine job stopped reporting
 after test 133 and reached its 15-minute deadline. Linux completed 199 tests
 (198 passed, one skipped). The v3.66 shutdown fix addresses the Windows owned
@@ -292,8 +292,8 @@ Use this flow when you want to verify the whole experience end to end.
 ### Step 1: Install the launcher from source
 
 ```bash
-git clone https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge.git
-cd mcfuzzy-agent-forge/scripts/forge-launcher
+git clone https://github.com/McFuzzySquirrel/my-forge.git
+cd my-forge/scripts/forge-launcher
 npm install                               # install package deps from the fresh clone
 npm pack
 npm install -g ./forge-launcher-1.0.0-beta.6.tgz

@@ -183,7 +183,7 @@ forge, refresh the skills and reset the run state:
 
 ```bash
 # 1. Get the fixed forge code (e.g. the release/main branch once merged).
-git clone -b <branch> https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge.git ~/forge-fixed
+git clone -b <branch> https://github.com/McFuzzySquirrel/my-forge.git ~/forge-fixed
 
 # 2. Refresh the forge skills in the existing project. --force overwrites only
 #    the forge *template* agents and skills (including this engine); generated

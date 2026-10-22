@@ -4,6 +4,17 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.144
+
+### Use the canonical repository links
+
+- Updated active clone instructions, checkout paths, launcher package links,
+  and the testing-guide workflow run link to use `McFuzzySquirrel/my-forge`.
+- Preserved historical ADR, research, and changelog references to the former
+  repository name.
+
+---
+
 ## October 2026 - v3.143
 
 ### Document the npm launcher and compatibility wrappers

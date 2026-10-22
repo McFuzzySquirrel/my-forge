@@ -1,7 +1,7 @@
 # forge-launcher
 
 One command from zero to auto-build. `forge-launcher` is the cross-platform
-Node.js entry point for [MyForge](https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge) -
+Node.js entry point for [MyForge](https://github.com/McFuzzySquirrel/my-forge) -
 it creates a repo, bootstraps the agent/skill templates, captures your idea, and
 drives the pipeline from PRD → agent team → autonomous build.
 
@@ -107,7 +107,7 @@ testing.
 
 ## Docs
 
-- [Full project README](https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge#readme)
-- [Launcher reference](https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge/blob/main/docs/forge-launcher.md)
-- [Forge Console](https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge/blob/main/docs/forge-console.md)
-- [Legacy workflow-engine reference](https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge/blob/main/docs/workflow-engine.md)
+- [Full project README](https://github.com/McFuzzySquirrel/my-forge#readme)
+- [Launcher reference](https://github.com/McFuzzySquirrel/my-forge/blob/main/docs/forge-launcher.md)
+- [Forge Console](https://github.com/McFuzzySquirrel/my-forge/blob/main/docs/forge-console.md)
+- [Legacy workflow-engine reference](https://github.com/McFuzzySquirrel/my-forge/blob/main/docs/workflow-engine.md)

@@ -9,7 +9,7 @@
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 
-**Latest: v3.143** — see [docs/updates.md](docs/updates.md) for release notes.
+**Latest: v3.144** — see [docs/updates.md](docs/updates.md) for release notes.
 
 MyForge is a PRD-first workflow for turning product requirements into working software. It combines structured planning, agent-based implementation, and execution orchestration in one path so a project can move from concept to build without losing the review checkpoints that matter.
 
@@ -59,8 +59,8 @@ the full screenshot walkthrough, including current responsive captures.
 ### Option 1: Run from a clone
 
 ```bash
-git clone https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge.git
-cd mcfuzzy-agent-forge
+git clone https://github.com/McFuzzySquirrel/my-forge.git
+cd my-forge
 cd scripts/forge-launcher
 npm install
 npm run build
@@ -79,8 +79,8 @@ The npm package is not published yet, but the current pre-release is
 `forge-launcher@1.0.0-beta.6`. You can install it locally from this repository:
 
 ```bash
-git clone https://github.com/McFuzzySquirrel/mcfuzzy-agent-forge.git
-cd mcfuzzy-agent-forge/scripts/forge-launcher
+git clone https://github.com/McFuzzySquirrel/my-forge.git
+cd my-forge/scripts/forge-launcher
 npm install
 npm pack
 npm install -g ./forge-launcher-1.0.0-beta.6.tgz

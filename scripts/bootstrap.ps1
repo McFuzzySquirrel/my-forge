@@ -1,11 +1,24 @@
 #Requires -Version 5.1
-# Legacy delegating wrapper for bootstrap.
+# Deprecated compatibility wrapper for bootstrap; retained for one release.
 # The canonical implementation is the Node npm package at scripts/forge-launcher/.
-# This wrapper keeps existing invocations working during the transition and is
-# scheduled for removal (see ADR-023).
+# Keep existing invocations working during the package migration.
 
 $PkgDir = Join-Path $PSScriptRoot "forge-launcher"
-$Subcommand = @("bootstrap") + $args
+
+function Convert-ForgeArguments {
+    param([string[]]$Values)
+    foreach ($value in $Values) {
+        if ($value -cmatch '^-([A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*)$' -and $value.Length -gt 2) {
+            $option = [regex]::Replace($Matches[1], '([a-z0-9])([A-Z])', '$1-$2').ToLowerInvariant()
+            "--$option"
+        } else {
+            $value
+        }
+    }
+}
+
+$ForwardArgs = @(Convert-ForgeArguments $args)
+$Subcommand = @("bootstrap") + $ForwardArgs
 
 function Invoke-Forge {
     $distCli = Join-Path $PkgDir "dist\cli.js"

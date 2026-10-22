@@ -6,7 +6,7 @@
 
 ## Overview
 
-`forge-launcher` is an interactive terminal script that orchestrates the complete MyForge onboarding flow in a single session:
+`forge-launcher` is a cross-platform Node.js CLI that orchestrates the complete MyForge onboarding flow in a single session:
 
 1. **Pre-flight** -checks that `git` and optional tools (`gh`, `copilot`, `opencode`, `claude`) are installed.
 2. **Harness selection** -choose GitHub Copilot, opencode, Claude Code, or generic `.agents`.
@@ -63,13 +63,15 @@ configuration.
 | `gh` (GitHub CLI) | For GitHub harness | Creates and clones the GitHub repo |
 | `opencode` | For opencode harness auto-launch | Spawns the opencode session |
 | `claude` | For Claude Code harness auto-launch | Spawns the Claude Code session |
-| Bash 4+ | For legacy `forge-launcher.sh` | Linux / macOS |
-| PowerShell 5.1+ | For legacy `forge-launcher.ps1` | Windows |
+| Bash 4+ | Only for the legacy Bash compatibility wrappers | Linux / macOS |
+| PowerShell 5.1+ | Only for the legacy PowerShell compatibility wrappers | Windows |
 
 > The launcher is implemented as the cross-platform **`forge-launcher` npm
 > package** (see [ADR-023](adr/023-forge-launcher-npm-package.md)). The
-> `.sh` / `.ps1` scripts in `scripts/` are thin delegating wrappers kept for
-> compatibility and are scheduled for removal.
+> `.sh` / `.ps1` scripts in `scripts/` are deprecated thin wrappers that
+> delegate to the package. They are retained for one release after the package
+> migration for existing scripts and CI; use the package command for new
+> integrations.
 
 On Linux, install `xdg-open` from the `xdg-utils` package for automatic browser
 and document opening:
@@ -93,8 +95,10 @@ manual opening. Headless and CI workflows do not require it.
 ### npm package (recommended, cross-platform)
 
 > The npm package is a **pre-release** (`forge-launcher@beta`, v1.0.0-beta.6).
-> Until it is published, install it locally from the clone (see the README
-> "Try the npm launcher locally" section) or use the legacy wrappers below.
+> When available from your configured registry, invoke it with
+> `npx forge-launcher@beta`. Otherwise, install it from the source checkout as
+> described in the README. The legacy wrappers below are compatibility
+> shims, not the recommended interface.
 
 ```bash
 npx forge-launcher@beta [--non-interactive] [--headless] [--draft] [--dry-run] [--debug]
@@ -453,13 +457,28 @@ when a newer version is available - prereleases check the `beta` tag, releases
 check `latest`. Disable it with `--no-update-check` or
 `FORGE_SKIP_UPDATE_CHECK=1` (also skipped in CI).
 
-### Linux / macOS (legacy script)
+### Compatibility wrappers (deprecated)
+
+These scripts forward their arguments to the corresponding package entry point.
+The PowerShell wrappers also translate legacy single-dash, Pascal/camel-case
+switches such as `-NonInteractive` to the package's `--non-interactive` form.
+They remain available for one release after the package migration; prefer
+`npx forge-launcher@beta` or the installed `forge-launcher` command for new
+usage.
+
+| Legacy wrapper | Package equivalent |
+|---|---|
+| `scripts/forge-launcher.sh` / `.ps1` | `forge-launcher [options]` |
+| `scripts/bootstrap.sh` / `.ps1` | `forge-launcher bootstrap [options]` |
+| `scripts/forge-engine-run.sh` / `.ps1` | `forge-launcher engine-run [options]` |
+
+#### Linux / macOS
 
 ```bash
 ./scripts/forge-launcher.sh
 ```
 
-### Windows (PowerShell, legacy script)
+#### Windows (PowerShell)
 
 ```powershell
 .\scripts\forge-launcher.ps1
@@ -633,7 +652,7 @@ $env:FORGE_IDEA = "A task management web app with a React frontend and a Node.js
 $env:FORGE_PRD_FILE = "C:\path\to\my-prd.md"                              # optional
 $env:FORGE_RESEARCH_FILES = "C:\path\to\research.md,C:\path\to\notes.md"  # optional
 $env:FORGE_YN_DEFAULT = "y"
-.\scripts\forge-launcher.ps1 -NonInteractive
+.\scripts\forge-launcher.ps1 -NonInteractive # compatibility wrapper
 ```
 
 ### Headless mode (terminal-driven, no interactive CLI)
@@ -670,7 +689,7 @@ forge-launcher --headless
 # Print the exact command without running it (CI / testing)
 forge-launcher --headless --dry-run
 
-# PowerShell
+# PowerShell compatibility wrapper
 .\scripts\forge-launcher.ps1 -Headless
 .\scripts\forge-launcher.ps1 -Headless -DryRun
 ```
@@ -1397,7 +1416,7 @@ The repository directory was created before bootstrap ran. You can re-run bootst
 
 ```bash
 forge-launcher bootstrap /path/to/your/repo --harness <harness>
-# or the legacy wrapper:
+# or the deprecated compatibility wrapper:
 ./scripts/bootstrap.sh /path/to/your/repo --harness <harness>
 ```
 

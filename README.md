@@ -7,7 +7,7 @@
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 
-**Latest: v3.142** — see [docs/updates.md](docs/updates.md) for release notes.
+**Latest: v3.143** — see [docs/updates.md](docs/updates.md) for release notes.
 
 MyForge is a PRD-first workflow for turning product requirements into working software. It combines structured planning, agent-based implementation, and execution orchestration in one path so a project can move from concept to build without losing the review checkpoints that matter.
 
@@ -66,8 +66,10 @@ node dist/cli.js
 ```
 
 The shell wrapper delegates to the built Node package and remains available for
-compatibility with existing workflows. To run the package directly instead,
-use `node dist/cli.js` from `scripts/forge-launcher`.
+compatibility with existing workflows for one release after the package
+migration. For new usage, run the package directly with `node dist/cli.js` from
+`scripts/forge-launcher`; when the package is available from your registry, use
+`npx forge-launcher@beta`.
 
 ### Option 2: Install the npm package from source
 
@@ -93,7 +95,7 @@ The launcher walks you through repo bootstrap, idea capture, PRD drafting, team 
 For the manual prompting flow and the CLI’s expected prompts, see [docs/prompt-playbook.md](docs/prompt-playbook.md). For the latest changes and release notes, see [docs/updates.md](docs/updates.md).
 
 > [!NOTE]
-> The canonical launcher runtime lives in [scripts/forge-launcher](scripts/forge-launcher). The shell wrappers are compatibility shims for existing workflows.
+> The canonical launcher runtime lives in [scripts/forge-launcher](scripts/forge-launcher). The shell wrappers are deprecated compatibility shims retained for one release after the package migration.
 
 ## How it works
 

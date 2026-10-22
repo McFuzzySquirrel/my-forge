@@ -1582,14 +1582,14 @@ Faithful port of `forge-launcher.sh`:
 - Interactive TUI is covered by the non-interactive suite (clack is bypassed
   when stdin/stdout are not TTY) plus the pexpect-driven pty smoke run.
 
-### Phase 8 - Docs
+### Phase 8 - Docs (complete)
 
 - Rewrite `docs/forge-launcher.md` usage to `npx forge-launcher …`;
   document subcommands, flags, and env vars (unchanged contract).
 - Update `docs/testing-guide.md` commands and `README.md` quick-start.
 - Mark `scripts/*.sh|.ps1` as legacy delegating wrappers.
 
-### Phase 9 - Deprecate / remove shell scripts
+### Phase 9 - Deprecate / remove shell scripts (complete; wrappers retained)
 
 - Convert `scripts/forge-launcher.sh|.ps1`, `bootstrap.sh|.ps1`,
   `forge-engine-run.sh|.ps1` into thin wrappers delegating to the package

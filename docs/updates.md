@@ -4,6 +4,19 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.143
+
+### Document the npm launcher and compatibility wrappers
+
+- Updated launcher usage and testing guidance to describe the cross-platform
+  `forge-launcher` package as the canonical CLI and document package subcommands
+  and environment-based setup.
+- Clarified that the Bash and PowerShell launcher, bootstrap, and engine-run
+  scripts are deprecated delegating wrappers retained for one release.
+  PowerShell wrappers preserve legacy single-dash switch spelling.
+
+---
+
 ## October 2026 - v3.142
 
 ### Remove inherited MyForge narrative series

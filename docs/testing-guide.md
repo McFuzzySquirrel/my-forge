@@ -274,6 +274,11 @@ npm run check:version --prefix scripts/forge-launcher
 
 The package also has a dedicated smoke-test script for terminal-launch support under [scripts/smoke-test-launcher-terminal-support.sh](../scripts/smoke-test-launcher-terminal-support.sh).
 
+The Bash and PowerShell launcher, bootstrap, and engine-run scripts are
+deprecated compatibility wrappers around the npm package. Keep wrapper
+invocations working during the one-release transition, but use the package
+commands in new automation.
+
 ## 3. Manual smoke test for a full local run
 
 Use this flow when you want to verify the whole experience end to end.
@@ -348,7 +353,9 @@ For a lightweight engine check, run the launcher in dry-run or stub mode where p
 forge-launcher engine-run --repo /tmp/myforge-smoke/my-smoke-app --harness stub --yes --dry-run
 ```
 
-This verifies that the engine-run path resolves the repo, selects the workflow engine package, and builds the command correctly without launching the full workflow.
+This verifies that the service-backed engine-run path accepts the repository,
+harness, and dry-run options without submitting a run. The repository must be
+registered with the local runtime before a real run can be submitted.
 
 ## 4a. Live runtime qualification (developers)
 

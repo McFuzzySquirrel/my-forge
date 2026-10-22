@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Legacy delegating wrapper for forge-engine-run.
+# Deprecated compatibility wrapper for forge-engine-run; retained for one release.
 # The canonical implementation is the Node npm package at scripts/forge-launcher/.
-# This wrapper keeps existing invocations working during the transition and is
-# scheduled for removal (see ADR-023).
+# Keep existing invocations working during the package migration.
 set -euo pipefail
 
 PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/forge-launcher" && pwd)"

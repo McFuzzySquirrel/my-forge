@@ -1,11 +1,24 @@
 #Requires -Version 5.1
-# Legacy delegating wrapper for forge-engine-run.
+# Deprecated compatibility wrapper for forge-engine-run; retained for one release.
 # The canonical implementation is the Node npm package at scripts/forge-launcher/.
-# This wrapper keeps existing invocations working during the transition and is
-# scheduled for removal (see ADR-023).
+# Keep existing invocations working during the package migration.
 
 $PkgDir = Join-Path $PSScriptRoot "forge-launcher"
-$Subcommand = @("engine-run") + $args
+
+function Convert-ForgeArguments {
+    param([string[]]$Values)
+    foreach ($value in $Values) {
+        if ($value -cmatch '^-([A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*)$' -and $value.Length -gt 2) {
+            $option = [regex]::Replace($Matches[1], '([a-z0-9])([A-Z])', '$1-$2').ToLowerInvariant()
+            "--$option"
+        } else {
+            $value
+        }
+    }
+}
+
+$ForwardArgs = @(Convert-ForgeArguments $args)
+$Subcommand = @("engine-run") + $ForwardArgs
 
 function Invoke-Forge {
     $distCli = Join-Path $PkgDir "dist\cli.js"

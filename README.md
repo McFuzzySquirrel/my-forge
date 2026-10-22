@@ -9,7 +9,7 @@
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 
-**Latest: v3.144** — see [docs/updates.md](docs/updates.md) for release notes.
+**Latest: v3.145** — see [docs/updates.md](docs/updates.md) for release notes.
 
 MyForge is a PRD-first workflow for turning product requirements into working software. It combines structured planning, agent-based implementation, and execution orchestration in one path so a project can move from concept to build without losing the review checkpoints that matter.
 
@@ -23,7 +23,8 @@ converted before building. See [Canonical Features](docs/canonical-features.md).
 - Keeps the PRD as the quality gate before implementation begins.
 - Generates a specialist agent team from the PRD instead of relying on a single generic assistant.
 - Supports both guided, interactive execution and unattended "dark orchestration" runs.
-- Includes a local web console for monitoring and controlling builds.
+- Includes a local web console for monitoring builds and administering the
+  complete local runtime, including repository registration and backups.
 - Can bootstrap MyForge into an existing Git repository without replacing its application code.
 
 ## Dapr replacement work in this fork

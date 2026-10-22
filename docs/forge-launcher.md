@@ -171,6 +171,15 @@ them. `runtime rotate-tokens` replaces the service API token and the Dapr
 sidecar token (`DAPR_API_TOKEN`) in `runtime.env` and keeps the database
 passwords; run `runtime stop` and `runtime start` to apply them.
 
+The Console's **Runtime** view provides local controls for these operations:
+status, start/stop/restart, reset, backup/restore, token rotation, repository
+registration, and harness credential grants. It writes registry changes first
+and offers a separate confirmed restart to apply them. The page remembers the
+last successful start's host-tools and PostgreSQL-port settings. Runtime
+mutations remain local to the loopback Console; credential values are never
+returned to the browser after submission. See
+[Forge Console runtime administration](forge-console.md#runtime-administration).
+
 On Linux, credentials are stored in
 `${XDG_DATA_HOME:-$HOME/.local/share}/MyForge/runtime/runtime.env`; Podman
 volumes are separate and shared by clones under the same user. Do not move

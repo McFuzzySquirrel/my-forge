@@ -4,6 +4,16 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.145
+
+### Administer the local runtime from the Console
+
+- Added a dedicated Runtime view for status, lifecycle, repository registration,
+  backup/restore, token rotation, and harness credential grants/revocation.
+- Added explicit confirmations, serialized operation state, remembered runtime
+  start options, restart-pending visibility, and status that never exposes
+  credential values.
+
 ## October 2026 - v3.144
 
 ### Use the canonical repository links
@@ -2749,7 +2759,7 @@ the autonomous engine (`@workflow-orchestrator` / `forge-launcher engine-run`).*
   conditional-queue coverage in `launcher.test.ts`; `format.test.ts` covers the
   OSC 8 `hyperlink` helper. Launcher suite green.
 
-- [ADR-028](adr/028-launcher-entry-resume-and-auto-build-demotion.md): entry-point
+- [ADR-080](adr/080-launcher-entry-resume-and-auto-build-demotion.md): entry-point
   consolidation, `forge-launcher resume`, and the `forge-auto-build` demotion.
 
 ---

@@ -20,6 +20,10 @@ set is archived under `images/forge-console/current/`. Start with
 > aligned selection checkboxes with a header select-all checkbox, per-row **Remove from Forge**,
 > and **Remove selected (N)**. Removal requires confirmation and displays an
 > outcome for each project; see the [user guide](forge-console-user-guide.md#remove-one-or-more-projects-from-forge).
+>
+> **Runtime view (v3.145):** the screenshot set does not include the new
+> infrastructure-administration page. See [Runtime administration](forge-console.md#runtime-administration)
+> for its controls and confirmation behavior.
 
 ---
 

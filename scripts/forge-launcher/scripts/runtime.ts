@@ -13,10 +13,19 @@ import {
   registerRepository,
   unregisterRepository,
   writeRepositoryOverride,
+  type RegisteredRepository,
 } from "./runtime-repositories.ts";
-import { ensureHarnessGrants, harnessCli } from "./runtime-harnesses.ts";
+import {
+  ensureHarnessGrants,
+  grantHarnessCredential,
+  harnessCli,
+  HARNESS_CREDENTIAL_VARIABLES,
+  listHarnessGrants,
+  revokeHarnessCredential,
+} from "./runtime-harnesses.ts";
 
 const CREDENTIALS_FILE = "runtime.env";
+const APPLIED_REPOSITORIES_FILE = "runtime-applied-repositories.json";
 const LEGACY_KEYS = ["POSTGRES_SUPERUSER_PASSWORD", "DAPR_DB_PASSWORD", "APP_DB_PASSWORD"] as const;
 // Later secrets are appended in order, so an older installation holds a prefix of KEYS.
 const KEYS = [...LEGACY_KEYS, "MYFORGE_API_TOKEN", "DAPR_API_TOKEN"] as const;
@@ -391,6 +400,38 @@ export interface RuntimeContainer {
   readonly health?: string;
 }
 
+export interface RuntimeAdminState {
+  readonly project: string;
+  readonly initialized: boolean;
+  readonly status: "not-initialized" | "stopped" | "running" | "degraded";
+  readonly containers: readonly RuntimeContainer[];
+  readonly missingServices: readonly string[];
+  readonly diagnostics: readonly string[];
+  readonly repositories: readonly RegisteredRepository[];
+  /** Variable names only. Credential values are never exposed by this API. */
+  readonly harnessGrants: Readonly<Record<string, readonly string[]>>;
+  readonly startOptions: { readonly hostTools: boolean; readonly postgresPort?: number } | null;
+  readonly restartRequired: boolean;
+}
+
+export type RuntimeAdminAction =
+  | { readonly action: "start"; readonly hostTools: boolean; readonly postgresPort?: number }
+  | { readonly action: "stop"; readonly confirmed: boolean }
+  | { readonly action: "restart"; readonly confirmed: boolean; readonly hostTools: boolean; readonly postgresPort?: number }
+  | { readonly action: "reset"; readonly confirmed: boolean }
+  | { readonly action: "backup"; readonly output: string }
+  | { readonly action: "restore"; readonly from: string; readonly confirmed: boolean; readonly allowGitDrift: boolean }
+  | { readonly action: "rotate-tokens"; readonly confirmed: boolean }
+  | { readonly action: "repo-add"; readonly path: string; readonly id?: string }
+  | { readonly action: "repo-remove"; readonly id: string; readonly confirmed: boolean }
+  | { readonly action: "harness-grant"; readonly harness: string; readonly variable: string; readonly value: string }
+  | { readonly action: "harness-revoke"; readonly harness: string; readonly variable?: string; readonly confirmed: boolean };
+
+export interface RuntimeAdminResult {
+  readonly message: string;
+  readonly restartRequired: boolean;
+}
+
 /** Returns the services that are missing or not running; empty when all are up. */
 export function unreadyServices(containers: readonly RuntimeContainer[]): string[] {
   return SERVICES.filter((service) => !containers.some((container) =>
@@ -467,6 +508,150 @@ async function runtimeDiagnostics(
     details.push(`${container.service}: ${container.state}${text ? `\n${text}` : ""}`);
   }
   return details;
+}
+
+interface AppliedRuntimeState {
+  readonly version: 1;
+  readonly repositories: readonly RegisteredRepository[];
+  readonly restartRequired?: boolean;
+  readonly hostTools?: boolean;
+  readonly postgresPort?: number;
+}
+
+async function readAppliedRuntimeState(dataDir: string): Promise<AppliedRuntimeState | null> {
+  const file = path.join(dataDir, APPLIED_REPOSITORIES_FILE);
+  let stat;
+  try {
+    stat = await lstat(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`Applied runtime repository state must be a regular file: ${file}`);
+  }
+  const parsed = JSON.parse(await readFile(file, "utf8")) as Partial<AppliedRuntimeState>;
+  if (parsed.version !== 1 || !Array.isArray(parsed.repositories) || !parsed.repositories.every((entry) =>
+    entry && typeof entry.id === "string" && typeof entry.path === "string" && path.isAbsolute(entry.path)) ||
+    (parsed.restartRequired !== undefined && typeof parsed.restartRequired !== "boolean") ||
+    (parsed.hostTools !== undefined && typeof parsed.hostTools !== "boolean") ||
+    (parsed.postgresPort !== undefined &&
+      (typeof parsed.postgresPort !== "number" || !Number.isInteger(parsed.postgresPort) || parsed.postgresPort < 1 || parsed.postgresPort > 65535))) {
+    throw new Error(`Applied runtime repository state is invalid: ${file}`);
+  }
+  return parsed as AppliedRuntimeState;
+}
+
+async function recordAppliedRepositories(dataDir: string, options: RuntimeOptions): Promise<void> {
+  const file = path.join(dataDir, APPLIED_REPOSITORIES_FILE);
+  const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  const repositories = await listRegisteredRepositories(dataDir);
+  const startOptions = {
+    hostTools: options.hostTools,
+    ...(options.postgresPort !== undefined ? { postgresPort: options.postgresPort } : {}),
+  };
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify({ version: 1, repositories, restartRequired: false, ...startOptions }, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close();
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+  await rename(temporary, file);
+}
+
+async function markRuntimeRestartRequired(dataDir: string): Promise<void> {
+  const file = path.join(dataDir, APPLIED_REPOSITORIES_FILE);
+  const current = await readAppliedRuntimeState(dataDir);
+  const repositories = current?.repositories ?? await listRegisteredRepositories(dataDir);
+  const temporary = `${file}.${randomBytes(6).toString("hex")}.tmp`;
+  const handle = await open(temporary, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify({
+      version: 1,
+      repositories,
+      restartRequired: true,
+      ...(current?.hostTools !== undefined ? { hostTools: current.hostTools } : {}),
+      ...(current?.postgresPort !== undefined ? { postgresPort: current.postgresPort } : {}),
+    }, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } catch (error) {
+    await handle.close();
+    await unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+  await handle.close();
+  await rename(temporary, file);
+}
+
+async function repositoryRestartRequired(
+  repositories: readonly RegisteredRepository[],
+  runtimeRunning: boolean,
+  applied: AppliedRuntimeState | null,
+): Promise<boolean> {
+  if (!runtimeRunning) return false;
+  if (!applied) return repositories.length > 0;
+  const sort = (entries: readonly RegisteredRepository[]) =>
+    [...entries].sort((left, right) => left.id.localeCompare(right.id));
+  return applied.restartRequired === true ||
+    JSON.stringify(sort(repositories)) !== JSON.stringify(sort(applied.repositories));
+}
+
+export async function getRuntimeAdminState(dataDir = getRuntimeDataDir()): Promise<RuntimeAdminState> {
+  const project = getRuntimeProject();
+  const [repositories, harnessGrants] = await Promise.all([
+    listRegisteredRepositories(dataDir),
+    listHarnessGrants(dataDir),
+  ]);
+  let credentialsPresent = false;
+  try {
+    await lstat(path.join(dataDir, CREDENTIALS_FILE));
+    credentialsPresent = true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (!credentialsPresent) {
+    return {
+      project,
+      initialized: false,
+      status: "not-initialized",
+      containers: [],
+      missingServices: [...SERVICES],
+      diagnostics: [],
+      repositories,
+      harnessGrants,
+      startOptions: null,
+      restartRequired: false,
+    };
+  }
+
+  const environment = await readRuntimeEnvironment(dataDir);
+  await ensureRootlessPodman();
+  const containers = await listRuntimeContainers();
+  const missingServices = unreadyServices(containers);
+  const running = containers.some((container) => container.state === "running");
+  const diagnostics = await runtimeDiagnostics(containers, environment.values);
+  const applied = await readAppliedRuntimeState(dataDir);
+  return {
+    project,
+    initialized: true,
+    status: missingServices.length === 0 ? "running" : running ? "degraded" : "stopped",
+    containers,
+    missingServices,
+    diagnostics,
+    repositories,
+    harnessGrants,
+    startOptions: applied?.hostTools === undefined
+      ? null
+      : {
+        hostTools: applied.hostTools,
+        ...(applied.postgresPort !== undefined ? { postgresPort: applied.postgresPort } : {}),
+      },
+    restartRequired: await repositoryRestartRequired(repositories, running, applied),
+  };
 }
 
 async function compose(
@@ -556,7 +741,7 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
   if (actionValue === "harness") return harnessCli(getRuntimeDataDir(), rest);
   if (actionValue === "rotate-tokens") {
     if (rest.length) throw new Error("Usage: forge-launcher runtime rotate-tokens");
-    await rotateRuntimeTokens();
+    await executeRuntimeAdminAction({ action: "rotate-tokens", confirmed: true });
     process.stdout.write(
       "Rotated the service API and Dapr sidecar tokens. Run \"forge-launcher runtime stop\" and " +
       "\"forge-launcher runtime start\" to apply them; until then service commands are rejected.\n",
@@ -574,42 +759,48 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
   if (action === "reset" && !options.confirm) {
     throw new Error("Runtime reset deletes persistent data; rerun with --confirm.");
   }
+  if (action !== "status") {
+    let request: RuntimeAdminAction;
+    switch (action) {
+      case "start":
+        request = {
+          action,
+          hostTools: options.hostTools,
+          ...(options.postgresPort !== undefined ? { postgresPort: options.postgresPort } : {}),
+        };
+        break;
+      case "stop":
+      case "reset":
+        request = { action, confirmed: true };
+        break;
+      case "backup":
+        request = { action, output: options.backupPath! };
+        break;
+      case "restore":
+        request = {
+          action,
+          from: options.backupPath!,
+          confirmed: true,
+          allowGitDrift: options.allowGitDrift ?? false,
+        };
+        break;
+      default:
+        throw new Error(`Unsupported runtime action: ${action}`);
+    }
+    const result = await executeRuntimeAdminAction(request);
+    process.stdout.write(`${result.message}\n`);
+    return 0;
+  }
   await ensureRootlessPodman();
-  if (action === "start" && options.hostTools) {
-    await assertHostPortAvailable(options.postgresPort ?? 55432);
-  }
-  const environment = action === "start"
-    ? await readRuntimeEnvironment(path.dirname(await ensureRuntimeCredentials()))
-    : await requireRuntimeEnvironment();
-  if (action === "backup") {
-    await backupRuntime(options.backupPath!, options, environment);
-    process.stdout.write(`Local runtime backup created at ${options.backupPath}.\n`);
-    return 0;
-  }
-  if (action === "restore") {
-    await restoreRuntime(options.backupPath!, options, environment);
-    process.stdout.write("Local runtime backup restored; the execution service is ready.\n");
-    return 0;
-  }
-  const operation = action === "start" ? "up" : action === "status" ? "ps" : "down";
-  const output = await compose(operation, options, environment);
-  if (action === "reset") await removeRuntimeVolumes();
-  if (action === "start") await waitForRuntimeReady(environment);
-  if (action === "start") {
-    process.stdout.write(`Local infrastructure is running${options.hostTools ? `; PostgreSQL is on 127.0.0.1:${options.postgresPort ?? 55432}` : ""}.\n`);
-  } else if (action === "stop") {
-    process.stdout.write("Local infrastructure stopped; persistent data was preserved.\n");
-  } else if (action === "reset") {
-    process.stdout.write("Local infrastructure stopped and persistent volumes were removed.\n");
-  } else {
-    const containers = await listRuntimeContainers();
-    const diagnostics = await runtimeDiagnostics(containers, environment.values);
-    const hints = remediationHints(diagnostics.join("\n"));
-    process.stdout.write(
-      `${output || "No runtime containers are present."}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}` +
-      `${hints.map((hint) => `\nHint: ${hint}`).join("")}\n`,
-    );
-  }
+  const environment = await requireRuntimeEnvironment();
+  const output = await compose("ps", options, environment);
+  const containers = await listRuntimeContainers();
+  const diagnostics = await runtimeDiagnostics(containers, environment.values);
+  const hints = remediationHints(diagnostics.join("\n"));
+  process.stdout.write(
+    `${output || "No runtime containers are present."}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}` +
+    `${hints.map((hint) => `\nHint: ${hint}`).join("")}\n`,
+  );
   return 0;
 }
 
@@ -638,6 +829,171 @@ async function repositoryCli(args: readonly string[]): Promise<number> {
     return 0;
   }
   throw new Error("Usage: forge-launcher runtime repo add <repository> [--id <id>] | list | remove <id>");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function requiredText(value: unknown, field: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) throw new Error(`${field} is required.`);
+  return value;
+}
+
+function requiredConfirmation(value: unknown, operation: string): void {
+  if (value !== true) throw new Error(`${operation} requires explicit confirmation.`);
+}
+
+export function parseRuntimeAdminAction(value: unknown): RuntimeAdminAction {
+  if (!isRecord(value)) throw new Error("Runtime operation request must be an object.");
+  const action = value.action;
+  switch (action) {
+    case "start":
+    case "restart": {
+      if (typeof value.hostTools !== "boolean") throw new Error("hostTools must be a boolean.");
+      if (action === "restart") requiredConfirmation(value.confirmed, "Runtime restart");
+      if (!value.hostTools && value.postgresPort !== undefined) {
+        throw new Error("postgresPort requires hostTools to be enabled.");
+      }
+      if (value.postgresPort !== undefined &&
+        (typeof value.postgresPort !== "number" || !Number.isInteger(value.postgresPort) || value.postgresPort < 1 || value.postgresPort > 65535)) {
+        throw new Error("postgresPort must be an integer from 1 to 65535.");
+      }
+      const options = {
+        hostTools: value.hostTools,
+        ...(typeof value.postgresPort === "number" ? { postgresPort: value.postgresPort } : {}),
+      };
+      return action === "start"
+        ? { action, ...options }
+        : { action, ...options, confirmed: true };
+    }
+    case "stop":
+    case "reset":
+    case "rotate-tokens":
+      requiredConfirmation(value.confirmed, action === "rotate-tokens" ? "Token rotation" : `Runtime ${action}`);
+      return { action, confirmed: true };
+    case "backup":
+      return { action, output: requiredText(value.output, "Backup output path") };
+    case "restore":
+      requiredConfirmation(value.confirmed, "Runtime restore");
+      if (typeof value.allowGitDrift !== "boolean") throw new Error("allowGitDrift must be a boolean.");
+      return {
+        action,
+        from: requiredText(value.from, "Restore source"),
+        confirmed: true,
+        allowGitDrift: value.allowGitDrift,
+      };
+    case "repo-add":
+      return {
+        action,
+        path: requiredText(value.path, "Repository path"),
+        ...(value.id === undefined ? {} : { id: requiredText(value.id, "Repository ID") }),
+      };
+    case "repo-remove":
+      requiredConfirmation(value.confirmed, "Repository removal");
+      return { action, id: requiredText(value.id, "Repository ID"), confirmed: true };
+    case "harness-grant":
+      return {
+        action,
+        harness: requiredText(value.harness, "Harness"),
+        variable: requiredText(value.variable, "Credential variable"),
+        value: requiredText(value.value, "Credential value"),
+      };
+    case "harness-revoke":
+      requiredConfirmation(value.confirmed, "Credential revocation");
+      return {
+        action,
+        harness: requiredText(value.harness, "Harness"),
+        ...(value.variable === undefined ? {} : { variable: requiredText(value.variable, "Credential variable") }),
+        confirmed: true,
+      };
+    default:
+      throw new Error(`Unknown runtime operation: ${String(action ?? "")}.`);
+  }
+}
+
+export async function executeRuntimeAdminAction(
+  input: unknown,
+  dataDir = getRuntimeDataDir(),
+): Promise<RuntimeAdminResult> {
+  const action = parseRuntimeAdminAction(input);
+  if (action.action === "repo-add") {
+    await ensureRuntimeCredentials(dataDir);
+    const entry = await registerRepository(dataDir, action.path, action.id);
+    return { message: `Registered '${entry.id}' -> ${entry.path}. Restart the runtime to mount it.`, restartRequired: true };
+  }
+  if (action.action === "repo-remove") {
+    if (!await unregisterRepository(dataDir, action.id)) throw new Error(`Repository '${action.id}' is not registered.`);
+    return { message: `Unregistered '${action.id}'. Restart the runtime to unmount it.`, restartRequired: true };
+  }
+  if (action.action === "harness-grant") {
+    if (!HARNESS_CREDENTIAL_VARIABLES[action.harness]?.includes(action.variable)) {
+      throw new Error(`Harness '${action.harness}' does not accept credential variable '${action.variable}'.`);
+    }
+    await grantHarnessCredential(dataDir, action.harness, action.variable, action.value);
+    return {
+      message: `Granted ${action.variable} to the ${action.harness} harness; it applies to the next task attempt.`,
+      restartRequired: false,
+    };
+  }
+  if (action.action === "harness-revoke") {
+    const removed = await revokeHarnessCredential(dataDir, action.harness, action.variable);
+    return {
+      message: removed
+        ? `Revoked ${action.variable ?? "all grants"} for the ${action.harness} harness.`
+        : `No matching grant for the ${action.harness} harness.`,
+      restartRequired: false,
+    };
+  }
+  if (action.action === "rotate-tokens") {
+    await rotateRuntimeTokens(dataDir);
+    await markRuntimeRestartRequired(dataDir);
+    return {
+      message: "Rotated the service API and Dapr sidecar tokens. Start or restart the runtime to apply them.",
+      restartRequired: true,
+    };
+  }
+
+  await ensureRootlessPodman();
+  const options: RuntimeOptions = {
+    hostTools: action.action === "start" || action.action === "restart" ? action.hostTools : false,
+    ...(action.action === "start" || action.action === "restart" ? { postgresPort: action.postgresPort } : {}),
+    confirm: action.action === "reset" || action.action === "restore" || action.action === "restart" || action.action === "stop",
+    ...(action.action === "backup" ? { backupPath: action.output } : {}),
+    ...(action.action === "restore" ? { backupPath: action.from, allowGitDrift: action.allowGitDrift } : {}),
+  };
+  const environment = action.action === "start"
+    ? await readRuntimeEnvironment(path.dirname(await ensureRuntimeCredentials(dataDir)))
+    : await requireRuntimeEnvironment(dataDir);
+
+  if (action.action === "backup") {
+    await backupRuntime(action.output, options, environment);
+    return { message: `Local runtime backup created at ${action.output}.`, restartRequired: false };
+  }
+  if (action.action === "restore") {
+    await restoreRuntime(action.from, options, environment);
+    return { message: "Local runtime backup restored; the execution service is ready.", restartRequired: false };
+  }
+  if (action.action === "start" || action.action === "restart") {
+    if (action.action === "restart") await compose("down", options, environment);
+    if (action.hostTools) await assertHostPortAvailable(action.postgresPort ?? 55432);
+    await compose("up", options, environment);
+    await waitForRuntimeReady(environment);
+    await recordAppliedRepositories(dataDir, options);
+    return {
+      message: `Local infrastructure is running${action.hostTools ? `; PostgreSQL is on 127.0.0.1:${action.postgresPort ?? 55432}` : ""}.`,
+      restartRequired: false,
+    };
+  }
+  if (action.action === "stop" || action.action === "reset") {
+    await compose("down", options, environment);
+    if (action.action === "reset") {
+      await removeRuntimeVolumes();
+      return { message: "Local infrastructure stopped and persistent volumes were removed.", restartRequired: false };
+    }
+    return { message: "Local infrastructure stopped; persistent data was preserved.", restartRequired: false };
+  }
+  throw new Error("Unsupported runtime operation.");
 }
 
 async function sha256File(file: string): Promise<string> {
@@ -787,6 +1143,7 @@ async function backupRuntime(
     try {
       await compose("up", options, environment);
       await waitForRuntimeReady(environment);
+      await recordAppliedRepositories(path.dirname(environment.file), options);
     } catch (error) {
       failures.push(error);
     }
@@ -911,4 +1268,5 @@ async function restoreRuntime(
   }
   await compose("up", options, environment);
   await waitForRuntimeReady(environment);
+  await recordAppliedRepositories(path.dirname(environment.file), options);
 }

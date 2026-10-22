@@ -439,6 +439,7 @@ function fillServiceProfile(panel: HTMLElement, response: ServiceRunsResponse | 
       el("div", { className: "row gap" }, [statusBadge("unavailable"), el("strong", null, "Execution: local service required")]),
       el("p", { className: "dim" }, "Execution is disabled until this repository is registered with the local runtime " +
         "(forge-launcher runtime repo add <path>) and the runtime is restarted. Legacy workflow histories are not imported."),
+      el("a", { href: "#/runtime", className: "btn" }, "Manage local runtime"),
     );
     return;
   }
@@ -447,6 +448,7 @@ function fillServiceProfile(panel: HTMLElement, response: ServiceRunsResponse | 
       el("div", { className: "row gap" }, [statusBadge("unavailable"), el("strong", null, "Execution: local service")]),
       el("p", { className: "error-text", role: "alert" }, response.message ?? "The local execution service is not reachable."),
       el("p", { className: "dim" }, "Start it with forge-launcher runtime start, then refresh."),
+      el("a", { href: "#/runtime", className: "btn" }, "Manage local runtime"),
     );
     return;
   }

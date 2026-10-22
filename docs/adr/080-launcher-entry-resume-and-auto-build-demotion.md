@@ -1,4 +1,4 @@
-# ADR-028: Launcher as the Single Entry Point - `resume`, Review Links, and `forge-auto-build` Demotion
+# ADR-080: Launcher as the Single Entry Point - `resume`, Review Links, and `forge-auto-build` Demotion
 
 **Date:** 2026-08-27
 **Status:** Accepted

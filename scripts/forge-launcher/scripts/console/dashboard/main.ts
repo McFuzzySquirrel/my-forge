@@ -12,6 +12,7 @@ import { refreshDocuments, renderDocuments, unmountDocuments } from "./views/doc
 import { renderArtifacts, unmountArtifacts } from "./views/artifacts.js";
 import { renderTimeline, unmountTimeline } from "./views/timeline.js";
 import { renderService, unmountService } from "./views/service.js";
+import { renderRuntime, unmountRuntime } from "./views/runtime.js";
 import { refreshProjectList, renderProjects, unmountProjects } from "./views/projects.js";
 import { renderNew, unmountNew } from "./views/new.js";
 import { openHelp } from "./views/help.js";
@@ -34,12 +35,13 @@ const views: View[] = [
   { id: "artifacts", label: "Artifacts", render: renderArtifacts, unmount: unmountArtifacts },
   { id: "timeline", label: "Timeline", render: renderTimeline, unmount: unmountTimeline },
   { id: "service", label: "Service runs", render: renderService, unmount: unmountService },
+  { id: "runtime", label: "Runtime", render: renderRuntime, unmount: unmountRuntime },
   { id: "projects", label: "Projects", render: renderProjects, unmount: unmountProjects },
   { id: "new", label: "New project", render: renderNew, unmount: unmountNew },
 ];
 
 // Views that make sense without a selected repo (the landing surface).
-const NO_REPO_ROUTES = new Set(["home", "new", "projects"]);
+const NO_REPO_ROUTES = new Set(["home", "new", "projects", "runtime"]);
 
 let active: View | null = null;
 let activeProject = "none";

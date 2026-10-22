@@ -34,6 +34,9 @@ import type {
   ServiceControlResult,
   ServiceRunDetail,
   ServiceRunsResponse,
+  RuntimeAdminAction,
+  RuntimeAdminActionResult,
+  RuntimeAdminState,
 } from "./types.js";
 
 function token(): string {
@@ -68,6 +71,12 @@ function post<T>(url: string, body: unknown): Promise<T> {
 }
 
 export const api = {
+  runtime(): Promise<RuntimeAdminState> {
+    return request<RuntimeAdminState>("/api/runtime");
+  },
+  runtimeAction(action: RuntimeAdminAction): Promise<RuntimeAdminActionResult> {
+    return post<RuntimeAdminActionResult>("/api/runtime/action", action);
+  },
   logout(): Promise<{ ok: boolean }> {
     return post<{ ok: boolean }>("/api/session/logout", {});
   },

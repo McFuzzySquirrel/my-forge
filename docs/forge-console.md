@@ -385,6 +385,7 @@ button shows the exact command to run manually.
 | **Artifacts** | the structured outputs tasks produced (`docs/artifacts/`), browsable by type/task with previews. |
 | **Timeline** | chronological audit events, failures highlighted. |
 | **Service runs** | runs submitted to the local execution service (`forge-launcher service submit`) for the open repository: status, tasks, sequenced events, and acknowledged controls. See [Service runs](#service-runs). |
+| **Runtime** | shared local Podman runtime lifecycle, repository registry, backup/restore, token rotation, and harness credential grants. See [Runtime administration](#runtime-administration). |
 | **Projects** | switch projects, add a folder, or remove one or more projects from Forge. |
 
 A **Help** button (top-right) explains the UI, the pipeline, each view, and key
@@ -431,6 +432,33 @@ number seen, so a reload or reconnect picks up from the service's record.
   `POST /api/service/control`).
 - When the repository is not registered (`forge-launcher runtime repo add`) or
   the runtime is not running, the view says so.
+
+### Runtime administration
+
+The dedicated **Runtime** view manages the shared local runtime; it is distinct
+from the **Service runs** view, which controls an individual workflow run.
+Runtime status shows container readiness, registered repositories, harness
+credential variable names, and whether a registry change still needs a
+restart. The view can start, stop, restart, or reset the runtime; create and
+restore backups; rotate the service and Dapr tokens; and register/unregister
+repositories or grant/revoke harness credentials. The selected Console project
+can be used as a repository-registration shortcut.
+
+Repository changes are saved first and never restart the runtime implicitly.
+The Console offers a separate, confirmed restart to apply mount changes. The
+last successful start's host-tools setting and PostgreSQL port are remembered
+for later restarts. Older installations without saved settings require the
+operator to confirm those options before restarting. Stop and restart display
+an interruption warning, and reset, restore, token rotation, repository
+removal, and credential revocation require explicit confirmation. Restore
+requires a separate Git-drift acknowledgement when that risk is accepted.
+
+Long operations show an in-progress state and serialize against other runtime
+mutations. Runtime operations use the Console's signed operator session,
+same-origin checks, and per-server `X-Forge-Token`. Harness credential values
+are submitted directly to the local Console, stored with restricted
+permissions, and never returned, logged, or shown again; status exposes only
+granted variable names.
 
 For a registered repository, Overview builds and controls also use the
 service ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)):

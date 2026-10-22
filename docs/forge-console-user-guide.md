@@ -167,10 +167,31 @@ recompile the manifest explicitly; the Console will not silently switch roots.
   repository, whether started from Overview, `engine-run`, or
   `forge-launcher service submit`. Select a run to see its tasks and events,
   and to pause, resume, stop, cancel, approve, or replay it. Each button shows
-  the service's acknowledgement. Register the repository with
-  `forge-launcher runtime repo add` and start the runtime first.
+  the service's acknowledgement.
+- **Runtime**: manage the shared local Podman runtime, register the selected
+  project, start or stop the service, and administer backups, tokens, and
+  harness credentials. Runtime lifecycle controls affect all registered
+  projects; use Service runs to control one workflow run.
 
 The most useful combination for day-to-day work is usually Overview + Board + Logs.
+
+### Manage local execution
+
+Open **Runtime** to check service readiness and register the selected project
+with **Use selected project**. Registration is saved without restarting. If
+the runtime is already running, the page marks the mount change pending and
+offers a separate confirmed **Restart**; if it is stopped, use **Start** to
+apply the registry. Only each repository's `.git` directory is mounted.
+
+The Runtime page also provides explicit-confirmation controls for stopping or
+restarting the shared runtime, destructive reset and restore, API-token
+rotation, and credential revocation. A backup can be created before a reset or
+upgrade. Restore checks the archive and Git refs; selecting **Allow Git drift**
+requires a second acknowledgement because run history can become inconsistent.
+Harness credential grants are entered into a password field, stored locally,
+and cleared from the form; the page lists variable names only. The last
+successful start's host-tools setting and PostgreSQL port prefill later
+restarts. Operations show progress and return actionable errors.
 
 Authoring lifecycle records use the `FORGE_EVENT {json}` prefix in
 `docs/engine-run.log` and are also sent as `authoring` SSE events. Ordinary

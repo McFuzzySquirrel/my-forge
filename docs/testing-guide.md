@@ -345,6 +345,17 @@ forge-launcher console --repo /tmp/myforge-smoke/my-smoke-app --no-open
 This checks that the console can start and serve the local web UI. Open the
 printed single-use sign-in link to view it.
 
+Runtime Console authorization, operation serialization, confirmation
+validation, and credential redaction are covered by the launcher tests:
+
+```bash
+cd scripts/forge-launcher
+node --import tsx --test --test-concurrency=1 scripts/console.test.ts scripts/runtime.test.ts
+```
+
+These focused tests do not start Podman; live lifecycle and backup/restore
+behavior belongs to the isolated runtime qualification suites below.
+
 ## 4. Engine-run smoke test
 
 For a lightweight engine check, run the launcher in dry-run or stub mode where possible:

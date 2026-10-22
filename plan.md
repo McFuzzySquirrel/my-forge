@@ -17,10 +17,10 @@ P6 is complete under [issue #17](https://github.com/McFuzzySquirrel/my-forge/iss
 P6-01 through P6-06 are complete ([P6-01 evidence](#p6-01-failure-boundary-evidence--2026-10-21),
 [P6-02 evidence](#p6-02-backup-and-restore-evidence--2026-10-21),
 [P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21)).
-P7 is in progress: the launcher/Console cutover is fail-closed, the legacy
-scheduler sources are retired locally, and isolated migration/rollback
-rehearsals pass. The merge-gated release remains incomplete; the runtime is not
-yet a production replacement.
+P7-01–05 are complete and merged to `main` in
+[`5acde50`](https://github.com/McFuzzySquirrel/my-forge/commit/5acde50).
+P7-GATE remains open pending acceptance review; hosted deployment remains a
+separate P8 capability.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
 profiles; no permanent legacy backend
@@ -73,7 +73,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE accepted 2026-10-19 | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-GATE evidence](#p4-gate-acceptance-evidence--2026-10-19); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | P5-01–06 done; P5-GATE accepted 2026-10-21 ([evidence](#p5-gate-evidence--2026-10-22)) | @McFuzzySquirrel |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Complete; P6-GATE accepted 2026-10-21 | @McFuzzySquirrel; [P6 issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17); [P6-GATE evidence](#p6-gate-technical-isolation-closure--2026-10-21) |
-| P7 — Cutover and legacy retirement | P6 gate | Release + documentation | In progress; P7-01/02 rehearsals pass locally, pending merge | @McFuzzySquirrel |
+| P7 — Cutover and legacy retirement | P6 gate | Release + documentation | P7-01–05 complete and merged; P7-GATE pending acceptance review | [P7 implementation](https://github.com/McFuzzySquirrel/my-forge/commit/5acde50); [P7-01/02 evidence](#p7-0102-local-rehearsal-evidence--2026-10-21) |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
 
 P1's spike may contain minimal throwaway/test activities; it is not the production
@@ -447,31 +447,32 @@ support matrix, and release evidence.
 
 **Deliverables:** sole-engine release, migrated guidance, and reversible cutover.
 
-- [ ] **P7-01 — Rehearse migration.** Back up legacy state, artifacts, and Git;
+- [x] **P7-01 — Rehearse migration.** Back up legacy state, artifacts, and Git;
   stop new legacy runs and drain active ones. Validate completed checkpoints
   before creating Dapr runs. Block unsupported partial-history imports. The
   isolated `cutover` qualification passed locally: it archives completed and
   drained partial histories and Git bundles, then confirms each Dapr run starts
-  independently. Keep unchecked until the suite and evidence are merged.
-- [ ] **P7-02 — Rehearse rollback.** Use a previous release plus pre-cutover backup;
+  independently. The qualification suite and evidence summary are merged in
+  `5acde50`.
+- [x] **P7-02 — Rehearse rollback.** Use a previous release plus pre-cutover backup;
   explicitly stop Dapr writers before restoring legacy ownership. Do not feed
   Dapr history into the file engine or silently discard post-cutover Git changes.
   Document how to preserve/reconcile those changes. The isolated `cutover`
   qualification passed locally: it creates a service backup, stops all Dapr
   writers, restores only legacy state, and proves committed and uncommitted
-  post-cutover work survives. Keep unchecked until the suite and evidence are
-  merged.
-- [ ] **P7-03 — Switch the default execution path.** Make Dapr mandatory for new
+  post-cutover work survives. The qualification suite and evidence summary are
+  merged in `5acde50`.
+- [x] **P7-03 — Switch the default execution path.** Make Dapr mandatory for new
   runs in this fork after qualification; retain archived evidence, not a permanent
   backend switch. Fail clearly if infrastructure is unavailable. Launcher and
   Console execution now require repository registration and never fall back to
-  legacy scheduling; focused launcher/Console tests and typecheck pass. Keep this
-  unchecked until the change and its documentation are merged.
-- [ ] **P7-04 — Remove legacy writers and stale callers.** Retire the old DAG
+  legacy scheduling; launcher/Console tests and typecheck pass. The change is
+  merged in `5acde50`.
+- [x] **P7-04 — Remove legacy writers and stale callers.** Retire the old DAG
   loop, writable file control/state path, PID-based execution controls, and legacy
   polling after P0's caller inventory is fully migrated. Preserve reusable modules
-  and move relevant semantic tests to their replacement owners. Implemented
-  locally, pending merge: the retired skill now keeps only its fail-closed CLI
+  and move relevant semantic tests to their replacement owners. The retired skill
+  now keeps only its fail-closed CLI
   stub and compatibility tests; the DAG loop, file-backed state/control writers,
   legacy harness adapters, and standalone engine visualization are removed.
   Shared execution utilities and semantic coverage are owned by
@@ -479,16 +480,14 @@ support matrix, and release evidence.
   removed. The active Console Board remains supported:
   its renderer, vendor assets, and layout logic are Console-owned, and its
   status comes from Dapr-backed summary/task APIs. Legacy workflow-state routes,
-  polling, and selection/reset writes are removed. Keep unchecked until the
-  implementation is merged.
-- [ ] **P7-05 — Publish migration/release documentation.** Update architecture,
+  polling, and selection/reset writes are removed. Merged in `5acde50`.
+- [x] **P7-05 — Publish migration/release documentation.** Update architecture,
   workflow/engine deep dives, artifact guidance, launcher/package README, Console
   guides, relevant skills, testing guidance, and deployment runbooks. Add release
   notes and synchronize README Latest. Preserve historical ADRs/changelog entries.
-  Partial: launcher, Console, playbook, README, and legacy-reference guidance
-  now describe the service-only cutover; the cutover runbook now links its
-  isolated rehearsal guidance. The affected guidance and v3.141 release notes
-  are updated locally; keep unchecked until the changes are merged.
+  Architecture, launcher/package READMEs, Console and workflow guidance, skills,
+  testing guidance, cutover runbook, and v3.141 release notes are updated and
+  merged in `5acde50`.
 - [ ] **P7-GATE:** Fresh and migrated repositories use only Dapr orchestration;
   no supported caller writes legacy authority; cutover/rollback is rehearsed and
   all advertised behavior matches active documentation.
@@ -503,8 +502,8 @@ and partial legacy state/artifacts, verified both Git bundles, and started new
 Dapr runs for each fixture without importing either history. P7-02 preserved a
 service backup, stopped the Dapr containers before restoring the legacy
 checkpoint, and retained both a post-cutover commit and uncommitted file. The
-operator `myforge-runtime` was not used. These results are local evidence only;
-all P7 tasks remain open until the implementation and evidence are merged.
+operator `myforge-runtime` was not used. The qualification suite and evidence
+summary are merged in `5acde50`; P7-GATE remains open pending acceptance review.
 
 ## P8 — Productize hosted recovery as a separate deployment profile
 

@@ -2,8 +2,10 @@
 # MyForge
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Bash](https://img.shields.io/badge/Bash-4EAA25?logo=gnubash&logoColor=fff)
-![PowerShell](https://img.shields.io/badge/PowerShell-5391FE?logo=powershell&logoColor=fff)
+![Node.js 18+](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=fff)
+![Dapr](https://img.shields.io/badge/Dapr-execution-0D2192?logo=dapr&logoColor=fff)
+![Legacy Bash wrappers](https://img.shields.io/badge/legacy-Bash%20wrappers-4EAA25?logo=gnubash&logoColor=fff)
+![Legacy PowerShell wrappers](https://img.shields.io/badge/legacy-PowerShell%20wrappers-5391FE?logo=powershell&logoColor=fff)
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 

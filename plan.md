@@ -19,8 +19,8 @@ P6-01 through P6-06 are complete ([P6-01 evidence](#p6-01-failure-boundary-evide
 [P6-03 evidence](#p6-03-upgrade-and-rollback-evidence--2026-10-21)).
 P7-01–05 are complete and merged to `main` in
 [`5acde50`](https://github.com/McFuzzySquirrel/my-forge/commit/5acde50).
-P7-GATE remains open pending acceptance review; hosted deployment remains a
-separate P8 capability.
+P7-GATE was accepted by the operator on 2026-10-22, authorizing P8. Hosted
+deployment remains a separate capability.
 
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
 profiles; no permanent legacy backend
@@ -73,7 +73,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P4 — Complete local vertical slice | P3 gate | Runtime + platform | P4-01–06 complete; P4-GATE accepted 2026-10-19 | [P4-01 issue #8](https://github.com/McFuzzySquirrel/my-forge/issues/8); [P4-02 issue #9](https://github.com/McFuzzySquirrel/my-forge/issues/9); [P4-02 PR #10](https://github.com/McFuzzySquirrel/my-forge/pull/10); [P4-04 issue #11](https://github.com/McFuzzySquirrel/my-forge/issues/11); [P4-05 issue #13](https://github.com/McFuzzySquirrel/my-forge/issues/13); [P4-GATE evidence](#p4-gate-acceptance-evidence--2026-10-19); [P4-01 live recovery evidence](#p4-01-live-recovery-evidence); [P4-05 execution evidence](#p4-05-representative-execution-evidence); [P4-06 bound evidence](#p4-06-bound-evidence) |
 | P5 — Launcher and Console migration | P4 gate | Launcher + Console | P5-01–06 done; P5-GATE accepted 2026-10-21 ([evidence](#p5-gate-evidence--2026-10-22)) | @McFuzzySquirrel |
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Complete; P6-GATE accepted 2026-10-21 | @McFuzzySquirrel; [P6 issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17); [P6-GATE evidence](#p6-gate-technical-isolation-closure--2026-10-21) |
-| P7 — Cutover and legacy retirement | P6 gate | Release + documentation | P7-01–05 complete and merged; P7-GATE pending acceptance review | [P7 implementation](https://github.com/McFuzzySquirrel/my-forge/commit/5acde50); [P7-01/02 evidence](#p7-0102-local-rehearsal-evidence--2026-10-21) |
+| P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Complete; P7-GATE accepted 2026-10-22 | [P7 implementation](https://github.com/McFuzzySquirrel/my-forge/commit/5acde50); [P7-01/02 evidence](#p7-0102-local-rehearsal-evidence--2026-10-21) |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
 
 P1's spike may contain minimal throwaway/test activities; it is not the production
@@ -488,9 +488,11 @@ support matrix, and release evidence.
   Architecture, launcher/package READMEs, Console and workflow guidance, skills,
   testing guidance, cutover runbook, and v3.141 release notes are updated and
   merged in `5acde50`.
-- [ ] **P7-GATE:** Fresh and migrated repositories use only Dapr orchestration;
+- [x] **P7-GATE:** Fresh and migrated repositories use only Dapr orchestration;
   no supported caller writes legacy authority; cutover/rollback is rehearsed and
   all advertised behavior matches active documentation.
+  *Accepted by @McFuzzySquirrel on 2026-10-22 after review of the merged P7
+  implementation and cutover/rollback qualification evidence.*
 
 ### P7-01/02 local rehearsal evidence — 2026-10-21
 
@@ -503,7 +505,7 @@ Dapr runs for each fixture without importing either history. P7-02 preserved a
 service backup, stopped the Dapr containers before restoring the legacy
 checkpoint, and retained both a post-cutover commit and uncommitted file. The
 operator `myforge-runtime` was not used. The qualification suite and evidence
-summary are merged in `5acde50`; P7-GATE remains open pending acceptance review.
+summary are merged in `5acde50`; P7-GATE was accepted on 2026-10-22.
 
 ## P8 — Productize hosted recovery as a separate deployment profile
 

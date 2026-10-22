@@ -159,6 +159,48 @@ test("Console runtime actions validate confirmations and host-tool options", () 
   assert.throws(() => parseRuntimeAdminAction({ action: "restore", from: "/tmp/backup", confirmed: true }), /allowGitDrift/);
   assert.throws(() => parseRuntimeAdminAction({ action: "start", hostTools: true, postgresPort: 65536 }), /1 to 65535/);
   assert.deepEqual(parseRuntimeAdminAction({ action: "stop", confirmed: true }), { action: "stop", confirmed: true });
+  assert.throws(() => parseRuntimeAdminAction({
+    action: "runner-capability",
+    id: "demo",
+    operation: "revoke",
+    confirmed: false,
+  }), /explicit confirmation/);
+});
+
+test("Console runtime capability controls never expose raw project credentials", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "forge-runtime-runner-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, "repositories.json"), JSON.stringify({
+    version: 1,
+    repositories: [{ id: "demo", path: directory }],
+  }), { mode: 0o600 });
+
+  const enabled = await executeRuntimeAdminAction({
+    action: "runner-capability",
+    id: "demo",
+    operation: "enable",
+    confirmed: true,
+  }, directory);
+  assert.equal(enabled.restartRequired, true);
+  const state = await getRuntimeAdminState(directory);
+  assert.deepEqual(state.hostRunnerEnabledRepositoryIds, ["demo"]);
+
+  const rotated = await executeRuntimeAdminAction({
+    action: "runner-capability",
+    id: "demo",
+    operation: "rotate",
+    confirmed: true,
+  }, directory);
+  assert.match(rotated.message, /rotated/);
+  assert.doesNotMatch(JSON.stringify(await getRuntimeAdminState(directory)), /[A-Za-z0-9_-]{43}/);
+
+  await executeRuntimeAdminAction({
+    action: "runner-capability",
+    id: "demo",
+    operation: "revoke",
+    confirmed: true,
+  }, directory);
+  assert.deepEqual((await getRuntimeAdminState(directory)).hostRunnerEnabledRepositoryIds, []);
 });
 
 test("Console harness credential actions store secrets but expose only variable names", async (t) => {

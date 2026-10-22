@@ -128,6 +128,7 @@ services:
       MYFORGE_API_TOKEN: "${MYFORGE_API_TOKEN:?MYFORGE_API_TOKEN is required}"
       MYFORGE_REPOSITORIES_DIR: /repositories
       MYFORGE_HARNESS_CREDENTIALS_FILE: /run/myforge/harness-grants/grants.json
+      MYFORGE_HOST_RUNNER_CAPABILITY_HASHES_FILE: /run/myforge/host-runner/capability-hashes.json
     # The run API is published only on loopback and requires the bearer token.
     # Registered repositories are mounted by the launcher-generated override.
     ports:
@@ -140,6 +141,7 @@ services:
       # Operator-granted harness credentials, re-read per attempt and passed
       # only to the selected harness ("forge-launcher runtime harness grant").
       - ${MYFORGE_HARNESS_GRANTS_DIR:?MYFORGE_HARNESS_GRANTS_DIR is required}:/run/myforge/harness-grants:ro,Z
+      - ${MYFORGE_HOST_RUNNER_HASHES_FILE:?MYFORGE_HOST_RUNNER_HASHES_FILE is required}:/run/myforge/host-runner/capability-hashes.json:ro,Z
     depends_on:
       postgres:
         condition: service_healthy

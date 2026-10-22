@@ -35,6 +35,9 @@ import {
 import { createServiceApiHandler, MIN_API_TOKEN_LENGTH } from "./api.ts";
 import { migrateApplicationDatabase } from "./migrations.ts";
 import { secureRegisteredGitMetadata } from "./repository-git-boundary.ts";
+import { PostgresHostRunnerJobStore } from "../storage/postgres/host-runner-jobs.ts";
+import { HostRunnerService, loadHostRunnerCapabilityHashes } from "./host-runner.ts";
+import { QueuedHarnessRunner } from "../execution/queued-harness-runner.ts";
 import { reconcileFailedRuns, type OrchestrationFailureV1 } from "./run-reconciler.ts";
 import { sdkWorkflowWorkerProbe, watchWorkflowWorker } from "./worker-watchdog.ts";
 import {
@@ -73,6 +76,12 @@ const database = new Pool({
   connectionTimeoutMillis: 5_000,
   max: 10,
 });
+const hostRunnerJobs = new PostgresHostRunnerJobStore(database);
+const hostRunnerCapabilityHashes = await loadHostRunnerCapabilityHashes(
+  process.env.MYFORGE_HOST_RUNNER_CAPABILITY_HASHES_FILE,
+);
+const hostRunner = new HostRunnerService({ jobs: hostRunnerJobs, capabilityHashes: hostRunnerCapabilityHashes });
+const queuedHarnessRunner = new QueuedHarnessRunner(hostRunnerJobs);
 // A PostgreSQL restart must not crash the service: the pool discards broken
 // idle clients, and a checked-out client fails its next query instead.
 database.on("error", (error) => {
@@ -88,7 +97,10 @@ const client = new DaprWorkflowClient(daprAddress);
 const repositoryRoot = mountedRepositoryResolver(REPOSITORIES_DIR);
 const registry = new ServiceRunRegistry(defaultServiceHarnesses({
   credentialsFile: process.env.MYFORGE_HARNESS_CREDENTIALS_FILE,
-}));
+}), {
+  runner: queuedHarnessRunner,
+  enabledForRepository: (repositoryId) => hostRunnerCapabilityHashes.has(repositoryId),
+});
 const status = new PostgresRunStatusStore(database);
 const controls = new PostgresControlRecordStore(database);
 const executions = new PostgresExecutionOwnershipStore(database);
@@ -259,6 +271,7 @@ async function listen(runs: RunService): Promise<void> {
   server = createServer(createServiceApiHandler({
     token: API_TOKEN,
     runs,
+    hostRunner,
     health: () => ({ live: !stopping, ready: ready && !stopping }),
     onError: (error) => process.stderr.write(`API request failed: ${error instanceof Error ? error.message : "unknown error"}\n`),
   }));

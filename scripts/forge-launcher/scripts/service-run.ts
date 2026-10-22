@@ -98,7 +98,7 @@ const VALUE_FLAGS = new Set([
 ]);
 const BOOLEAN_FLAGS = new Set([
   "--yes", "--dry-run", "--viz", "--no-open", "--allow-noop", "--run-validation", "--log-harness-activity",
-  "--no-log-harness-activity", "--auto-commit", "--no-auto-commit", "--stop", "--pause",
+  "--no-log-harness-activity", "--auto-commit", "--no-auto-commit", "--host-execution", "--stop", "--pause",
 ]);
 
 function parseEngineRunArgs(args: readonly string[]): Map<string, string> {
@@ -223,8 +223,10 @@ export async function serviceEngineRun(
     if (value !== undefined) settings[key] = value;
   }
   if (flags.has("--allow-noop") || process.env.FORGE_ENGINE_ALLOW_NOOP === "1") settings.allowNoop = true;
+  if (flags.has("--host-execution")) settings.hostExecution = true;
 
-  write(`forge-engine-run: repo=${repoRoot} deployment=local service repository=${repositoryId} harness=${harness}\n`);
+  const executionModeLabel = settings.hostExecution === true ? "native host (full OS permissions)" : "worker";
+  write(`forge-engine-run: repo=${repoRoot} deployment=local service repository=${repositoryId} harness=${harness} execution=${executionModeLabel}\n`);
   const ignored = [...flags.keys()].filter((flag) => IGNORED_FLAGS[flag] && flag !== "--yes" && flag !== "--no-open");
   for (const flag of ignored) write(`  Note: ${flag} is ignored for service runs (${IGNORED_FLAGS[flag]}).\n`);
 

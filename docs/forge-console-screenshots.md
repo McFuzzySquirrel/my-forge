@@ -21,9 +21,11 @@ set is archived under `images/forge-console/current/`. Start with
 > and **Remove selected (N)**. Removal requires confirmation and displays an
 > outcome for each project; see the [user guide](forge-console-user-guide.md#remove-one-or-more-projects-from-forge).
 >
-> **Runtime view (v3.145):** the screenshot set does not include the new
-> infrastructure-administration page. See [Runtime administration](forge-console.md#runtime-administration)
-> for its controls and confirmation behavior.
+> **Runtime view (v3.146):** the screenshot set predates the host-execution
+> opt-in and does not include the infrastructure-administration page. See
+> [Runtime administration](forge-console.md#runtime-administration) for runner
+> capability controls and confirmation behavior. Screenshot regeneration is
+> currently blocked by a missing Board asset in the capture build.
 
 ---
 

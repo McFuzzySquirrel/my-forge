@@ -56,6 +56,7 @@ function engineRunArgs(repoRoot: string): string[] {
   const harness = process.env.FORGE_ENGINE_HARNESS ?? cfg?.harness ?? inferEngineHarness(repoRoot);
   assertEngineHarnessAvailable(harness);
   const args = ["engine-run", "--repo", repoRoot, "--harness", harness];
+  if (cfg?.hostExecution === true) args.push("--host-execution");
   // The numeric settings are numbers in engine-config.json but strings in argv;
   // passing one through raw makes the job runner's argv scanning throw on
   // `startsWith`, so a Console-started run with a configured concurrency, task

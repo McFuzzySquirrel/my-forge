@@ -75,6 +75,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Complete; P6-GATE accepted 2026-10-21 | @McFuzzySquirrel; [P6 issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17); [P6-GATE evidence](#p6-gate-technical-isolation-closure--2026-10-21) |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Complete; P7-GATE accepted 2026-10-22 | [P7 implementation](https://github.com/McFuzzySquirrel/my-forge/commit/5acde50); [P7-01/02 evidence](#p7-0102-local-rehearsal-evidence--2026-10-21) |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
+| Post-P7 — Native local host runner | P7 gate; P5 local service | Runtime + security + platform | HR-01–03 implemented; HR-04 live-runtime and host-OS qualification in progress; HR-GATE pending | [Issue #18](https://github.com/McFuzzySquirrel/my-forge/issues/18); [feature contract](docs/features/local-host-harness-execution.md); [spike evidence](docs/research/host-runner-spike.md) |
 
 P1's spike may contain minimal throwaway/test activities; it is not the production
 engine. P3 can develop storage and execution adapters in parallel after P2, but
@@ -559,6 +560,68 @@ it. Claude qualification remains deferred and unadvertised.
 - [ ] **P6-FU-03 — Qualify Claude Code.** Run an isolated authenticated task
   after the planned phases, verify its integration and credential isolation,
   and advertise the Claude profile only after it passes.
+
+## Post-P7 follow-up — native local host-runner execution
+
+The user requires Dapr to continue orchestrating while a launcher-managed host
+runner directly invokes the harness CLI installed on the machine where the user
+is working. This is a native, unsandboxed process running with the logged-in
+user's normal filesystem, process, and network permissions; the project
+capability authorizes Dapr-to-runner requests but does not restrict the CLI.
+Host mode must be an explicit choice with a clear full-permissions warning.
+This is separate from P8 hosted deployment.
+
+The canonical contract is
+[HOST-RUNNER](docs/features/local-host-harness-execution.md); the implementation
+is tracked in [issue #18](https://github.com/McFuzzySquirrel/my-forge/issues/18)
+(owner: @McFuzzySquirrel). The sandboxed proposal was superseded by
+[SDR-20261022-003](docs/decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md);
+the previous direction is retained as
+[SDR-20261022-002](docs/decisions/sdr/SDR-20261022-002-sandboxed-host-harness-runner.md).
+
+**HR-01 spike checkpoint (2026-10-22):** Rootless Podman and Landlock probes
+demonstrated sandbox options, but the user rejected sandboxed execution and
+clarified that the local CLI must run natively with the user's account. The
+sandbox proposal was discarded; the accepted native direction and selected
+transport are recorded in the [spike report](docs/research/host-runner-spike.md)
+and [SDR-20261022-003](docs/decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md).
+
+**HR-01–03 implementation:** Added the typed `HarnessRunner` request/result
+contract, host-side workspace reconstruction and bounded binary Git-diff
+handoff, durable Postgres dispatch, and authenticated loopback polling. The
+launcher stages and manages a host-runner process alongside the runtime, stores
+project capabilities owner-only on the host while mounting only their hashes
+into the execution service, and exposes capability controls/status in the CLI
+and Console. Host execution is opt-in, warns that the local CLI has the user's
+full OS permissions, and fails closed without a worker fallback. Dapr retains
+orchestration, validation, and integration. Launcher and engine typechecks and
+their full unit suites pass; package staging includes the host-runner entry
+point. All 22 PostgreSQL live integration tests pass. An isolated rootless
+Podman Linux runtime confirmed service readiness and host-runner start/stop with
+a disposable registered repository. Real provider CLI invocation and
+authentication, task cancellation/process-tree cleanup, and qualification of
+each supported host OS remain outstanding.
+
+- [x] **HR-01 — Prove the native runner seam and workspace handoff.** The
+  contract, in-memory adapter, host workspace reconstruction, and bounded
+  result transfer are implemented; see the spike report. Platform qualification
+  remains HR-04 work.
+- [x] **HR-02 — Add the launcher-managed native host runner.** The launcher
+  manages lifecycle/readiness and owner-only project capabilities; CLI and
+  Console controls require explicit host-mode opt-in and disclose full
+  permissions.
+- [x] **HR-03 — Integrate host execution with Dapr activities.** Durable dispatch,
+  lease/cancellation handling, workspace result import, and existing validation
+  and integration are wired without changing Dapr's orchestration ownership.
+- [ ] **HR-04 — Qualify and document native host execution.** User documentation
+  is updated; isolated Linux runtime readiness and runner lifecycle are
+  verified. Real local CLI/provider-auth, task cancellation/process-tree
+  cleanup, and each supported host OS still require qualification. Do not
+  advertise an OS as supported before its own evidence exists.
+- [ ] **HR-GATE:** Implementation is present, but acceptance remains pending
+  real-provider and host-platform qualification. Dapr must remain the workflow
+  owner; explicit opt-in, full-permissions disclosure, credential separation,
+  existing result checks, and no automatic mode fallback are required.
 
 ## Release acceptance matrix
 

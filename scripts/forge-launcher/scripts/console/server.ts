@@ -869,6 +869,17 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             broadcast("snapshot", snapshotEvent());
             return sendJson(res, result.ok ? 200 : 400, result);
           }
+          if (body.hostExecution !== undefined) {
+            if (typeof body.hostExecution !== "boolean") {
+              return sendJson(res, 400, { ok: false, message: "hostExecution must be a boolean." });
+            }
+            if (body.hostExecution && body.confirmed !== true) {
+              return sendJson(res, 400, { ok: false, message: "Enabling host execution requires explicit confirmation." });
+            }
+            const result = repo.setHostExecution(currentPaths()!, body.hostExecution);
+            broadcast("snapshot", snapshotEvent());
+            return sendJson(res, result.ok ? 200 : 400, result);
+          }
           const autoCommit = body.autoCommit;
           if (typeof autoCommit !== "boolean") {
             return sendJson(res, 400, { ok: false, message: "autoCommit must be a boolean." });

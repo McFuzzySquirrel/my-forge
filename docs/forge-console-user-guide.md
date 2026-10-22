@@ -170,8 +170,8 @@ recompile the manifest explicitly; the Console will not silently switch roots.
   the service's acknowledgement.
 - **Runtime**: manage the shared local Podman runtime, register the selected
   project, start or stop the service, and administer backups, tokens, and
-  harness credentials. Runtime lifecycle controls affect all registered
-  projects; use Service runs to control one workflow run.
+  harness credentials and host-runner capabilities. Runtime lifecycle controls
+  affect all registered projects; use Service runs to control one workflow run.
 
 The most useful combination for day-to-day work is usually Overview + Board + Logs.
 
@@ -182,6 +182,9 @@ with **Use selected project**. Registration is saved without restarting. If
 the runtime is already running, the page marks the mount change pending and
 offers a separate confirmed **Restart**; if it is stopped, use **Start** to
 apply the registry. Only each repository's `.git` directory is mounted.
+Registering a project also enables its host-runner capability. The Runtime view
+lets you rotate or revoke that project capability; changes require a runtime
+restart. Runner status is shown separately from service readiness.
 
 The Runtime page also provides explicit-confirmation controls for stopping or
 restarting the shared runtime, destructive reset and restore, API-token
@@ -192,6 +195,13 @@ Harness credential grants are entered into a password field, stored locally,
 and cleared from the form; the page lists variable names only. The last
 successful start's host-tools setting and PostgreSQL port prefill later
 restarts. Operations show progress and return actionable errors.
+
+Host execution is off by default. In Overview **Controls**, enable **Run
+harness CLI on this host** only for trusted tasks and confirm the warning. The
+local CLI uses its existing installation and authentication, but runs with your
+user account's full filesystem, process, and network permissions outside a task
+sandbox. This is independent of project runner authorization and worker
+harness-credential grants; there is no automatic fallback between modes.
 
 Authoring lifecycle records use the `FORGE_EVENT {json}` prefix in
 `docs/engine-run.log` and are also sent as `authoring` SSE events. Ordinary
@@ -208,8 +218,10 @@ The Overview controls panel offers the same actions you would otherwise issue fr
 For a repository registered with the local runtime, the **Execution
 deployment** panel reads **Local execution service**. In that case these
 controls go to the service's newest run instead of the local engine process,
-and builds run in the runtime's worker with the harness credentials granted
-through `forge-launcher runtime harness grant`. See
+and builds run in the runtime's worker by default, with harness credentials
+granted through `forge-launcher runtime harness grant`. A run explicitly
+configured for host execution instead uses the local CLI with full OS
+permissions. See
 [Service runs](forge-console.md#service-runs).
 
 - **Pause**: stop after the current task completes.

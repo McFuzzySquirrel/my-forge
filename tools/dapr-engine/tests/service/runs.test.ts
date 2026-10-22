@@ -11,6 +11,7 @@ import {
   type RunSubmissionV1,
 } from "../../contract/v1/index.ts";
 import type { RunWorkflowInputV1 } from "../../orchestration/workflow.ts";
+import type { HarnessRunner } from "../../execution/runner-contract.ts";
 import type { StoredControlRecordV1 } from "../../storage/postgres/control-records.ts";
 import type { StoredRunSubmissionV1 } from "../../storage/postgres/run-submissions.ts";
 import {
@@ -131,6 +132,7 @@ test("service submission rejects unavailable harnesses, repositories, unsafe ref
     [{ targetRef: "refs/heads/main" }, "target-ref-checked-out"],
     [{ targetRef: "refs/tags/v1" }, "invalid-submission"],
     [{ targetRef: "refs/heads/a/../b" }, "invalid-submission"],
+    [{ configuration: { settings: { concurrency: 1, hostExecution: true }, secretRefs: {} } }, "harness-unavailable"],
     [{ configuration: { settings: { apiToken: "x" }, secretRefs: {} } }, "secret-value-in-snapshot"],
     [{ manifestDigest: `sha256:${"0".repeat(64)}` }, "manifest-digest-mismatch"],
     [{ configuration: { settings: { concurrency: 99 }, secretRefs: {} } }, "invalid-submission"],
@@ -185,6 +187,34 @@ test("snapshot agents bind owners and fall back to a neutral descriptor", () => 
   assert.equal(run.agentFor(run.tasks.get("T2")!).rawBody, "");
   assert.equal(run.agentFor(run.tasks.get("T2")!).name, "reviewer");
   assert.throws(() => new ServiceRunRegistry(new Map()).bind("run_y", accepted), /not available/);
+});
+
+test("host execution binds only an enabled native runner and fails closed otherwise", () => {
+  const runner: HarnessRunner = {
+    async run() {
+      throw new Error("binding must not invoke the runner");
+    },
+  };
+  const accepted = {
+    ...submission({
+      configuration: { settings: { concurrency: 1, hostExecution: true }, secretRefs: {} },
+    }),
+    selection: { mode: "auto" as const, requestedTaskIds: [], effectiveTaskIds: ["T1", "T2"] },
+  };
+  const registry = new ServiceRunRegistry(defaultServiceHarnesses(), {
+    runner,
+    enabledForRepository: (repositoryId) => repositoryId === "demo",
+  });
+  const run = registry.bind("run_host", accepted);
+  assert.equal(run.hostRunner, runner);
+  assert.equal(run.credentials, undefined);
+  assert.throws(
+    () => new ServiceRunRegistry(defaultServiceHarnesses(), {
+      runner,
+      enabledForRepository: () => false,
+    }).bind("run_disabled", accepted),
+    /Native host execution is not enabled for repository 'demo'/,
+  );
 });
 
 test("mounted repositories require a real .git directory and a safe ID", async (t) => {

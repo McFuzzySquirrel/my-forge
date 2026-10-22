@@ -438,11 +438,15 @@ number seen, so a reload or reconnect picks up from the service's record.
 The dedicated **Runtime** view manages the shared local runtime; it is distinct
 from the **Service runs** view, which controls an individual workflow run.
 Runtime status shows container readiness, registered repositories, harness
-credential variable names, and whether a registry change still needs a
-restart. The view can start, stop, restart, or reset the runtime; create and
-restore backups; rotate the service and Dapr tokens; and register/unregister
-repositories or grant/revoke harness credentials. The selected Console project
-can be used as a repository-registration shortcut.
+credential variable names, native host-runner status, enabled project
+capabilities, and whether registry or capability changes still need a restart.
+The view can start, stop, restart, or reset the runtime; create and restore
+backups; rotate the service and Dapr tokens; and register/unregister
+repositories, enable/rotate/revoke their host-runner capabilities, or
+grant/revoke harness credentials. The selected Console project can be used as
+a repository-registration shortcut. Adding a repository enables its
+project-scoped runner capability; host execution for an individual run remains
+off unless explicitly selected.
 
 Repository changes are saved first and never restart the runtime implicitly.
 The Console offers a separate, confirmed restart to apply mount changes. The
@@ -459,6 +463,12 @@ same-origin checks, and per-server `X-Forge-Token`. Harness credential values
 are submitted directly to the local Console, stored with restricted
 permissions, and never returned, logged, or shown again; status exposes only
 granted variable names.
+
+Host execution is a separate opt-in in the Overview **Controls** panel. Before
+enabling it, the Console warns that the local harness CLI runs outside a task
+sandbox with the logged-in user's full OS permissions. The runner capability
+only authorizes Dapr-to-runner requests; it does not limit filesystem or
+process access. Host execution never falls back silently to the worker.
 
 For a registered repository, Overview builds and controls also use the
 service ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)):

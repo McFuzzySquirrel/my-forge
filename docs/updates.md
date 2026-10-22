@@ -4,6 +4,19 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.146
+
+### Opt in to native local harness execution
+
+- Added a launcher-managed host runner that uses locally installed harness
+  CLIs and their normal local authentication while Dapr retains orchestration,
+  validation, and repository integration.
+- Added project-scoped runner capabilities, lifecycle/status controls, and
+  explicit host-execution selection in the CLI and Console. Host execution is
+  unsandboxed, discloses full OS permissions, and never falls back silently.
+- Implemented HR-01 through HR-03. Live runtime, local CLI/provider-auth, and
+  per-host-OS qualification remain pending; no host OS is claimed as qualified.
+
 ## October 2026 - v3.145
 
 ### Administer the local runtime from the Console

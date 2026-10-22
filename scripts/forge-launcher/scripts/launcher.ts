@@ -104,6 +104,7 @@ interface LauncherState {
     vizPort: string;
     autoCommit: boolean;
     logHarnessActivity: boolean;
+    hostExecution: boolean;
     executionMode: "auto" | "manual";
     selectionScope?: "single" | "range" | "list";
     selectedTaskIds: string[];
@@ -138,6 +139,7 @@ function createLauncherState(options: LauncherOptions = {}): LauncherState {
       vizPort: env.FORGE_ENGINE_VIZ_PORT ?? "",
       autoCommit: env.FORGE_ENGINE_AUTO_COMMIT !== "0",
       logHarnessActivity: env.FORGE_ENGINE_LOG_HARNESS_ACTIVITY === "1",
+      hostExecution: false,
       executionMode: "auto",
       selectionScope: undefined,
       selectedTaskIds: [],
@@ -1035,6 +1037,7 @@ function engineRunArgs(): string[] {
   if (cfg.concurrency) args.push("--concurrency", cfg.concurrency);
   if (cfg.taskTimeoutMs) args.push("--task-timeout-ms", cfg.taskTimeoutMs);
   if (cfg.maxRetries) args.push("--max-retries", cfg.maxRetries);
+  if (cfg.hostExecution === true) args.push("--host-execution");
   if (cfg.viz) {
     args.push("--viz");
     if (cfg.vizPort) args.push("--viz-port", cfg.vizPort);
@@ -1856,6 +1859,7 @@ function setupStateForRepo(repoDir: string): void {
   state.engineConfig.vizPort = state.env.FORGE_ENGINE_VIZ_PORT ?? persisted?.vizPort ?? "";
   state.engineConfig.autoCommit = envFlagOrUndefined("FORGE_ENGINE_AUTO_COMMIT") ?? persisted?.autoCommit ?? true;
   state.engineConfig.logHarnessActivity = envFlagOrUndefined("FORGE_ENGINE_LOG_HARNESS_ACTIVITY") ?? persisted?.logHarnessActivity ?? false;
+  state.engineConfig.hostExecution = persisted?.hostExecution === true;
   state.engineConfig.executionMode = persisted?.executionMode === "manual" ? "manual" : "auto";
   state.engineConfig.selectionScope = persisted?.selectionScope === "single" || persisted?.selectionScope === "range" || persisted?.selectionScope === "list"
     ? persisted.selectionScope

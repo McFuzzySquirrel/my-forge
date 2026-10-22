@@ -108,7 +108,7 @@ npx forge-launcher@beta bootstrap [TARGET_DIR] ... [--init-git]
                               [--runner <copilot|opencode|claude|inherit>]
 npx forge-launcher@beta engine-run [--repo <path>] [--harness <h>] [--concurrency <n>]
                               [--task-timeout-ms <ms>] [--yes] [--dry-run]
-                               [--allow-noop] [--run-validation]
+                              [--allow-noop] [--run-validation] [--host-execution]
                               [--log-harness-activity|--no-log-harness-activity]
                               [--auto-commit|--no-auto-commit] [--commit-message-template <tmpl>]
 npx forge-launcher@beta resume [--repo <path>] [--non-interactive] [--dry-run]
@@ -121,9 +121,11 @@ npx forge-launcher@beta runtime reset --confirm
 npx forge-launcher@beta runtime backup --output <new-directory>
 npx forge-launcher@beta runtime restore --from <backup-directory> --confirm [--allow-git-drift]
 npx forge-launcher@beta runtime repo add <path> [--id <id>] | list | remove <id>
-npx forge-launcher@beta service submit [--repo <path>] [--harness stub] [--branch <base>]
+npx forge-launcher@beta runtime runner <enable|rotate|revoke> <repository-id>
+npx forge-launcher@beta service submit [--repo <path>] [--harness <h>] [--branch <base>]
                               [--tasks <id,id>] [--concurrency <n>] [--max-retries <n>]
-                              [--retry-delay-ms <ms>] [--allow-noop] [--key <key>] [--follow]
+                              [--retry-delay-ms <ms>] [--allow-noop] [--host-execution]
+                              [--key <key>] [--follow]
 npx forge-launcher@beta service runs [--repo <path>] [--json]
 npx forge-launcher@beta service status <run-id> [--json]
 npx forge-launcher@beta service events <run-id> [--after <n>] [--follow] [--json]
@@ -171,9 +173,26 @@ them. `runtime rotate-tokens` replaces the service API token and the Dapr
 sidecar token (`DAPR_API_TOKEN`) in `runtime.env` and keeps the database
 passwords; run `runtime stop` and `runtime start` to apply them.
 
+The launcher starts and stops a native host runner with the runtime when at
+least one registered repository has an enabled runner capability. `runtime repo
+add` enables a capability for that repository; `runtime runner enable|rotate|revoke
+<repository-id>` manages it. Capability changes require a runtime restart.
+`runtime status` reports whether the native runner is disabled, running, or
+stopped. The per-repository capability authorizes Dapr-to-runner requests only;
+it is separate from provider credentials and runtime tokens.
+
+Runs use the worker by default. `engine-run --host-execution` or
+`service submit --host-execution` explicitly selects the locally installed CLI
+and its normal local authentication. Host execution is **not sandboxed**: the
+CLI and its child tools run as the logged-in user with access to that account's
+files, processes, and network, not only the registered project. Use it only for
+trusted tasks. A missing or unavailable host runner fails closed; the launcher
+never falls back silently to the worker CLI. The Console's Overview has the
+equivalent per-project host-execution opt-in and warning.
+
 The Console's **Runtime** view provides local controls for these operations:
 status, start/stop/restart, reset, backup/restore, token rotation, repository
-registration, and harness credential grants. It writes registry changes first
+registration, runner-capability controls, and harness credential grants. It writes registry changes first
 and offers a separate confirmed restart to apply them. The page remembers the
 last successful start's host-tools and PostgreSQL-port settings. Runtime
 mutations remain local to the loopback Console; credential values are never

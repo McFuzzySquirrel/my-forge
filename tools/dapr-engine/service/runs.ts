@@ -18,6 +18,7 @@ import {
 import { StubAdapter } from "../execution/harness/stub-adapter.ts";
 import { harnessUnavailableDetail, type ServiceHarnessV1 } from "./harnesses.ts";
 import type { AgentDescriptor, ManifestTask } from "../execution/types.ts";
+import type { HarnessRunner } from "../execution/runner-contract.ts";
 import {
   executionHostRunFromSubmission,
   type ExecutionHostRunV1,
@@ -113,25 +114,49 @@ function fallbackAgent(name: string): AgentDescriptor {
 export class ServiceRunRegistry {
   private readonly runs = new Map<string, ExecutionHostRunV1>();
 
-  constructor(private readonly harnesses: ReadonlyMap<string, ServiceHarnessV1>) {}
+  constructor(
+    private readonly harnesses: ReadonlyMap<string, ServiceHarnessV1>,
+    private readonly hostRunner?: {
+      readonly runner: HarnessRunner;
+      readonly enabledForRepository: (repositoryId: string) => boolean;
+    },
+  ) {}
 
-  harnessAvailable(harness: RunSubmissionV1["harness"]): boolean {
-    return this.harnessUnavailable(harness) === undefined;
+  harnessAvailable(
+    harness: RunSubmissionV1["harness"],
+    options: { readonly hostExecution?: boolean; readonly repositoryId?: string } = {},
+  ): boolean {
+    return this.harnessUnavailable(harness, options) === undefined;
   }
 
   /** Undefined when the harness can be admitted; otherwise an operator-facing reason. */
-  harnessUnavailable(harness: RunSubmissionV1["harness"]): string | undefined {
+  harnessUnavailable(
+    harness: RunSubmissionV1["harness"],
+    options: { readonly hostExecution?: boolean; readonly repositoryId?: string } = {},
+  ): string | undefined {
     const id = String(harness?.id);
     const version = String(harness?.adapterVersion);
     const entry = this.harnesses.get(id);
     if (!entry) return harnessUnavailableDetail(id, version, "unknown-harness");
     if (!entry.adapterVersions.includes(version)) return harnessUnavailableDetail(id, version, "unsupported-adapter-version");
+    if (options.hostExecution) {
+      if (!this.hostRunner || !options.repositoryId
+        || !this.hostRunner.enabledForRepository(options.repositoryId)) {
+        return `Native host execution is not enabled for repository '${options.repositoryId ?? ""}'.`;
+      }
+      return undefined;
+    }
     const reason = entry.unavailable?.();
     return reason ? harnessUnavailableDetail(id, version, reason) : undefined;
   }
 
   /** Throws when the snapshot cannot be executed by this worker. */
   bind(runId: string, submission: AcceptedRunSubmissionV1): ExecutionHostRunV1 {
+    const hostExecution = submission.configuration.settings.hostExecution === true;
+    const hostRunner = hostExecution ? this.hostRunner : undefined;
+    if (hostExecution && (!hostRunner || !hostRunner.enabledForRepository(submission.repositoryId))) {
+      throw new Error(`Native host execution is not enabled for repository '${submission.repositoryId}'.`);
+    }
     const harness = this.harnesses.get(submission.harness.id);
     if (!harness || !harness.adapterVersions.includes(submission.harness.adapterVersion)) {
       throw new Error(`Harness '${submission.harness.id}@${submission.harness.adapterVersion}' is not available in this worker`);
@@ -140,7 +165,8 @@ export class ServiceRunRegistry {
     const run = executionHostRunFromSubmission(runId, submission, {
       agentFor: (task: ManifestTask) => agents.get(task.ownerAgent ?? "") ?? fallbackAgent(task.ownerAgent ?? "forge-agent"),
       harness: harness.create(),
-      ...(harness.credentials ? { credentials: harness.credentials } : {}),
+      ...(hostRunner ? { hostRunner: hostRunner.runner } : {}),
+      ...(!hostRunner && harness.credentials ? { credentials: harness.credentials } : {}),
     });
     this.runs.set(runId, run);
     return run;
@@ -270,13 +296,22 @@ export class RunService {
       return reject(422, "invalid-submission", "targetRef must be a refs/heads/ branch");
     }
     if (!isRecord(submission.harness) || !isRecord(submission.configuration) || !isRecord(submission.selection)
+      || !isRecord(submission.configuration.settings)
       || !isRecord(submission.manifestSnapshot) || !Array.isArray(submission.manifestSnapshot.phases)) {
       return reject(422, "invalid-submission", "Submission is missing harness, configuration, selection, or manifest phases");
     }
     if (utf8JsonBytes(submission) > RUN_LIMITS_V1.maxWorkflowInputBytes) {
       return reject(413, "run-limit-exceeded", `Submission exceeds ${RUN_LIMITS_V1.maxWorkflowInputBytes} bytes`);
     }
-    const harnessProblem = this.dependencies.registry.harnessUnavailable(submission.harness);
+    if (submission.configuration.settings.hostExecution !== undefined
+      && typeof submission.configuration.settings.hostExecution !== "boolean") {
+      return reject(422, "invalid-submission", "configuration.settings.hostExecution must be boolean when provided");
+    }
+    const hostExecution = submission.configuration.settings.hostExecution === true;
+    const harnessProblem = this.dependencies.registry.harnessUnavailable(submission.harness, {
+      hostExecution,
+      repositoryId: submission.repositoryId,
+    });
     if (harnessProblem) return reject(422, "harness-unavailable", harnessProblem);
     const repositoryRoot = this.dependencies.repositoryRoot(submission.repositoryId);
     if (!repositoryRoot) {

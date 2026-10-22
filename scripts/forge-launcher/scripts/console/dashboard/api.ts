@@ -183,6 +183,12 @@ export const api = {
   setLogHarnessActivity(enabled: boolean): Promise<{ ok: boolean; message: string }> {
     return post<{ ok: boolean; message: string }>("/api/engine-config", { logHarnessActivity: enabled });
   },
+  setHostExecution(enabled: boolean): Promise<{ ok: boolean; message: string }> {
+    return post<{ ok: boolean; message: string }>("/api/engine-config", {
+      hostExecution: enabled,
+      ...(enabled ? { confirmed: true } : {}),
+    });
+  },
   setConcurrency(value: number): Promise<{ ok: boolean; message: string }> {
     return post<{ ok: boolean; message: string }>("/api/engine-config", { concurrency: value });
   },

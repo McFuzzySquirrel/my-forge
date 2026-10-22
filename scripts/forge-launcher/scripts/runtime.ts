@@ -23,6 +23,14 @@ import {
   listHarnessGrants,
   revokeHarnessCredential,
 } from "./runtime-harnesses.ts";
+import {
+  ensureHostRunnerFiles,
+  getHostRunnerProcessStatus,
+  listEnabledHostRunnerRepositories,
+  startHostRunner,
+  stopHostRunner,
+  updateHostRunnerCapability,
+} from "./runtime-host-runner.ts";
 
 const CREDENTIALS_FILE = "runtime.env";
 const APPLIED_REPOSITORIES_FILE = "runtime-applied-repositories.json";
@@ -408,6 +416,8 @@ export interface RuntimeAdminState {
   readonly missingServices: readonly string[];
   readonly diagnostics: readonly string[];
   readonly repositories: readonly RegisteredRepository[];
+  readonly hostRunnerEnabledRepositoryIds: readonly string[];
+  readonly hostRunnerStatus: "disabled" | "running" | "stopped";
   /** Variable names only. Credential values are never exposed by this API. */
   readonly harnessGrants: Readonly<Record<string, readonly string[]>>;
   readonly startOptions: { readonly hostTools: boolean; readonly postgresPort?: number } | null;
@@ -422,6 +432,7 @@ export type RuntimeAdminAction =
   | { readonly action: "backup"; readonly output: string }
   | { readonly action: "restore"; readonly from: string; readonly confirmed: boolean; readonly allowGitDrift: boolean }
   | { readonly action: "rotate-tokens"; readonly confirmed: boolean }
+  | { readonly action: "runner-capability"; readonly id: string; readonly operation: "enable" | "rotate" | "revoke"; readonly confirmed: boolean }
   | { readonly action: "repo-add"; readonly path: string; readonly id?: string }
   | { readonly action: "repo-remove"; readonly id: string; readonly confirmed: boolean }
   | { readonly action: "harness-grant"; readonly harness: string; readonly variable: string; readonly value: string }
@@ -602,9 +613,11 @@ async function repositoryRestartRequired(
 
 export async function getRuntimeAdminState(dataDir = getRuntimeDataDir()): Promise<RuntimeAdminState> {
   const project = getRuntimeProject();
-  const [repositories, harnessGrants] = await Promise.all([
+  const [repositories, harnessGrants, hostRunnerEnabledRepositoryIds, hostRunnerStatus] = await Promise.all([
     listRegisteredRepositories(dataDir),
     listHarnessGrants(dataDir),
+    listEnabledHostRunnerRepositories(dataDir),
+    getHostRunnerProcessStatus(dataDir),
   ]);
   let credentialsPresent = false;
   try {
@@ -622,6 +635,8 @@ export async function getRuntimeAdminState(dataDir = getRuntimeDataDir()): Promi
       missingServices: [...SERVICES],
       diagnostics: [],
       repositories,
+      hostRunnerEnabledRepositoryIds,
+      hostRunnerStatus,
       harnessGrants,
       startOptions: null,
       restartRequired: false,
@@ -643,6 +658,8 @@ export async function getRuntimeAdminState(dataDir = getRuntimeDataDir()): Promi
     missingServices,
     diagnostics,
     repositories,
+    hostRunnerEnabledRepositoryIds,
+    hostRunnerStatus,
     harnessGrants,
     startOptions: applied?.hostTools === undefined
       ? null
@@ -686,6 +703,8 @@ async function compose(
   env.MYFORGE_LAUNCHER_NODE_MODULES = launcherNodeModules;
   env.MYFORGE_TEMPLATES_DIR = templatesDir;
   env.MYFORGE_HARNESS_GRANTS_DIR = await ensureHarnessGrants(path.dirname(environment.file));
+  const hostRunnerFiles = await ensureHostRunnerFiles(path.dirname(environment.file));
+  env.MYFORGE_HOST_RUNNER_HASHES_FILE = hostRunnerFiles.hashesFile;
   if (action === "up" && options.hostTools) {
     env.POSTGRES_PORT = String(options.postgresPort ?? 55432);
   }
@@ -698,6 +717,14 @@ async function compose(
   return output;
 }
 
+async function startManagedHostRunner(dataDir: string): Promise<void> {
+  const credentials = await readRuntimeApiAccess(dataDir);
+  const { executionDir } = resolveResources();
+  const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const port = Number(new URL(credentials.baseUrl).port);
+  await startHostRunner(dataDir, credentials.token, port, path.dirname(executionDir), packageDir);
+}
+
 const RUNTIME_USAGE = `Usage:
   forge-launcher runtime start [--host-tools] [--postgres-port <n>]
   forge-launcher runtime status
@@ -708,6 +735,7 @@ const RUNTIME_USAGE = `Usage:
   forge-launcher runtime repo add <repository> [--id <id>]
   forge-launcher runtime repo list
   forge-launcher runtime repo remove <id>
+  forge-launcher runtime runner <enable|rotate|revoke> <repository-id>
   forge-launcher runtime rotate-tokens
   forge-launcher runtime harness list|grant|revoke ...
 
@@ -727,6 +755,7 @@ and probed as a task UID. Tasks cannot read Git metadata or objects from any reg
 repository. The repository owner's .git directory is tightened to mode 0700 and remains so
 after unregistration; startup fails if task-UID denial cannot be verified. See ADR-078.
 "rotate-tokens" replaces the service API and Dapr sidecar tokens; restart the runtime to apply them.
+"runner enable|rotate|revoke" manages the per-repository host-runner capability; restart the runtime to apply changes.
 "harness grant <harness> <VARIABLE>" grants a credential (read from stdin) to one worker harness;
 grants apply to the next task attempt and are excluded from backups.
 `;
@@ -738,6 +767,7 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
     return actionValue ? 0 : 1;
   }
   if (actionValue === "repo") return repositoryCli(rest);
+  if (actionValue === "runner") return hostRunnerCli(rest);
   if (actionValue === "harness") return harnessCli(getRuntimeDataDir(), rest);
   if (actionValue === "rotate-tokens") {
     if (rest.length) throw new Error("Usage: forge-launcher runtime rotate-tokens");
@@ -799,6 +829,7 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
   const hints = remediationHints(diagnostics.join("\n"));
   process.stdout.write(
     `${output || "No runtime containers are present."}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}` +
+    `\nNative host runner: ${await getHostRunnerProcessStatus(getRuntimeDataDir())}` +
     `${hints.map((hint) => `\nHint: ${hint}`).join("")}\n`,
   );
   return 0;
@@ -819,16 +850,40 @@ async function repositoryCli(args: readonly string[]): Promise<number> {
     if (rest.length === 3 && rest[1] === "--id") id = rest[2];
     else if (rest.length !== 1) throw new Error("Usage: forge-launcher runtime repo add <repository> [--id <id>]");
     await ensureRuntimeCredentials(dataDir);
+    await stopHostRunner(dataDir);
     const entry = await registerRepository(dataDir, rest[0], id);
+    await updateHostRunnerCapability(dataDir, entry.id, "enable");
+    await ensureHostRunnerFiles(dataDir);
     process.stdout.write(`Registered '${entry.id}' -> ${entry.path}. Restart the runtime to mount it.\n`);
     return 0;
   }
   if (command === "remove" && rest.length === 1) {
-    if (!await unregisterRepository(dataDir, rest[0]!)) throw new Error(`Repository '${rest[0]}' is not registered.`);
+    if (!(await listRegisteredRepositories(dataDir)).some((entry) => entry.id === rest[0])) {
+      throw new Error(`Repository '${rest[0]}' is not registered.`);
+    }
+    await stopHostRunner(dataDir);
+    await unregisterRepository(dataDir, rest[0]!);
+    await ensureHostRunnerFiles(dataDir);
     process.stdout.write(`Unregistered '${rest[0]}'. Restart the runtime to unmount it.\n`);
     return 0;
   }
   throw new Error("Usage: forge-launcher runtime repo add <repository> [--id <id>] | list | remove <id>");
+}
+
+async function hostRunnerCli(args: readonly string[]): Promise<number> {
+  const [operation, repositoryId, ...rest] = args;
+  if ((operation !== "enable" && operation !== "rotate" && operation !== "revoke")
+    || !repositoryId || rest.length > 0) {
+    throw new Error("Usage: forge-launcher runtime runner <enable|rotate|revoke> <repository-id>");
+  }
+  const result = await executeRuntimeAdminAction({
+    action: "runner-capability",
+    id: repositoryId,
+    operation,
+    confirmed: true,
+  });
+  process.stdout.write(`${result.message}\n`);
+  return 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -872,6 +927,17 @@ export function parseRuntimeAdminAction(value: unknown): RuntimeAdminAction {
     case "rotate-tokens":
       requiredConfirmation(value.confirmed, action === "rotate-tokens" ? "Token rotation" : `Runtime ${action}`);
       return { action, confirmed: true };
+    case "runner-capability":
+      requiredConfirmation(value.confirmed, "Host-runner capability changes");
+      if (value.operation !== "enable" && value.operation !== "rotate" && value.operation !== "revoke") {
+        throw new Error("Host-runner capability operation must be enable, rotate, or revoke.");
+      }
+      return {
+        action,
+        id: requiredText(value.id, "Repository ID"),
+        operation: value.operation,
+        confirmed: true,
+      };
     case "backup":
       return { action, output: requiredText(value.output, "Backup output path") };
     case "restore":
@@ -919,11 +985,19 @@ export async function executeRuntimeAdminAction(
   const action = parseRuntimeAdminAction(input);
   if (action.action === "repo-add") {
     await ensureRuntimeCredentials(dataDir);
+    await stopHostRunner(dataDir);
     const entry = await registerRepository(dataDir, action.path, action.id);
+    await updateHostRunnerCapability(dataDir, entry.id, "enable");
+    await ensureHostRunnerFiles(dataDir);
     return { message: `Registered '${entry.id}' -> ${entry.path}. Restart the runtime to mount it.`, restartRequired: true };
   }
   if (action.action === "repo-remove") {
-    if (!await unregisterRepository(dataDir, action.id)) throw new Error(`Repository '${action.id}' is not registered.`);
+    if (!(await listRegisteredRepositories(dataDir)).some((entry) => entry.id === action.id)) {
+      throw new Error(`Repository '${action.id}' is not registered.`);
+    }
+    await stopHostRunner(dataDir);
+    await unregisterRepository(dataDir, action.id);
+    await ensureHostRunnerFiles(dataDir);
     return { message: `Unregistered '${action.id}'. Restart the runtime to unmount it.`, restartRequired: true };
   }
   if (action.action === "harness-grant") {
@@ -946,10 +1020,24 @@ export async function executeRuntimeAdminAction(
     };
   }
   if (action.action === "rotate-tokens") {
+    await stopHostRunner(dataDir);
     await rotateRuntimeTokens(dataDir);
     await markRuntimeRestartRequired(dataDir);
     return {
       message: "Rotated the service API and Dapr sidecar tokens. Start or restart the runtime to apply them.",
+      restartRequired: true,
+    };
+  }
+  if (action.action === "runner-capability") {
+    if (!(await listRegisteredRepositories(dataDir)).some((entry) => entry.id === action.id)) {
+      throw new Error(`Repository '${action.id}' is not registered.`);
+    }
+    await stopHostRunner(dataDir);
+    await updateHostRunnerCapability(dataDir, action.id, action.operation);
+    await ensureHostRunnerFiles(dataDir);
+    await markRuntimeRestartRequired(dataDir);
+    return {
+      message: `Host-runner capability ${action.operation === "enable" ? "enabled" : `${action.operation}d`} for '${action.id}'. Restart the runtime to apply the change.`,
       restartRequired: true,
     };
   }
@@ -967,25 +1055,34 @@ export async function executeRuntimeAdminAction(
     : await requireRuntimeEnvironment(dataDir);
 
   if (action.action === "backup") {
+    await stopHostRunner(dataDir);
     await backupRuntime(action.output, options, environment);
+    await startManagedHostRunner(dataDir);
     return { message: `Local runtime backup created at ${action.output}.`, restartRequired: false };
   }
   if (action.action === "restore") {
+    await stopHostRunner(dataDir);
     await restoreRuntime(action.from, options, environment);
+    await startManagedHostRunner(dataDir);
     return { message: "Local runtime backup restored; the execution service is ready.", restartRequired: false };
   }
   if (action.action === "start" || action.action === "restart") {
-    if (action.action === "restart") await compose("down", options, environment);
+    if (action.action === "restart") {
+      await stopHostRunner(dataDir);
+      await compose("down", options, environment);
+    }
     if (action.hostTools) await assertHostPortAvailable(action.postgresPort ?? 55432);
     await compose("up", options, environment);
     await waitForRuntimeReady(environment);
     await recordAppliedRepositories(dataDir, options);
+    await startManagedHostRunner(dataDir);
     return {
       message: `Local infrastructure is running${action.hostTools ? `; PostgreSQL is on 127.0.0.1:${action.postgresPort ?? 55432}` : ""}.`,
       restartRequired: false,
     };
   }
   if (action.action === "stop" || action.action === "reset") {
+    await stopHostRunner(dataDir);
     await compose("down", options, environment);
     if (action.action === "reset") {
       await removeRuntimeVolumes();

@@ -149,7 +149,7 @@ test("without an active run a new run is submitted with service settings", async
   const service = fakeService([]);
   const output: string[] = [];
   const code = await serviceEngineRun([
-    "--repo", repo, "--harness", "stub", "--concurrency", "2", "--max-retries", "1", "--allow-noop",
+    "--repo", repo, "--harness", "stub", "--concurrency", "2", "--max-retries", "1", "--allow-noop", "--host-execution",
     "--execution-mode", "manual", "--selected-tasks", "T1, T2", "--selection-scope", "phase",
   ], dependencies(service, output));
   assert.equal(code, 0);
@@ -157,7 +157,7 @@ test("without an active run a new run is submitted with service settings", async
   const input = service.submitted[0] as Record<string, unknown>;
   assert.equal(input.harness, "stub");
   assert.equal(input.repositoryId, REPOSITORY_ID);
-  assert.deepEqual(input.settings, { concurrency: 2, maxRetries: 1, allowNoop: true });
+  assert.deepEqual(input.settings, { concurrency: 2, maxRetries: 1, allowNoop: true, hostExecution: true });
   assert.deepEqual(input.requestedTaskIds, ["T1", "T2"]);
   assert.match(output.join(""), /Submitted service run run-new -> forge\/main/);
 });

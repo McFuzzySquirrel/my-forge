@@ -25,6 +25,7 @@ import {
   releaseTaskProcessIdentity,
 } from "../execution/isolation.ts";
 import { superviseExecution, type ExecutionOwnershipStore } from "../execution/process-lifecycle.ts";
+import type { HarnessRunner } from "../execution/runner-contract.ts";
 import { TASK_EXECUTION_DIR } from "../execution/task-execution.ts";
 import type { AgentDescriptor, HarnessAdapter, ManifestTask, ProcessIdentityV1 } from "../execution/types.ts";
 import { captureWorkspaceCheckpoint, type WorkspaceCheckpointPublisher } from "../execution/workspace-reconstruction.ts";
@@ -75,6 +76,7 @@ export interface ExecutionHostRunV1 {
   readonly maxRetries: number;
   readonly agentFor: (task: ManifestTask) => AgentDescriptor;
   readonly harness: HarnessAdapter;
+  readonly hostRunner?: HarnessRunner;
   /** Resolves the scoped credential environment for one attempt; never persisted. */
   readonly credentials?: () => Promise<Readonly<Record<string, string>>>;
   readonly timeoutMs?: number;
@@ -83,6 +85,7 @@ export interface ExecutionHostRunV1 {
 export interface ExecutionHostRunBindingV1 {
   readonly agentFor: ExecutionHostRunV1["agentFor"];
   readonly harness: HarnessAdapter;
+  readonly hostRunner?: HarnessRunner;
   readonly credentials?: ExecutionHostRunV1["credentials"];
   readonly timeoutMs?: number;
 }
@@ -339,7 +342,7 @@ export class ExecutionHost {
               join(this.dependencies.taskUidIsolation ? this.requireTaskScratchRoot() : this.dependencies.scratchRoot, "homes"),
               processIdentity ? { processIdentity } : {},
             );
-            const credentials = run.credentials ? await run.credentials() : {};
+            const credentials = run.hostRunner ? {} : run.credentials ? await run.credentials() : {};
             const environment = buildHarnessEnvironment({
               home: home.home,
               inherited: this.dependencies.inheritedEnvironment ?? process.env,
@@ -351,6 +354,11 @@ export class ExecutionHost {
               manifestDigest: input.manifestDigest,
               logicalAttempt: input.logicalAttempt,
               operationId: input.operationId,
+              ...(run.hostRunner ? {
+                hostRunner: run.hostRunner,
+                repositoryId: run.repositoryId,
+                baseRevision: workspace.baseRevision,
+              } : {}),
               request: {
                 agent: run.agentFor(task),
                 task,

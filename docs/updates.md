@@ -4,6 +4,19 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.142
+
+### Remove inherited MyForge narrative series
+
+- Removed the four `THE-STORY` documents inherited from the original MyForge;
+  they describe the original project's history rather than this alternate
+  version.
+- Removed their links from the project README. Historical changelog mentions
+  remain as plain filenames so past release records are preserved without
+  linking to removed files.
+
+---
+
 ## October 2026 - v3.141
 
 ### Stop using legacy Console state as execution authority (P7)
@@ -1099,7 +1112,7 @@ See [ADR-063](adr/063-forge-board-chrome-and-accessibility.md).
   `--concurrency` are unaffected.
 - No keybindings, routes, or API fields changed, so nothing downstream needs
   updating. See the worktree and scheduling discussion in
-  [Part 4 of the story](THE-STORY-PART-4.md).
+  `THE-STORY-PART-4.md`.
 
 ## September 2026 - v3.88
 
@@ -2061,7 +2074,7 @@ See [ADR-063](adr/063-forge-board-chrome-and-accessibility.md).
 
 - Refreshed the workflow-engine, artifact-store, and workforce-compiler deep dives so they match the current code paths: manual task selection, output-verification and attribution, auto-commit, model override inputs, and the current serialized execution behavior while repo-wide worktree attribution remains authoritative.
 - Updated related operator docs (`README.md`, `docs/workflow-engine.md`, `docs/forge-launcher.md`, and `docs/forge-console-user-guide.md`) so concurrency settings are described as persisted configuration rather than active parallel dispatch in the current engine implementation.
-- Added [`docs/THE-STORY-PART-3.md`](THE-STORY-PART-3.md), continuing the MyForge narrative from the end of Part 2 through the Console, incremental existing-repo workflows, model planning, observability, and the lessons those changes taught.
+- Added `docs/THE-STORY-PART-3.md`, continuing the MyForge narrative from the end of Part 2 through the Console, incremental existing-repo workflows, model planning, observability, and the lessons those changes taught.
 
 ---
 

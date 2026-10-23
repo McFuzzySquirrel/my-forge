@@ -2,7 +2,7 @@
 id: SDR-20261022-003
 type: sdr
 title: Native local harness execution without task sandbox
-status: open
+status: promoted
 applies_to:
   - docs/features/local-host-harness-execution.md
   - tools/dapr-engine/**
@@ -10,7 +10,7 @@ applies_to:
   - plan.md
 tags: []
 date: '2026-10-22'
-promoted_to: null
+promoted_to: ADR-081
 ---
 
 # SDR-20261022-003: Native local harness execution without task sandbox

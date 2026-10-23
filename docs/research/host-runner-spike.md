@@ -5,7 +5,8 @@
 **Related:** [HOST-RUNNER feature](../features/local-host-harness-execution.md),
 [issue #18](https://github.com/McFuzzySquirrel/my-forge/issues/18),
 [SDR-20261022-002](../decisions/sdr/SDR-20261022-002-sandboxed-host-harness-runner.md),
-[current direction: SDR-20261022-003](../decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md)
+[current direction: ADR-081](../adr/081-native-local-harness-execution-without-task-sandbox.md),
+[originating SDR-20261022-003](../decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md)
 
 ## Question
 

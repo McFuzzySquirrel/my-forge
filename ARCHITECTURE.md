@@ -5,6 +5,9 @@ instructions are authored in a target repository, then
 `forge-execution-adapter` compiles them into an execution manifest. The launcher
 submits that manifest to the registered local Dapr execution service; the
 service, not the launcher or Console, owns durable run orchestration and status.
+Tasks use the worker-container harness runner by default; an explicit
+native-host selection delegates harness execution to the local host runner.
+Dapr owns the workflow in either mode.
 
 For the detailed, code-grounded component map, data flow, runtime topology,
 testing boundaries, and extension guidance, see the
@@ -24,11 +27,18 @@ For the current Dapr-backed service-run lifecycle, see the
 - **Execution adapter** (`templates/skills/forge-execution-adapter/`):
   validates source documents and compiles `docs/EXECUTION-MANIFEST.json`.
 - **Dapr execution service** (`tools/dapr-engine/`): service API, durable Dapr
-  workflows, task/harness execution, PostgreSQL-backed run records, and
-  file-backed artifacts/checkpoints.
+  workflows, runner selection, PostgreSQL-backed run records, and file-backed
+  artifacts/checkpoints.
 - **Local runtime** (`tools/dapr-engine/deploy/`): rootless Podman Compose
   deployment for PostgreSQL, Dapr placement/Scheduler/sidecar, and the Forge
-  worker. Registered repositories are mounted by the launcher.
+  worker, which provides the default worker-container execution mode.
+  Registered repositories are mounted by the launcher.
+- **Native host runner** (`tools/dapr-engine/execution/` and launcher runtime
+  controls): polls for explicitly selected host-mode jobs and invokes the
+  operator's locally installed CLI against a disposable host workspace. It is
+  unsandboxed and uses the operator's normal OS permissions and CLI
+  authentication; provider, process-cleanup, and per-host-OS qualification
+  remains in progress.
 - **Forge Console** (`scripts/forge-launcher/scripts/console/`): local browser
   projection for authoring, service-run status and controls, logs, artifacts,
   tasks, and the Console-owned Kanban/Gantt Board.
@@ -45,12 +55,16 @@ For the current Dapr-backed service-run lifecycle, see the
 3. The execution adapter validates inputs and writes the manifest.
 4. The launcher authenticates to the local service API and submits a run
    snapshot for a registered repository.
-5. Dapr Workflow coordinates durable run/task activities. PostgreSQL stores
-   submissions, statuses, events, controls, receipts, and execution ownership;
-   the worker uses the execution library and granted harness credentials.
-6. The service integrates task changes into the repository. The Console reads
-   service-backed status and exposes acknowledged controls; legacy
-   `WORKFLOW-STATE.json` remains archival and is not execution authority.
+5. Dapr Workflow coordinates durable run/task activities. The default
+   worker-container runner uses runtime-provided CLIs and granted harness
+   credentials; explicit native-host mode dispatches through the host-runner
+   queue and uses the local CLI's normal authentication. Both modes operate on
+   task workspaces.
+6. The Dapr execution service validates and integrates accepted task changes
+   into the repository in both modes. Dapr Workflow remains the durable
+   orchestration authority. The Console reads service-backed status and
+   exposes acknowledged controls; legacy `WORKFLOW-STATE.json` remains
+   archival and is not execution authority.
 
 ## Architectural boundaries
 
@@ -61,8 +75,13 @@ For the current Dapr-backed service-run lifecycle, see the
 - Dapr orchestration and persistence live in `tools/dapr-engine/`; launcher
   service clients and runtime management live in `scripts/forge-launcher/`.
 - The local service API is loopback-only and bearer-token protected.
-  Repository registration controls which project Git metadata the worker can
-  access; harness credentials are granted separately.
+  Repository registration controls which project Git metadata is available to
+  the worker and host runner; worker-mode harness credentials are granted
+  separately.
+- Native-host execution is an explicit opt-in. Its project capability
+  authorizes Dapr-to-runner requests only; it does not sandbox the CLI or
+  restrict its full user-level filesystem, process, or network permissions.
+  Host mode never silently falls back to worker-container execution.
 - Hosted execution is not available. New runs require local runtime
   registration; legacy histories are not imported or silently resumed.
 

@@ -152,5 +152,6 @@ procedures.
 - [ADR-066: Dapr workflow replacement architecture](adr/066-dapr-workflow-full-replacement-architecture.md)
 - [ADR-069: service-run submission and repository binding](adr/069-service-run-submission-and-repository-binding.md)
 - [ADR-071: service harnesses and execution entry points](adr/071-service-harnesses-and-execution-entry-points.md)
+- [ADR-081: Native local harness execution without task sandbox](adr/081-native-local-harness-execution-without-task-sandbox.md)
 - [ADR-079: Dapr execution cutover](adr/079-dapr-execution-cutover.md)
 - [Code-grounded local execution deep dive](local-execution-deep-dive.md)

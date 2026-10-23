@@ -75,7 +75,7 @@ hand-edit generated manifests. Keep this file as the roadmap/status index.
 | P6 — Recovery and release qualification | P5 gate | QA + security + platform | Complete; P6-GATE accepted 2026-10-21 | @McFuzzySquirrel; [P6 issue #17](https://github.com/McFuzzySquirrel/my-forge/issues/17); [P6-GATE evidence](#p6-gate-technical-isolation-closure--2026-10-21) |
 | P7 — Cutover and legacy retirement | P6 gate | Release + documentation | Complete; P7-GATE accepted 2026-10-22 | [P7 implementation](https://github.com/McFuzzySquirrel/my-forge/commit/5acde50); [P7-01/02 evidence](#p7-0102-local-rehearsal-evidence--2026-10-21) |
 | P8 — Hosted deployment | P6 gate; public release after P7 | Platform + security | Not started | Unassigned |
-| Post-P7 — Native local host runner | P7 gate; P5 local service | Runtime + security + platform | HR-01–03 implemented; HR-04 live-runtime and host-OS qualification in progress; HR-GATE pending | [Issue #18](https://github.com/McFuzzySquirrel/my-forge/issues/18); [feature contract](docs/features/local-host-harness-execution.md); [spike evidence](docs/research/host-runner-spike.md) |
+| Post-P7 — Native local host runner | P7 gate; P5 local service | Runtime + security + platform | HR-01–03 implemented; HR-04 live-runtime and host-OS qualification in progress; HR-GATE pending | [Issue #18](https://github.com/McFuzzySquirrel/my-forge/issues/18); [ADR-081](docs/adr/081-native-local-harness-execution-without-task-sandbox.md); [feature contract](docs/features/local-host-harness-execution.md); [spike evidence](docs/research/host-runner-spike.md) |
 
 P1's spike may contain minimal throwaway/test activities; it is not the production
 engine. P3 can develop storage and execution adapters in parallel after P2, but
@@ -571,20 +571,25 @@ capability authorizes Dapr-to-runner requests but does not restrict the CLI.
 Host mode must be an explicit choice with a clear full-permissions warning.
 This is separate from P8 hosted deployment.
 
+The accepted architectural decision is
+[ADR-081](docs/adr/081-native-local-harness-execution-without-task-sandbox.md),
+originating from
+[SDR-20261022-003](docs/decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md).
 The canonical contract is
 [HOST-RUNNER](docs/features/local-host-harness-execution.md); the implementation
 is tracked in [issue #18](https://github.com/McFuzzySquirrel/my-forge/issues/18)
-(owner: @McFuzzySquirrel). The sandboxed proposal was superseded by
-[SDR-20261022-003](docs/decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md);
-the previous direction is retained as
+(owner: @McFuzzySquirrel). The sandboxed proposal is retained as
 [SDR-20261022-002](docs/decisions/sdr/SDR-20261022-002-sandboxed-host-harness-runner.md).
 
 **HR-01 spike checkpoint (2026-10-22):** Rootless Podman and Landlock probes
 demonstrated sandbox options, but the user rejected sandboxed execution and
 clarified that the local CLI must run natively with the user's account. The
-sandbox proposal was discarded; the accepted native direction and selected
-transport are recorded in the [spike report](docs/research/host-runner-spike.md)
-and [SDR-20261022-003](docs/decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md).
+sandbox proposal was discarded; the accepted native direction is recorded in
+[ADR-081](docs/adr/081-native-local-harness-execution-without-task-sandbox.md)
+and its originating
+[SDR](docs/decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md).
+The selected transport is documented in the
+[spike report](docs/research/host-runner-spike.md).
 
 **HR-01–03 implementation:** Added the typed `HarnessRunner` request/result
 contract, host-side workspace reconstruction and bounded binary Git-diff

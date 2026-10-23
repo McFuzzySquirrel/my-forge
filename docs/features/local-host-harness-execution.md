@@ -3,7 +3,8 @@
 **PRD:** [Foundation vision](../PRD.md)
 **Roadmap:** [Post-P7 host-runner follow-up](../../plan.md#post-p7-follow-up--native-local-host-runner-execution)
 **Tracking:** [Issue #18](https://github.com/McFuzzySquirrel/my-forge/issues/18)
-**Decision record:** [SDR-20261022-003](../decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md)
+**Decision record:** [ADR-081: Native local harness execution without task sandbox](../adr/081-native-local-harness-execution-without-task-sandbox.md)
+**Originating SDR:** [SDR-20261022-003](../decisions/sdr/SDR-20261022-003-native-local-harness-execution-without-task-sandbox.md)
 
 ## 1. Feature overview
 

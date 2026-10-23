@@ -4,6 +4,20 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.149
+
+### Clarify worker and host harness execution
+
+- Updated the README and architecture references to distinguish default
+  worker-container execution from explicit native-host execution. Both use
+  task workspaces and remain under Dapr orchestration.
+- Clarified that host execution uses the locally installed CLI with normal
+  authentication and full user OS permissions; provider, process-cleanup, and
+  per-host-OS qualification remain pending.
+- Recorded the accepted native-host execution trade-off in
+  [ADR-081](adr/081-native-local-harness-execution-without-task-sandbox.md),
+  retaining the originating SDR as decision history.
+
 ## October 2026 - v3.148
 
 ### Document the current local execution architecture

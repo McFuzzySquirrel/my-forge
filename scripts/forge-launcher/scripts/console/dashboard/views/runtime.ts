@@ -38,6 +38,11 @@ export function renderRuntime(container: HTMLElement): void {
   container.appendChild(el("h1", null, "Local runtime"));
   container.appendChild(el("p", { className: "dim" },
     "Manage the shared Podman runtime used for local execution. Service-run controls are on the Service runs page."));
+  container.appendChild(el("p", { className: "dim" }, [
+    "Host-runner status, project capabilities, and job history are managed on the ",
+    el("a", { href: "#/host-runner" }, "Host runner page"),
+    ".",
+  ]));
   draw();
   void refresh(generation);
 }
@@ -89,7 +94,6 @@ function renderStatus(): HTMLElement {
     el("div", { className: "row gap" }, [
       statusBadge(state.status),
       el("span", { className: "dim" }, `Compose project: ${state.project}`),
-      el("span", { className: "dim" }, `Native host runner: ${state.hostRunnerStatus}`),
       state.restartRequired ? statusBadge("restart-required") : el("span", { className: "dim" }, "Repository mounts are current."),
     ]),
   ];
@@ -195,44 +199,21 @@ function renderRepositories(): HTMLElement {
   const selectedButton = button("Use selected project", () => { pathInput.value = selectedRepo; });
   selectedButton.disabled = busy || !selectedRepo;
   const rows = state?.repositories.map((repository) => {
-    const hostRunnerEnabled = state?.hostRunnerEnabledRepositoryIds.includes(repository.id) ?? false;
-    const capabilityButton = button(
-      hostRunnerEnabled ? "Rotate runner capability" : "Enable host runner",
-      () => {
-        const operation = hostRunnerEnabled ? "rotate" : "enable";
-        const warning = operation === "enable"
-          ? `Enable host execution for '${repository.id}'? A selected local harness will run as your OS user with full account permissions, outside a task sandbox. Runs still require the separate per-project opt-in.`
-          : `Rotate the host-runner capability for '${repository.id}'? The runtime must restart before the change takes effect.`;
-        if (window.confirm(warning)) {
-          void runAction({ action: "runner-capability", id: repository.id, operation, confirmed: true });
-        }
-      },
-    );
-    const revokeCapability = hostRunnerEnabled
-      ? button("Revoke runner", () => {
-        if (window.confirm(`Revoke host execution for '${repository.id}'? This stops the host runner and requires a runtime restart.`)) {
-          void runAction({ action: "runner-capability", id: repository.id, operation: "revoke", confirmed: true });
-        }
-      }, true)
-      : null;
     const remove = button("Unregister", () => {
       if (window.confirm(`Unregister '${repository.id}'? A separate runtime restart is required to unmount it.`)) {
         void runAction({ action: "repo-remove", id: repository.id, confirmed: true });
       }
     }, true);
-    capabilityButton.disabled = busy;
-    if (revokeCapability) revokeCapability.disabled = busy;
     remove.disabled = busy;
     return el("tr", null, [
       el("td", { className: "mono" }, repository.id),
       el("td", { className: "mono" }, repository.path),
-      el("td", null, hostRunnerEnabled ? "Enabled" : "Revoked"),
-      el("td", null, [capabilityButton, ...(revokeCapability ? [revokeCapability] : []), remove]),
+      el("td", null, remove),
     ]);
   }) ?? [];
   return el("section", { className: "panel" }, [
     el("h3", null, "Repository registry"),
-    el("p", { className: "dim" }, "Only each repository's .git directory is mounted into the runtime. Host-runner capabilities are project-scoped, owner-only on disk, and separate from the per-run host-execution opt-in. Registry and capability changes require a runtime restart."),
+    el("p", { className: "dim" }, "Only each repository's .git directory is mounted into the runtime. Registering a repository also enables its host-runner capability; host execution for a run remains a separate Overview opt-in. Repository registration changes require a separate runtime restart. Manage project-scoped host-runner capabilities on the Host runner page."),
     el("div", { className: "form-row" }, [
       field("Repository path", pathInput),
       field("Runtime ID", idInput),
@@ -240,7 +221,7 @@ function renderRepositories(): HTMLElement {
     el("div", { className: "actions" }, [add, selectedButton]),
     rows.length
       ? el("div", { className: "table-scroll" }, el("table", null, [
-        el("thead", null, el("tr", null, ["ID", "Repository", "Host runner", "Actions"].map((label) => el("th", null, label)))),
+        el("thead", null, el("tr", null, ["ID", "Repository", "Actions"].map((label) => el("th", null, label)))),
         el("tbody", null, rows),
       ]))
       : el("p", { className: "dim" }, "No repositories are registered."),

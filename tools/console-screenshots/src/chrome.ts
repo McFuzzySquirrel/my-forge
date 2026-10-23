@@ -44,11 +44,18 @@ export interface Viewport {
 const DETERMINISM_CSS = "*{transition:none!important;animation:none!important;caret-color:transparent!important;scroll-behavior:auto!important}";
 
 /** Opens a route, neutralises motion, and waits for the SSE connection and layout to settle. */
-export async function openRoute(browser: Browser, baseUrl: string, route: string, viewport: Viewport): Promise<Page> {
+export async function openRoute(
+  browser: Browser,
+  baseUrl: string,
+  route: string,
+  viewport: Viewport,
+  beforeOpen?: (page: Page) => Promise<void>,
+): Promise<Page> {
   const page = await browser.newPage();
   page.setDefaultTimeout(20000);
   await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 1 });
   await page.emulateMediaFeatures([{ name: "prefers-reduced-motion", value: "reduce" }]);
+  if (beforeOpen) await beforeOpen(page);
   await page.goto(`${baseUrl}/#/${route}`, { waitUntil: "load" });
   await settle(page);
   return page;

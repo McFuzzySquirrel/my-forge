@@ -614,10 +614,11 @@ each supported host OS remain outstanding.
   lease/cancellation handling, workspace result import, and existing validation
   and integration are wired without changing Dapr's orchestration ownership.
 - [ ] **HR-04 — Qualify and document native host execution.** User documentation
-  is updated; isolated Linux runtime readiness and runner lifecycle are
-  verified. Real local CLI/provider-auth, task cancellation/process-tree
-  cleanup, and each supported host OS still require qualification. Do not
-  advertise an OS as supported before its own evidence exists.
+  and the Host runner Console operator surface are updated; isolated Linux
+  runtime readiness and runner lifecycle are verified. Real local
+  CLI/provider-auth, task cancellation/process-tree cleanup, and each supported
+  host OS still require qualification. Do not advertise an OS as supported
+  before its own evidence exists.
 - [ ] **HR-GATE:** Implementation is present, but acceptance remains pending
   real-provider and host-platform qualification. Dapr must remain the workflow
   owner; explicit opt-in, full-permissions disclosure, credential separation,

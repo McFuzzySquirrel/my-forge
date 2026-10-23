@@ -37,6 +37,7 @@ import { migrateApplicationDatabase } from "./migrations.ts";
 import { secureRegisteredGitMetadata } from "./repository-git-boundary.ts";
 import { PostgresHostRunnerJobStore } from "../storage/postgres/host-runner-jobs.ts";
 import { HostRunnerService, loadHostRunnerCapabilityHashes } from "./host-runner.ts";
+import { HostRunnerMonitor } from "./host-runner-monitor.ts";
 import { QueuedHarnessRunner } from "../execution/queued-harness-runner.ts";
 import { reconcileFailedRuns, type OrchestrationFailureV1 } from "./run-reconciler.ts";
 import { sdkWorkflowWorkerProbe, watchWorkflowWorker } from "./worker-watchdog.ts";
@@ -81,6 +82,7 @@ const hostRunnerCapabilityHashes = await loadHostRunnerCapabilityHashes(
   process.env.MYFORGE_HOST_RUNNER_CAPABILITY_HASHES_FILE,
 );
 const hostRunner = new HostRunnerService({ jobs: hostRunnerJobs, capabilityHashes: hostRunnerCapabilityHashes });
+const hostRunnerMonitor = new HostRunnerMonitor(hostRunnerJobs);
 const queuedHarnessRunner = new QueuedHarnessRunner(hostRunnerJobs);
 // A PostgreSQL restart must not crash the service: the pool discards broken
 // idle clients, and a checked-out client fails its next query instead.
@@ -272,6 +274,7 @@ async function listen(runs: RunService): Promise<void> {
     token: API_TOKEN,
     runs,
     hostRunner,
+    hostRunnerMonitor,
     health: () => ({ live: !stopping, ready: ready && !stopping }),
     onError: (error) => process.stderr.write(`API request failed: ${error instanceof Error ? error.message : "unknown error"}\n`),
   }));

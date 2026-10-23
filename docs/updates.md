@@ -4,6 +4,17 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.147
+
+### Add host-runner operations to the Console
+
+- Added a dedicated Host runner view for readiness, project-scoped capability
+  management, and active/recent job summaries with repository filtering.
+- Moved capability controls out of Runtime, labeled service runs by executor,
+  and linked host-executed runs to their runner-job history.
+- Queue diagnostics expose only allowlisted lifecycle metadata; they exclude
+  capabilities, request/result payloads, CLI output, and raw failure details.
+
 ## October 2026 - v3.146
 
 ### Opt in to native local harness execution

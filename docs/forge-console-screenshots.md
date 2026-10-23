@@ -9,23 +9,9 @@ set is archived under `images/forge-console/current/`. Start with
 
 > See [forge-console.md](forge-console.md) for the full reference.
 >
-> **Capture note (v3.81):** the Overview captures show the whole page, including
-> the **Controls** panel with the new **Log harness activity** toggle. Plan &
-> Team opens documents in a wide popup (introduced in v3.80); screenshots taken
-> before then show the earlier headless-first pipeline and split-pane document
-> view.
->
-> **Projects layout (v3.85):** the Projects captures below predate the selectable
-> project table. The current view shows name, state, and last accessed date/time,
-> aligned selection checkboxes with a header select-all checkbox, per-row **Remove from Forge**,
-> and **Remove selected (N)**. Removal requires confirmation and displays an
-> outcome for each project; see the [user guide](forge-console-user-guide.md#remove-one-or-more-projects-from-forge).
->
-> **Runtime view (v3.146):** the screenshot set predates the host-execution
-> opt-in and does not include the infrastructure-administration page. See
-> [Runtime administration](forge-console.md#runtime-administration) for runner
-> capability controls and confirmation behavior. Screenshot regeneration is
-> currently blocked by a missing Board asset in the capture build.
+> **Host runner (v3.147):** the captures include the dedicated capability and
+> queue-monitoring page. Its status and job rows come from a deterministic
+> screenshot fixture; they are not live runtime or provider data.
 
 ---
 
@@ -155,12 +141,20 @@ keyboard focus into the dialog; Escape closes it and returns focus to Help.
 
 ![Help - modal](images/forge-console/14-help.png)
 
+## 15. Host runner
+
+The **Host runner** view shows runner readiness, project-scoped capabilities,
+and bounded active/recent job history. The operator view excludes capability
+values, request/result payloads, CLI output, and raw failure details.
+
+![Host runner - readiness, capabilities, and job history](images/forge-console/15-host-runner.png)
+
 ## Responsive current captures
 
 The current build was captured at 1440px, 1024px, 720px, 390px, and 320px for
-every route. Detail-state captures (expanded task, rendered PRD, rendered
-feature, artifact detail, and audit log) are also included in
-`images/forge-console/current/`.
+each responsive route in the visual tour. Detail-state captures (expanded task,
+rendered PRD, rendered feature, artifact detail, and audit log) are also
+included in `images/forge-console/current/`.
 
 | View | 1024px | 720px | 390px | 320px |
 | --- | --- | --- | --- | --- |
@@ -173,6 +167,7 @@ feature, artifact detail, and audit log) are also included in
 | Timeline | [image](images/forge-console/current/timeline-1024.png) | [image](images/forge-console/current/timeline-720.png) | [image](images/forge-console/current/timeline-390.png) | [image](images/forge-console/current/timeline-320.png) |
 | Projects | [image](images/forge-console/current/projects-1024.png) | [image](images/forge-console/current/projects-720.png) | [image](images/forge-console/current/projects-390.png) | [image](images/forge-console/current/projects-320.png) |
 | New project | [image](images/forge-console/current/new-1024.png) | [image](images/forge-console/current/new-720.png) | [image](images/forge-console/current/new-390.png) | [image](images/forge-console/current/new-320.png) |
+| Host runner | [image](images/forge-console/current/host-runner-1024.png) | [image](images/forge-console/current/host-runner-720.png) | [image](images/forge-console/current/host-runner-390.png) | [image](images/forge-console/current/host-runner-320.png) |
 
 ## Regenerating these captures
 

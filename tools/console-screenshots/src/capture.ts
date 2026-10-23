@@ -10,6 +10,7 @@ export interface CaptureTarget {
   viewport: Viewport;
   /** Capture the entire scrollable page (used for Overview so the Controls are visible). */
   fullPage?: boolean;
+  beforeOpen?: (page: Awaited<ReturnType<Browser["newPage"]>>) => Promise<void>;
   prepare?: (page: Awaited<ReturnType<Browser["newPage"]>>) => Promise<void>;
 }
 
@@ -19,7 +20,7 @@ const TABLET: Viewport = { width: 720, height: 1100 };
 const MOBILE_L: Viewport = { width: 390, height: 900 };
 const MOBILE_S: Viewport = { width: 320, height: 900 };
 
-const ROUTES = ["home", "overview", "board", "tasks", "logs", "documents", "artifacts", "timeline", "projects", "new"] as const;
+const ROUTES = ["home", "overview", "board", "tasks", "logs", "documents", "artifacts", "timeline", "projects", "new", "host-runner"] as const;
 const VIEWPORTS: Array<[label: string, viewport: Viewport]> = [
   ["1440", WIDE],
   ["1024", MEDIUM],
@@ -32,10 +33,78 @@ function routeTargets(): CaptureTarget[] {
   const targets: CaptureTarget[] = [];
   for (const route of ROUTES) {
     for (const [label, viewport] of VIEWPORTS) {
-      targets.push({ name: `${route}-${label}`, route, viewport, fullPage: route === "overview" });
+      targets.push({
+        name: `${route}-${label}`,
+        route,
+        viewport,
+        fullPage: route === "overview" || route === "host-runner",
+        ...(route === "host-runner" ? { beforeOpen: installHostRunnerMocks } : {}),
+      });
     }
   }
   return targets;
+}
+
+async function installHostRunnerMocks(page: Awaited<ReturnType<Browser["newPage"]>>): Promise<void> {
+  const runtime = {
+    project: "myforge",
+    initialized: true,
+    status: "running",
+    containers: [
+      { name: "myforge-postgres", service: "postgres", state: "running", health: "healthy" },
+      { name: "myforge-service", service: "service", state: "running", health: "healthy" },
+    ],
+    missingServices: [],
+    diagnostics: [],
+    repositories: [
+      { id: "ledgerly", path: "/Users/alex/projects/ledgerly" },
+      { id: "inventory-sync", path: "/Users/alex/projects/inventory-sync" },
+    ],
+    hostRunnerEnabledRepositoryIds: ["ledgerly"],
+    hostRunnerStatus: "running",
+    harnessGrants: {},
+    startOptions: { hostTools: false, postgresPort: 55432 },
+    restartRequired: false,
+  };
+  const jobs = {
+    ok: true,
+    available: true,
+    activeTruncated: false,
+    jobs: [
+      {
+        operationId: "75a76131-7921-4cdf-88d1-33d9d8d5e0f1",
+        runId: "run-2026-09-22",
+        taskId: "2.2",
+        repositoryId: "ledgerly",
+        harness: "opencode",
+        state: "leased",
+        createdAt: "2026-09-22T13:58:00.000Z",
+        updatedAt: "2026-09-22T14:02:11.000Z",
+        leaseExpiresAt: "2026-09-22T14:07:11.000Z",
+      },
+      {
+        operationId: "b2f0760c-814b-467e-b34c-8e9b1fa72b64",
+        runId: "run-2026-09-21",
+        taskId: "1.3",
+        repositoryId: "ledgerly",
+        harness: "opencode",
+        state: "completed",
+        createdAt: "2026-09-21T12:05:00.000Z",
+        updatedAt: "2026-09-21T12:39:51.000Z",
+      },
+    ],
+  };
+  await page.setRequestInterception(true);
+  page.on("request", async (request) => {
+    const pathname = new URL(request.url()).pathname;
+    if (pathname === "/api/runtime") {
+      await request.respond({ status: 200, contentType: "application/json", body: JSON.stringify(runtime) });
+    } else if (pathname === "/api/service/host-runner/jobs") {
+      await request.respond({ status: 200, contentType: "application/json", body: JSON.stringify(jobs) });
+    } else {
+      await request.continue();
+    }
+  });
 }
 
 function detailTargets(): CaptureTarget[] {
@@ -157,7 +226,7 @@ export async function captureAll(browser: Browser, baseUrl: string, currentDir: 
   mkdirSync(currentDir, { recursive: true });
   const written: string[] = [];
   for (const target of [...routeTargets(), ...detailTargets()]) {
-    const page = await openRoute(browser, baseUrl, target.route, target.viewport);
+    const page = await openRoute(browser, baseUrl, target.route, target.viewport, target.beforeOpen);
     try {
       if (target.prepare) await target.prepare(page);
       if (target.route === "board") await waitForBoard(page);
@@ -187,12 +256,19 @@ export async function captureGifFrames(browser: Browser, baseUrl: string, frames
     { route: "board" },
     { route: "tasks" },
     { route: "logs" },
+    { route: "host-runner" },
     { route: "artifacts" },
   ];
 
   let index = 0;
   for (const frame of frames) {
-    const page = await openRoute(browser, baseUrl, frame.route, viewport);
+    const page = await openRoute(
+      browser,
+      baseUrl,
+      frame.route,
+      viewport,
+      frame.route === "host-runner" ? installHostRunnerMocks : undefined,
+    );
     try {
       if (frame.route === "board") await waitForBoard(page);
       if (frame.scroll !== undefined) {

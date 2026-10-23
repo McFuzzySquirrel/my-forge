@@ -19,6 +19,23 @@ export class ServiceApiError extends Error {
   }
 }
 
+export interface HostRunnerJobSummary {
+  readonly operationId: string;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly repositoryId: string;
+  readonly harness: string;
+  readonly state: "queued" | "leased" | "completed" | "failed" | "cancelled";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly leaseExpiresAt?: string;
+}
+
+export interface HostRunnerJobsResponse {
+  readonly jobs: readonly HostRunnerJobSummary[];
+  readonly activeTruncated: boolean;
+}
+
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /** Authenticated client for the local execution service API. */
@@ -72,6 +89,10 @@ export class ServiceClient {
   list(repositoryId?: string) {
     return this.request<{ runs: Record<string, unknown>[] }>("GET",
       `/v1/runs${repositoryId ? `?repositoryId=${encodeURIComponent(repositoryId)}` : ""}`);
+  }
+  hostRunnerJobs(repositoryId?: string) {
+    return this.request<HostRunnerJobsResponse>("GET",
+      `/v1/host-runner/jobs${repositoryId ? `?repositoryId=${encodeURIComponent(repositoryId)}` : ""}`);
   }
   get(runId: string) { return this.request("GET", `/v1/runs/${encodeURIComponent(runId)}`); }
   events(runId: string, after: number, limit = 200) {

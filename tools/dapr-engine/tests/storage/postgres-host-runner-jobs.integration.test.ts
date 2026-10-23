@@ -49,6 +49,10 @@ test("PostgreSQL host-runner queue is durable, repository-scoped, leased, and ca
       new URL("../../storage/postgres/host-runner-jobs.sql", import.meta.url),
       "utf8",
     ));
+    await database.query(await readFile(
+      new URL("../../storage/postgres/host-runner-job-summaries.sql", import.meta.url),
+      "utf8",
+    ));
     const store = new PostgresHostRunnerJobStore(database);
 
     const job = request("repo_test");
@@ -114,6 +118,22 @@ test("PostgreSQL host-runner queue is durable, repository-scoped, leased, and ca
     const recovered = new PostgresHostRunnerJobStore(database);
     assert.equal((await recovered.get(expiring.identity.operationId))?.state, "completed");
     assert.equal((await recovered.get(cancelled.identity.operationId))?.state, "cancelled");
+
+    const activeJobs = Array.from({ length: 102 }, () => request("repo_many"));
+    await Promise.all(activeJobs.map((entry) => recovered.enqueue(entry)));
+    const terminalJobs = Array.from({ length: 22 }, () => request("repo_many"));
+    await Promise.all(terminalJobs.map(async (entry) => {
+      await recovered.enqueue(entry);
+      assert.equal(await recovered.cancel(entry.identity.operationId), true);
+    }));
+    const summaries = await recovered.listSummaries("repo_many");
+    assert.equal(summaries.activeTruncated, true);
+    assert.equal(summaries.jobs.length, 120);
+    assert.equal(summaries.jobs.filter((entry) => entry.state === "queued").length, 100);
+    assert.equal(summaries.jobs.filter((entry) => entry.state === "cancelled").length, 20);
+    assert.ok(summaries.jobs.every((entry) => entry.repositoryId === "repo_many"));
+    assert.ok(summaries.jobs.every((entry) =>
+      !("request" in entry) && !("result" in entry) && !("errorMessage" in entry)));
   } finally {
     if (database) await database.end();
     if (schemaCreated) await admin.query(`DROP SCHEMA "${schema}" CASCADE`);

@@ -19,11 +19,12 @@ directly on the machine where the user is working.
 HR-01 through HR-03 are implemented: the host runner polls the loopback service
 API, reconstructs a disposable workspace from a registered repository and
 accepted base revision, and returns a bounded binary Git diff for the existing
-Dapr validation/integration path. The launcher manages runner lifecycle and
-project capabilities; host mode remains explicit and unsandboxed. HR-04 and
-HR-GATE remain pending live runtime, local CLI/provider-auth, process-cleanup,
-and per-host-OS qualification. No host OS is claimed as qualified by unit tests
-or package-build checks alone.
+Dapr validation/integration path. The launcher and Console manage runner
+lifecycle and project capabilities; the Console also exposes bounded,
+allowlisted job summaries. Host mode remains explicit and unsandboxed. HR-04
+and HR-GATE remain pending live runtime, local CLI/provider-auth,
+process-cleanup, and per-host-OS qualification. No host OS is claimed as
+qualified by unit tests or package-build checks alone.
 
 ## 2. User stories
 
@@ -61,6 +62,10 @@ or package-build checks alone.
 
 ```forge-requirement
 {"id":"HOST-RUNNER-07","kind":"requirement","text":"Provide explicit host-runner lifecycle, readiness, project enrollment, capability rotation/revocation, and execution-mode selection through the launcher and Console. Host runner listeners must not be reachable from non-loopback network clients, and unsupported host execution must never trigger an unannounced mode change."}
+```
+
+```forge-requirement
+{"id":"HOST-RUNNER-08","kind":"requirement","text":"Provide an authenticated, read-only operator view of active host-runner jobs and a bounded recent terminal history with optional repository filtering. Expose only allowlisted lifecycle metadata; never return capabilities, raw requests, results, CLI output, or arbitrary failure details."}
 ```
 
 ```forge-requirement
@@ -155,6 +160,8 @@ Key scenarios:
    never silently falls back to the worker-container CLI.
 6. Provider-specific auth stays in the selected local CLI profile and remains
    subject to provider terms.
+7. Operator job history is bounded and repository-filterable; it includes no
+   runner capability, request/result payload, CLI output, or raw failure text.
 
 ## 7. Acceptance criteria
 

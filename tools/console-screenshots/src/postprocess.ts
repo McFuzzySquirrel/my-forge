@@ -20,6 +20,7 @@ export const NUMBERED: Array<{ numbered: string; from: string }> = [
   { numbered: "12-timeline", from: "timeline-1440" },
   { numbered: "13-new-project", from: "new-1440" },
   { numbered: "14-help", from: "help-1440" },
+  { numbered: "15-host-runner", from: "host-runner-1024" },
 ];
 
 function run(bin: string, args: string[]): void {

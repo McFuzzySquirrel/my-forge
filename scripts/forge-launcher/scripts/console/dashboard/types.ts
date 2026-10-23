@@ -500,7 +500,26 @@ export interface ServiceRunRecord {
   targetRef: string;
   createdAt?: string;
   harness?: { id: string };
+  hostExecution?: boolean;
   tasks?: ServiceRunTask[];
+}
+
+export interface HostRunnerJobsResponse {
+  ok: boolean;
+  available: boolean;
+  activeTruncated: boolean;
+  message?: string;
+  jobs: Array<{
+    operationId: string;
+    runId: string;
+    taskId: string;
+    repositoryId: string;
+    harness: string;
+    state: "queued" | "leased" | "completed" | "failed" | "cancelled";
+    createdAt: string;
+    updatedAt: string;
+    leaseExpiresAt?: string;
+  }>;
 }
 
 export interface ServiceRunsResponse {

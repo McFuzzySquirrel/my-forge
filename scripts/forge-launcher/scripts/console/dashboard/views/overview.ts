@@ -906,8 +906,13 @@ function renderHostExecutionToggle(container: HTMLElement, enabled: boolean): HT
       checkbox,
       el("span", null, "Run harness CLI on this host (no task sandbox)"),
     ]),
-    el("p", { className: "dim small", role: "note" },
-      "Off by default. The harness uses your local CLI installation and authentication, with the full permissions of your OS account. Host runner and repository registration are required; there is no worker fallback."),
+    el("p", { className: "dim small", role: "note" }, [
+      "Off by default. The harness uses your local CLI installation and authentication, with the full permissions of your OS account. Host runner readiness, repository registration, and that project's capability are required; there is no worker fallback. Configure these on the ",
+      el("a", { href: "#/host-runner" }, "Host runner page"),
+      " and ",
+      el("a", { href: "#/runtime" }, "Runtime page"),
+      ".",
+    ]),
   ]);
 }
 

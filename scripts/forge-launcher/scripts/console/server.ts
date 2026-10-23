@@ -34,6 +34,7 @@ import * as repo from "./repo.ts";
 import { removeProjects, sameProjectPath } from "./remove-projects.ts";
 import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
 import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, latestServiceRun, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
+import { defaultHostRunnerJobsDeps, listHostRunnerJobs, type HostRunnerJobsDeps } from "./host-runner-jobs.ts";
 import type { ControlAction, CreateProjectRequest, ManifestTask, ServiceRunSnapshot } from "./types.ts";
 import {
   executeRuntimeAdminAction,
@@ -67,6 +68,8 @@ export interface ConsoleServerOptions {
   inventoryProbe?: InventoryProbe;
   /** Execution-service access seam (defaults to the local runtime API). */
   serviceRuns?: ServiceRunsDeps;
+  /** Host-runner monitor seam (defaults to the local runtime API). */
+  hostRunnerJobs?: HostRunnerJobsDeps;
   /** Runtime administration seam (defaults to the local Podman runtime). */
   runtimeAdmin?: RuntimeAdminDeps;
 }
@@ -409,6 +412,8 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
   const sessions = new OperatorSessions({ port });
   let serviceRunsDeps = options.serviceRuns;
   const serviceRuns = (): ServiceRunsDeps => (serviceRunsDeps ??= defaultServiceRunsDeps());
+  let hostRunnerJobsDeps = options.hostRunnerJobs;
+  const hostRunnerJobs = (): HostRunnerJobsDeps => (hostRunnerJobsDeps ??= defaultHostRunnerJobsDeps());
   let runtimeAdminBusy = false;
   const runtimeAdmin: RuntimeAdminDeps = options.runtimeAdmin ?? {
     state: () => getRuntimeAdminState(),
@@ -625,6 +630,11 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
 
         if (urlPath === "/api/service/runs") {
           const result = await listServiceRuns(serviceRuns(), currentRepo);
+          return sendJson(res, result.status, result.body);
+        }
+        if (urlPath === "/api/service/host-runner/jobs") {
+          const query = new URLSearchParams(rawUrl.split("?")[1] ?? "");
+          const result = await listHostRunnerJobs(hostRunnerJobs(), query.get("repositoryId") ?? undefined);
           return sendJson(res, result.status, result.body);
         }
         if (urlPath === "/api/service/run") {

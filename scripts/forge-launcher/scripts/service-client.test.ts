@@ -95,6 +95,19 @@ test("the client authenticates requests and surfaces service errors", async () =
   await assert.rejects(unreachable.get(RUN_ID), /runtime start/);
 });
 
+test("the client requests bounded host-runner summaries with an optional repository filter", async () => {
+  const requests: { url: string; init?: RequestInit }[] = [];
+  const client = new ServiceClient("http://127.0.0.1:8483", "t".repeat(64), async (url, init) => {
+    requests.push({ url, init });
+    return new Response(JSON.stringify({ jobs: [], activeTruncated: false }), { status: 200 });
+  });
+
+  assert.deepEqual(await client.hostRunnerJobs("repo_demo"), { jobs: [], activeTruncated: false });
+  assert.equal(requests[0]!.url, "http://127.0.0.1:8483/v1/host-runner/jobs?repositoryId=repo_demo");
+  const headers = requests[0]!.init!.headers as Record<string, string>;
+  assert.equal(headers.authorization, `Bearer ${"t".repeat(64)}`);
+});
+
 test("service CLI dispatches status, events, controls, and validates arguments", async () => {
   const calls: unknown[][] = [];
   const client = {

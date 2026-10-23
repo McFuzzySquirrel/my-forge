@@ -24,6 +24,23 @@ export interface HostRunnerClaimV1 {
   readonly request: HarnessRunnerRequestV1;
 }
 
+export interface HostRunnerJobSummaryV1 {
+  readonly operationId: string;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly repositoryId: string;
+  readonly harness: string;
+  readonly state: HostRunnerJobState;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly leaseExpiresAt?: string;
+}
+
+export interface HostRunnerJobSummaryListV1 {
+  readonly jobs: readonly HostRunnerJobSummaryV1[];
+  readonly activeTruncated: boolean;
+}
+
 interface HostRunnerJobRow extends Record<string, unknown> {
   schema_version: number;
   operation_id: string;
@@ -37,11 +54,53 @@ interface HostRunnerJobRow extends Record<string, unknown> {
   error_message: string | null;
 }
 
+interface HostRunnerJobSummaryRow extends Record<string, unknown> {
+  operation_id: string;
+  run_id: string;
+  task_id: string;
+  repository_id: string;
+  harness_id: string;
+  state: HostRunnerJobState;
+  created_at: Date | string;
+  updated_at: Date | string;
+  lease_expires_at: Date | string | null;
+}
+
 const SCHEMA_VERSION = 1;
 const OPERATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const REPOSITORY_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const MAX_ACTIVE_SUMMARIES = 100;
+const RECENT_TERMINAL_SUMMARIES = 20;
 const COLUMNS = "schema_version, operation_id, repository_id, request_digest, request, state, lease_id, cancel_requested, result, error_message";
 const JOB_COLUMNS = "job.schema_version, job.operation_id, job.repository_id, job.request_digest, job.request, job.state, job.lease_id, job.cancel_requested, job.result, job.error_message";
+
+function isoTimestamp(value: Date | string): string {
+  const timestamp = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(timestamp.getTime())) {
+    throw new Error("Database returned an invalid host-runner job timestamp.");
+  }
+  return timestamp.toISOString();
+}
+
+function summaryFromRow(row: HostRunnerJobSummaryRow): HostRunnerJobSummaryV1 {
+  if (!OPERATION_ID.test(row.operation_id)
+    || !REPOSITORY_ID.test(row.repository_id)
+    || typeof row.harness_id !== "string" || !row.harness_id
+    || !["queued", "leased", "completed", "failed", "cancelled"].includes(row.state)) {
+    throw new Error("Database returned an invalid host-runner job summary.");
+  }
+  return {
+    operationId: row.operation_id,
+    runId: row.run_id,
+    taskId: row.task_id,
+    repositoryId: row.repository_id,
+    harness: row.harness_id,
+    state: row.state,
+    createdAt: isoTimestamp(row.created_at),
+    updatedAt: isoTimestamp(row.updated_at),
+    ...(row.lease_expires_at === null ? {} : { leaseExpiresAt: isoTimestamp(row.lease_expires_at) }),
+  };
+}
 
 function requestDigest(request: HarnessRunnerRequestV1): string {
   return canonicalDigest(request);
@@ -73,6 +132,50 @@ function toJob(row: HostRunnerJobRow): HostRunnerJobV1 {
 /** Durable dispatch state for the Dapr worker and launcher-managed host runner. */
 export class PostgresHostRunnerJobStore {
   constructor(private readonly database: SqlQueryable) {}
+
+  async listSummaries(repositoryId?: string): Promise<HostRunnerJobSummaryListV1> {
+    if (repositoryId !== undefined && !REPOSITORY_ID.test(repositoryId)) {
+      throw new TypeError("Invalid host-runner repository ID.");
+    }
+    const result = await this.database.query<HostRunnerJobSummaryRow>(
+      `WITH active_jobs AS (
+         SELECT operation_id, run_id, task_id, repository_id, request->>'harness' AS harness_id,
+                state, created_at, updated_at, lease_expires_at
+         FROM forge_host_runner_jobs
+         WHERE state IN ('queued', 'leased') AND ($1::text IS NULL OR repository_id = $1)
+         ORDER BY updated_at DESC, operation_id DESC
+         LIMIT $2
+       ),
+       recent_terminal_jobs AS (
+         SELECT operation_id, run_id, task_id, repository_id, request->>'harness' AS harness_id,
+                state, created_at, updated_at, lease_expires_at
+         FROM forge_host_runner_jobs
+         WHERE state IN ('completed', 'failed', 'cancelled') AND ($1::text IS NULL OR repository_id = $1)
+         ORDER BY updated_at DESC, operation_id DESC
+         LIMIT $3
+       )
+       SELECT * FROM (
+         SELECT * FROM active_jobs
+         UNION ALL
+         SELECT * FROM recent_terminal_jobs
+       ) AS summaries
+       ORDER BY CASE WHEN state IN ('queued', 'leased') THEN 0 ELSE 1 END,
+                updated_at DESC, operation_id DESC`,
+      [repositoryId ?? null, MAX_ACTIVE_SUMMARIES + 1, RECENT_TERMINAL_SUMMARIES],
+    );
+    const activeRows = result.rows.filter((row) => row.state === "queued" || row.state === "leased");
+    const activeTruncated = activeRows.length > MAX_ACTIVE_SUMMARIES;
+    const rows = result.rows.filter((row) => row.state !== "queued" && row.state !== "leased")
+      .concat(activeRows.slice(0, MAX_ACTIVE_SUMMARIES));
+    rows.sort((left, right) => {
+      const leftActive = left.state === "queued" || left.state === "leased";
+      const rightActive = right.state === "queued" || right.state === "leased";
+      if (leftActive !== rightActive) return leftActive ? -1 : 1;
+      return isoTimestamp(right.updated_at).localeCompare(isoTimestamp(left.updated_at))
+        || right.operation_id.localeCompare(left.operation_id);
+    });
+    return { jobs: rows.map(summaryFromRow), activeTruncated };
+  }
 
   async enqueue(request: HarnessRunnerRequestV1): Promise<HostRunnerEnqueueResult> {
     const validated = parseHarnessRunnerRequest(request);

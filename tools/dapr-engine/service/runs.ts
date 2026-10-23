@@ -271,6 +271,7 @@ function summary(record: StoredRunSubmissionV1, status: RunStatusSnapshotV1 | un
     targetRef: submission.targetRef,
     manifestDigest: submission.manifestDigest,
     harness: submission.harness,
+    hostExecution: submission.configuration.settings.hostExecution === true,
     taskIds: submission.selection.effectiveTaskIds ?? [],
     createdAt: record.createdAt,
     status: status?.status ?? "queued",

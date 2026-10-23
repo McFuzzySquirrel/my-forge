@@ -34,6 +34,7 @@ import type {
   ServiceControlResult,
   ServiceRunDetail,
   ServiceRunsResponse,
+  HostRunnerJobsResponse,
   RuntimeAdminAction,
   RuntimeAdminActionResult,
   RuntimeAdminState,
@@ -82,6 +83,10 @@ export const api = {
   },
   serviceRuns(): Promise<ServiceRunsResponse> {
     return request<ServiceRunsResponse>("/api/service/runs");
+  },
+  hostRunnerJobs(repositoryId?: string): Promise<HostRunnerJobsResponse> {
+    const query = repositoryId ? `?repositoryId=${encodeURIComponent(repositoryId)}` : "";
+    return request<HostRunnerJobsResponse>(`/api/service/host-runner/jobs${query}`);
   },
   serviceRun(runId: string, after: number): Promise<ServiceRunDetail> {
     return request<ServiceRunDetail>(`/api/service/run?id=${encodeURIComponent(runId)}&after=${after}`);

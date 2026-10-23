@@ -190,14 +190,16 @@ trusted tasks. A missing or unavailable host runner fails closed; the launcher
 never falls back silently to the worker CLI. The Console's Overview has the
 equivalent per-project host-execution opt-in and warning.
 
-The Console's **Runtime** view provides local controls for these operations:
-status, start/stop/restart, reset, backup/restore, token rotation, repository
-registration, runner-capability controls, and harness credential grants. It writes registry changes first
-and offers a separate confirmed restart to apply them. The page remembers the
-last successful start's host-tools and PostgreSQL-port settings. Runtime
+The Console's **Runtime** view provides local controls for runtime lifecycle,
+reset, backup/restore, token rotation, repository registration, and harness
+credential grants. It writes registry changes first and offers a separate
+confirmed restart to apply them. The page remembers the last successful start's
+host-tools and PostgreSQL-port settings. The separate **Host runner** view
+manages project capabilities and displays bounded job summaries. Runtime
 mutations remain local to the loopback Console; credential values are never
 returned to the browser after submission. See
-[Forge Console runtime administration](forge-console.md#runtime-administration).
+[Forge Console runtime administration](forge-console.md#runtime-administration)
+and [Host runner operations](forge-console.md#host-runner-operations).
 
 On Linux, credentials are stored in
 `${XDG_DATA_HOME:-$HOME/.local/share}/MyForge/runtime/runtime.env`; Podman

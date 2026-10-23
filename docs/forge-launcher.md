@@ -360,7 +360,8 @@ alone does not authenticate Claude to Anthropic or every OpenCode provider.
 The worker image includes pinned `copilot`, `claude`, and `opencode` CLIs and
 the deterministic `stub` harness. `stub` needs `--allow-noop` when tasks make
 no changes. Host logins are not visible to the worker. Grant each harness its
-credentials explicitly:
+credentials explicitly. Worker grants are separate from host execution: a host
+run uses the local CLI's normal login and does not use the Console grant.
 
 ```bash
 forge-launcher runtime harness grant copilot COPILOT_GITHUB_TOKEN   # value read from stdin
@@ -388,24 +389,41 @@ ConvertTo-Json -InputObject @($auth) -Depth 100 -Compress |
   forge-launcher runtime harness grant opencode OPENCODE_AUTH_JSON
 ```
 
+The model prefix must match the granted provider. For example, a DeepSeek
+export authenticates `deepseek/deepseek-flash` or
+`deepseek/deepseek-v4-pro`, not `opencode/deepseek-v4.1-flash-free`.
+`DEEPSEEK_API_KEY` is not an allowed OpenCode harness variable; use
+`OPENCODE_AUTH_JSON`. See
+[Harness credentials and execution boundaries](harness-credentials.md) for the
+provider table, threat model, and host-execution warning.
+
 - Each harness accepts only its own variables:
   - copilot: `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`
   - claude: `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN`
   - opencode: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
     `GEMINI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY`, `OPENCODE_AUTH_JSON`
 - `OPENCODE_AUTH_JSON` is the one-provider JSON list from `opencode auth export`.
-  The worker imports it into the task's private OpenCode data directory and
-  removes the temporary file; it does not mount or read the host auth store.
+  The grant command rejects a malformed, empty, or multi-provider export. The
+  worker imports the one entry into the task's private OpenCode data directory,
+  verifies it, and removes the temporary file; it does not mount or read the
+  host auth store.
 - Grants are stored owner-only under the runtime data directory
-  (`harness-grants/grants.json`) and mounted read-only into the worker. They
-  apply from the next task attempt, with no restart.
+  (`harness-grants/grants.json`) and mounted read-only into the worker. The
+  launcher rejects symlinks and foreign ownership and repairs a too-permissive
+  file mode. Grants apply from the next task attempt, with no restart.
 - A run for a harness with no grant is rejected at submission with a hint
   naming the grant command.
 - On the service runtime, each task runs under its own unprivileged UID with a
-  private workspace and home. It cannot read the shared grants file or write
-  registered source `.git` directories. It can currently read other registered
-  repositories' Git metadata; register only repositories in the same trust
-  domain until that remaining boundary is closed.
+  private workspace and home. Validation commands get a separate empty home,
+  so they cannot read the harness's imported provider profile. A task cannot
+  read the shared grants file or write registered source `.git` directories. It
+  can currently read other registered repositories' Git metadata; register only
+  repositories in the same trust domain until that remaining boundary is
+  closed.
+- Host execution is not sandboxed and does not use the worker grants. It can
+  read the logged-in user's CLI auth, runtime credentials, and other account
+  files. Use it only for trusted tasks; see
+  [Harness credentials and execution boundaries](harness-credentials.md#host-execution-warning).
 
 **Platform support and qualification.** Linux, macOS, and Windows remain
 included targets; the existing desktop implementations are retained. P6

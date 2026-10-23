@@ -48,7 +48,9 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
           "grep -qx one one.txt",
           // Repository commands never see worker secrets (P6-04): the real
           // process environment carries POSTGRES_TEST_URL, the grant GH_TOKEN.
-          'test -z "$POSTGRES_TEST_URL$DATABASE_URL$GH_TOKEN" && test "$HOME" != /root',
+          // They also get their own empty home, not the harness home where a
+          // provider credential may have been imported.
+          'test -z "$POSTGRES_TEST_URL$DATABASE_URL$GH_TOKEN" && test "$HOME" != /root && test ! -e "$HOME/harness-home-marker"',
         ] }),
         manifestTask({ id: "T-2", ownerAgent: "alpha", dependencies: ["T-1"], expectedOutputs: ["two.txt"], validationCommands: ["grep -qx one one.txt", "grep -qx two two.txt"] }),
         manifestTask({ id: "T-3", ownerAgent: "beta", expectedOutputs: ["three.txt"], validationCommands: ["grep -qx three three.txt"] }),
@@ -77,7 +79,11 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
     const id = request.task.id;
     if (id === "T-3" && request.attempt.number === 1) return { files: { "three.txt": "wrong\n" } };
     const name = ({ "T-1": "one", "T-2": "two", "T-3": "three", "T-4": "four", "T-5": "five", "T-6": "six" } as Record<string, string>)[id]!;
-    return { files: { [`${name}.txt`]: `${name}\n` }, delayMs: id === "T-4" ? 50 : 0 };
+    return {
+      files: { [`${name}.txt`]: `${name}\n` },
+      ...(id === "T-1" ? { homeFiles: { "harness-home-marker": "present\n" } } : {}),
+      delayMs: id === "T-4" ? 50 : 0,
+    };
   });
   const run: ExecutionHostRunV1 = executionHostRunFromSubmission(runId, submission, {
     agentFor: (task) => agent(task.ownerAgent ?? "unowned"),

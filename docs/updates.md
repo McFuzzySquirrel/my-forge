@@ -4,6 +4,27 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.152
+
+### Harden harness credential handling and document the boundary
+
+- Worker validation commands now run in a separate empty home from the harness.
+  Repository validation commands can no longer read the private OpenCode
+  profile where `OPENCODE_AUTH_JSON` was imported. The resume path already used
+  a separate home; the normal admission path now matches it.
+- `forge-launcher runtime harness grant` validates `OPENCODE_AUTH_JSON` before
+  storing it: the value must be valid JSON containing exactly one provider
+  entry with an `integrationID`.
+- The launcher rejects a symlinked or foreign-owned `grants.json` and repairs a
+  too-permissive grants-file mode to `0600`, matching `runtime.env` handling.
+- Added [Harness credentials and execution boundaries](harness-credentials.md)
+  covering provider/model matching, the one-provider rule, worker versus host
+  execution, the credential reader table, operational hygiene, and incident
+  response. Updated the launcher, Console, ADR-075, ADR-077, and ADR-081
+  guidance to distinguish worker grants from unsandboxed host authentication.
+
+---
+
 ## October 2026 - v3.151
 
 ### Publish declared task artifacts during host execution

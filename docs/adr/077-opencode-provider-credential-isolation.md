@@ -34,3 +34,24 @@ Copilot, do not expose a simple API-key environment variable.
   tasks and revoke them when no longer needed.
 - OpenCode credential grants are limited to one exported credential entry per
   task attempt.
+- Worker validation commands run in a separate empty home from the harness.
+  They cannot read the task's imported OpenCode profile. The normal admission
+  path and the resume path both use this boundary.
+- Host execution is outside this decision. It uses the local CLI's normal
+  authentication and does not enforce one-provider isolation. See
+  [Harness credentials and execution boundaries](../harness-credentials.md#host-execution-warning).
+
+## Threat model and limits
+
+The worker boundary protects the credential from other tasks, repository
+validation commands, the host auth store, runtime service tokens, and runtime
+backups. It does not protect the credential from the selected task: the task
+must authenticate to the provider and can exfiltrate the credential over the
+network. Use least-privilege or short-lived provider credentials, revoke grants
+after the run, and treat logs and task artifacts as potentially sensitive.
+
+Local file permissions protect the grants file from other OS users. They do not
+protect it from the same OS user or root. Use separate OS accounts or runtime
+installations for distinct trust domains. See
+[Harness credentials and execution boundaries](../harness-credentials.md) for
+the full reader table and incident-response checklist.

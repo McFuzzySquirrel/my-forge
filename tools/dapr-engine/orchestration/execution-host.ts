@@ -340,9 +340,21 @@ export class ExecutionHost {
         heartbeatTtlMs: this.dependencies.heartbeatTtlMs,
         run: async (context) => {
           let home: Awaited<ReturnType<typeof createHarnessHome>> | undefined;
+          let validationHome: Awaited<ReturnType<typeof createHarnessHome>> | undefined;
           try {
+            const homesRoot = join(
+              this.dependencies.taskUidIsolation ? this.requireTaskScratchRoot() : this.dependencies.scratchRoot,
+              "homes",
+            );
             home = await createHarnessHome(
-              join(this.dependencies.taskUidIsolation ? this.requireTaskScratchRoot() : this.dependencies.scratchRoot, "homes"),
+              homesRoot,
+              processIdentity ? { processIdentity } : {},
+            );
+            // Validation commands come from the repository. Give them their own
+            // empty home so they cannot read the credential the harness imported
+            // into its private profile (notably OPENCODE_AUTH_JSON).
+            validationHome = await createHarnessHome(
+              homesRoot,
               processIdentity ? { processIdentity } : {},
             );
             const credentials = run.hostRunner ? {} : run.credentials ? await run.credentials() : {};
@@ -393,7 +405,7 @@ export class ExecutionHost {
               allowNoop: input.allowNoop,
               validationEnvironment: {
                 ...buildHarnessEnvironment({
-                  home: home.home,
+                  home: validationHome.home,
                   inherited: this.dependencies.inheritedEnvironment ?? process.env,
                   credentials: {},
                 }),
@@ -402,13 +414,18 @@ export class ExecutionHost {
               ...(processIdentity ? { validationProcessIdentity: processIdentity } : {}),
             });
           } finally {
-            if (home) {
+            let cleanupError: unknown;
+            for (const attemptHome of [home, validationHome]) {
+              if (!attemptHome) continue;
               try {
-                await rm(home.home, { recursive: true, force: true });
+                await rm(attemptHome.home, { recursive: true, force: true });
               } catch (error) {
-                if (processIdentity) quarantineTaskProcessIdentity(processIdentity);
-                throw error;
+                cleanupError ??= error;
               }
+            }
+            if (cleanupError !== undefined) {
+              if (processIdentity) quarantineTaskProcessIdentity(processIdentity);
+              throw cleanupError;
             }
           }
         },

@@ -6,6 +6,8 @@ import type { HarnessAdapter, TaskAttemptRequest, TaskResult } from "../../execu
 export interface ScriptedAttempt {
   /** Repository-relative files to write. */
   readonly files?: Readonly<Record<string, string>>;
+  /** Files to write inside the harness's isolated home, relative to HOME. */
+  readonly homeFiles?: Readonly<Record<string, string>>;
   readonly summary?: string;
   readonly unresolved?: readonly string[];
   /** Simulate a failing harness exit instead of producing a result. */
@@ -73,6 +75,14 @@ export class ScriptedHarness implements HarnessAdapter {
       const absolute = join(request.repoRoot, path);
       await mkdir(dirname(absolute), { recursive: true });
       await writeFile(absolute, content);
+    }
+    const home = request.isolation?.environment?.HOME;
+    if (attempt.homeFiles && home) {
+      for (const [path, content] of Object.entries(attempt.homeFiles)) {
+        const absolute = join(home, path);
+        await mkdir(dirname(absolute), { recursive: true });
+        await writeFile(absolute, content);
+      }
     }
     const report = { summary: attempt.summary ?? `Completed ${request.task.id}.`, unresolved: [...(attempt.unresolved ?? [])] };
     return {

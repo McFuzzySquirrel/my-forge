@@ -193,20 +193,26 @@ rotation, and credential revocation. A backup can be created before a reset or
 upgrade. Restore checks the archive and Git refs; selecting **Allow Git drift**
 requires a second acknowledgement because run history can become inconsistent.
 Harness credential grants are entered into a password field, stored locally,
-and cleared from the form; the page lists variable names only. The last
-successful start's host-tools setting and PostgreSQL port prefill later
-restarts. Operations show progress and return actionable errors.
+and cleared from the form; the page lists variable names only. An
+`OPENCODE_AUTH_JSON` value must contain exactly one provider entry. See
+[Harness credentials and execution boundaries](harness-credentials.md) for the
+provider/model table and storage rules. The last successful start's host-tools
+setting and PostgreSQL port prefill later restarts. Operations show progress
+and return actionable errors.
 
 Host execution is off by default. In Overview **Controls**, choose **This
 computer** under **Executor for the next run** only for trusted tasks and confirm
 the warning. The choice applies to that run; **Save as default for this project**
 persists it for later runs. The local CLI uses its existing installation and
 authentication, but runs with your user account's full filesystem, process, and
-network permissions outside a task sandbox. The host option is disabled, with
-the reason shown, until the project is registered, its runner capability is
-enabled, and the host runner is running. This is independent of project runner
-authorization and worker harness-credential grants; there is no automatic
-fallback between modes.
+network permissions outside a task sandbox. It can read the host CLI auth store,
+runtime credentials, runner capabilities, and other account files. It does not
+use worker harness grants or enforce one-provider isolation. See
+[Harness credentials and execution boundaries](harness-credentials.md#host-execution-warning).
+The host option is disabled, with the reason shown, until the project is
+registered, its runner capability is enabled, and the host runner is running.
+This is independent of project runner authorization and worker
+harness-credential grants; there is no automatic fallback between modes.
 
 The executor binds when a run is submitted. Changing the selector while a run is
 active applies to the next run; Overview names the active run's executor. The

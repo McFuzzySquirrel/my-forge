@@ -41,10 +41,15 @@ operator's full permissions.
 - Users can use their locally installed CLI and its normal authentication
   without copying provider credentials into Dapr submissions.
 - Host execution does not confine task tools to the workspace. The CLI and its
-  child tools can access resources available to the logged-in user.
+  child tools can access resources available to the logged-in user, including
+  the CLI auth store, runtime credentials, host-runner capabilities, SSH and
+  cloud credential files, and browser data. Host execution does not use worker
+  harness grants or enforce one-provider isolation.
 - Provider authentication, process-tree cleanup, workspace handoff, and
   per-host-OS support require separate qualification. No host OS is qualified
   by this decision alone.
+- The operator-facing boundary and incident-response guidance are documented in
+  [Harness credentials and execution boundaries](../harness-credentials.md#host-execution-warning).
 
 ## Alternatives considered
 

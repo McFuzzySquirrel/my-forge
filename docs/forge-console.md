@@ -497,7 +497,10 @@ mutations. Runtime operations use the Console's signed operator session,
 same-origin checks, and per-server `X-Forge-Token`. Harness credential values
 are submitted directly to the local Console, stored with restricted
 permissions, and never returned, logged, or shown again; status exposes only
-granted variable names.
+granted variable names. `OPENCODE_AUTH_JSON` must contain exactly one provider
+entry; the Console and CLI reject a multi-provider export. See
+[Harness credentials and execution boundaries](harness-credentials.md) for the
+provider/model table, storage rules, and threat model.
 
 ### Host runner operations
 
@@ -517,9 +520,14 @@ request/result payloads, CLI output, or raw failure details.
 Host execution is selected per run in the Overview **Controls** panel (see
 [Executor](#executor)). Before starting a host run, the Console warns that the
 local harness CLI runs outside a task sandbox with the logged-in user's full OS
-permissions. Host execution never falls back silently to the worker. Use the
-Host runner page for readiness and project authorization, and Runtime to
-register repositories or start the runtime.
+permissions. It can read the host CLI auth store, runtime credentials, runner
+capabilities, and other files available to the account; it does not use the
+worker harness grants or enforce one-provider isolation. Use it only for
+trusted tasks. See
+[Harness credentials and execution boundaries](harness-credentials.md#host-execution-warning).
+Host execution never falls back silently to the worker. Use the Host runner
+page for readiness and project authorization, and Runtime to register
+repositories or start the runtime.
 
 For a registered repository, Overview builds and controls also use the
 service ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)):

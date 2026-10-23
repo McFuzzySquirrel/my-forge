@@ -25,7 +25,10 @@ lifecycle and project capabilities; the Console also exposes bounded,
 allowlisted job summaries. Host mode remains explicit and unsandboxed. HR-04
 and HR-GATE remain pending live runtime, local CLI/provider-auth,
 process-cleanup, and per-host-OS qualification. No host OS is claimed as
-qualified by unit tests or package-build checks alone.
+qualified by unit tests or package-build checks alone. Operator documentation
+now distinguishes worker harness grants from host CLI authentication and lists
+the host-readable credential stores; see
+[Harness credentials and execution boundaries](../harness-credentials.md#host-execution-warning).
 
 ## 2. User stories
 

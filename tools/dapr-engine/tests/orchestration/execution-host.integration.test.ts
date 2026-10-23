@@ -295,6 +295,111 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
   assert.ok(!JSON.stringify(audit).includes("fixture-token-not-a-secret"));
 }
 
+test("execution host publishes declared work artifacts and projects them into dependent tasks", {
+  skip: !connectionString && "POSTGRES_TEST_URL is not set",
+}, async () => {
+  const fixture = await createExecutionFixture(connectionString!, { label: "host-artifacts" });
+  try {
+    const submission = acceptedSubmission({
+      repositoryId: fixture.repositoryId,
+      phases: [{
+        id: "phase-1",
+        tasks: [
+          {
+            ...manifestTask({ id: "A-1", ownerAgent: "alpha", expectedOutputs: ["a.txt"], validationCommands: ["grep -qx a a.txt"] }),
+            produces: "work.a-1",
+          },
+          {
+            ...manifestTask({ id: "A-2", ownerAgent: "alpha", dependencies: ["A-1"], expectedOutputs: ["b.txt"], validationCommands: ["grep -qx b b.txt"] }),
+            produces: "work.a-2",
+            inputs: ["work.a-1"],
+          },
+          {
+            ...manifestTask({ id: "A-3", ownerAgent: "alpha", dependencies: ["A-1"], expectedOutputs: ["c.txt"], validationCommands: ["grep -qx c c.txt"] }),
+            produces: "work.a-3",
+            inputs: ["work.a-1"],
+          },
+        ],
+      }],
+      settings: { maxRetries: 0 },
+    });
+    const runId = `run_${randomUUID().replaceAll("-", "")}`;
+    const harness = new ScriptedHarness((request) => {
+      if (request.task.id !== "A-1") {
+        assert.match(request.contextBlock, /Completed A-1\./);
+      }
+      const name = ({ "A-1": "a", "A-2": "b", "A-3": "c" } as Record<string, string>)[request.task.id]!;
+      return { files: { [`${name}.txt`]: `${name}\n` } };
+    });
+    const run = executionHostRunFromSubmission(runId, submission, {
+      agentFor: (task) => agent(task.ownerAgent!),
+      harness,
+    });
+    await fixture.status.createRun({
+      schemaVersion: 1,
+      runId,
+      repositoryId: fixture.repositoryId,
+      targetRef: TARGET_REF,
+      manifestDigest: submission.manifestDigest,
+      taskIds: [...submission.selection.effectiveTaskIds],
+    });
+    const host = new ExecutionHost({
+      runs: (id) => id === runId ? run : undefined,
+      receipts: fixture.receipts,
+      executions: fixture.executions,
+      integration: fixture.integration,
+      checkpoints: fixture.checkpoints,
+      status: fixture.status,
+      controls: fixture.controls,
+      repositoryRoot: (id) => id === fixture.repositoryId ? fixture.target : undefined,
+      scratchRoot: fixture.scratchRoot,
+      workerId: "host-artifacts-test",
+      budgetMs: 60_000,
+      heartbeatIntervalMs: 200,
+      heartbeatTtlMs: 5_000,
+      inheritedEnvironment: { PATH: process.env.PATH },
+    });
+    const input = (taskId: string): ExecuteTaskActivityInputV1 => ({
+      runId,
+      taskId,
+      manifestDigest: submission.manifestDigest,
+      logicalAttempt: 1,
+      operationId: taskOperationId(runId, taskId, 1),
+      allowNoop: false,
+    });
+
+    const first = await host.executeTask(input("A-1"));
+    assert.equal(first.status, "complete", JSON.stringify(first));
+    const firstEvidence = (first as Extract<TaskActivityOutcomeV1, { status: "complete" }>).evidence;
+    assert.equal(firstEvidence.artifactRefs.length, 3);
+    const workRef = firstEvidence.artifactRefs[0]!;
+    assert.equal(workRef.retentionClass, "checkpoint-evidence");
+    const resolved = await fixture.checkpoints.resolveArtifact(workRef);
+    assert.equal(resolved.ok, true);
+    if (resolved.ok) {
+      const artifact = JSON.parse(new TextDecoder().decode(resolved.bytes)) as Record<string, unknown>;
+      assert.equal(artifact.type, "work.a-1");
+      assert.equal(artifact.category, "work");
+      assert.equal(artifact.taskId, "A-1");
+      assert.equal(artifact.producedBy, "alpha");
+      assert.equal(artifact.summary, "Completed A-1.");
+    }
+
+    const [second, third] = await Promise.all([host.executeTask(input("A-2")), host.executeTask(input("A-3"))]);
+    assert.equal(second.status, "complete", JSON.stringify(second));
+    assert.equal(third.status, "complete", JSON.stringify(third));
+    const secondEvidence = (second as Extract<TaskActivityOutcomeV1, { status: "complete" }>).evidence;
+    const thirdEvidence = (third as Extract<TaskActivityOutcomeV1, { status: "complete" }>).evidence;
+    assert.equal(secondEvidence.artifactRefs.length, 3);
+    assert.equal(thirdEvidence.artifactRefs.length, 3);
+    assert.ok((await fixture.checkpoints.resolveArtifact(secondEvidence.artifactRefs[0]!)).ok);
+    assert.ok((await fixture.checkpoints.resolveArtifact(thirdEvidence.artifactRefs[0]!)).ok);
+    assert.equal(harness.invocations.length, 3);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("execution host neither integrates nor starts attempts once the run is cancelling", {
   skip: !connectionString && "POSTGRES_TEST_URL is not set",
 }, async () => {

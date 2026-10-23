@@ -4,6 +4,23 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.151
+
+### Publish declared task artifacts during host execution
+
+- The Dapr execution host now binds a durable artifact publisher for every task.
+  A task that declares `produces` gets a complete `work` artifact synthesised
+  from its admitted handoff and output files, written to the run's artifact
+  store, and published to the checkpoint artifact store.
+- Completion evidence carries the published work-artifact reference alongside
+  validation and checkpoint evidence, including after approval resume and
+  rebase, so a dependent task's declared `inputs` can be projected.
+- Fixed host-executed runs failing every task at admission with
+  `Task '<id>' declares artifact output '<type>' but has no durable artifact
+  publisher`, even though the compiled manifest was valid.
+- Added unit coverage for publisher binding and a PostgreSQL integration test
+  for a three-task `produces` → `inputs` chain with parallel rebase.
+
 ## October 2026 - v3.150
 
 ### Choose the executor per run in the Console

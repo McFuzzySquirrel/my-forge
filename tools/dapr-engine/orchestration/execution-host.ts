@@ -26,6 +26,7 @@ import {
 } from "../execution/isolation.ts";
 import { superviseExecution, type ExecutionOwnershipStore } from "../execution/process-lifecycle.ts";
 import type { HarnessRunner } from "../execution/runner-contract.ts";
+import type { TaskAdmissionResult } from "../execution/task-admission.ts";
 import { TASK_EXECUTION_DIR } from "../execution/task-execution.ts";
 import type { AgentDescriptor, HarnessAdapter, ManifestTask, ProcessIdentityV1 } from "../execution/types.ts";
 import { captureWorkspaceCheckpoint, type WorkspaceCheckpointPublisher } from "../execution/workspace-reconstruction.ts";
@@ -177,6 +178,8 @@ interface PreparedEffect {
   readonly checkpointDigest: Sha256Digest;
   readonly resultCommit: string;
   readonly baseRevision: string;
+  /** Durable refs for the task's declared `produces` artifacts. */
+  readonly workArtifactRefs: readonly ArtifactRefV1[];
   readonly validationRef: ArtifactRefV1;
   readonly bundleRef: ArtifactRefV1;
   readonly outputFiles: readonly string[];
@@ -348,6 +351,10 @@ export class ExecutionHost {
               inherited: this.dependencies.inheritedEnvironment ?? process.env,
               credentials,
             });
+            const predecessorTaskIds = run.prerequisites.get(input.taskId) ?? [];
+            const artifactStore = new ArtifactStore({
+              artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts"),
+            });
             return await executeVerifiedTaskActivity({
               runId: input.runId,
               taskId: input.taskId,
@@ -379,8 +386,10 @@ export class ExecutionHost {
                 },
               },
               harness: run.harness,
-              artifactStore: new ArtifactStore({ artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts") }),
-              predecessorTaskIds: run.prerequisites.get(input.taskId) ?? [],
+              artifactStore,
+              predecessorTaskIds,
+              publishArtifacts: (admission) =>
+                this.publishWorkArtifact(run, task, admission, artifactStore, predecessorTaskIds),
               allowNoop: input.allowNoop,
               validationEnvironment: {
                 ...buildHarnessEnvironment({
@@ -667,6 +676,56 @@ export class ExecutionHost {
     return this.dependencies.taskScratchRoot;
   }
 
+  /**
+   * Synthesises and durably publishes the artifact a task declares with
+   * `produces`. The per-run store keeps it available to predecessor context
+   * projection; the checkpoint store turns it into durable completion
+   * evidence.
+   */
+  private async publishWorkArtifact(
+    run: ExecutionHostRunV1,
+    task: ManifestTask,
+    admission: Extract<TaskAdmissionResult, { ok: true }>,
+    artifactStore: ArtifactStore,
+    predecessorTaskIds: readonly string[],
+  ): Promise<readonly ArtifactRefV1[]> {
+    if (!task.produces) return [];
+    const projection = artifactStore.projectPredecessors({
+      taskId: task.id,
+      predecessorTaskIds,
+      inputTypes: task.inputs ?? [],
+    });
+    const artifact = artifactStore.write({
+      type: task.produces,
+      category: "work",
+      taskId: task.id,
+      producedBy: run.agentFor(task).name,
+      status: "complete",
+      summary: admission.handoff.summary,
+      inputs: projection.artifacts.map((entry) => entry.artifactId),
+      filesChanged: [...admission.outputFiles],
+      payload: {
+        taskDescription: task.description,
+        decisions: admission.handoff.decisions,
+        interfaces: admission.handoff.interfaces,
+        tests: admission.handoff.tests,
+        unresolved: admission.handoff.unresolved,
+        warnings: admission.handoff.warnings ?? [],
+        validationLimitations: admission.handoff.validationLimitations ?? [],
+      },
+      nextActions: [],
+    });
+    const bytes = new TextEncoder().encode(`${JSON.stringify(artifact, null, 2)}\n`);
+    const published = await this.dependencies.checkpoints.publishArtifact(bytes, {
+      mediaType: "application/json",
+      sizeBytes: bytes.byteLength,
+      sha256: sha256Digest(bytes),
+      retentionClass: "checkpoint-evidence",
+    });
+    if (!published.ok) throw new Error(`Could not publish work artifact: ${published.code}`);
+    return [published.ref];
+  }
+
   private async captureEffect(
     run: ExecutionHostRunV1,
     task: ManifestTask,
@@ -714,6 +773,7 @@ export class ExecutionHost {
         checkpointDigest: captured.digest,
         resultCommit: captured.resultCommit,
         baseRevision,
+        workArtifactRefs: [...outcome.evidence.artifactRefs],
         validationRef: published.ref,
         bundleRef: captured.checkpoint.gitObjectBundle,
         outputFiles: outcome.evidence.outputFiles,
@@ -776,7 +836,7 @@ export class ExecutionHost {
       operationId: key.operationId,
       outputFiles: effect.outputFiles,
       handoffDigest: effect.handoffDigest,
-      artifactRefs: [effect.validationRef, effect.bundleRef],
+      artifactRefs: [...(effect.workArtifactRefs ?? []), effect.validationRef, effect.bundleRef],
       validationCommands: effect.validationCommands,
     });
     const complete: TaskExecutionOutcomeV1 = { status: "complete", evidence };
@@ -877,7 +937,7 @@ export class ExecutionHost {
       operationId: key.operationId,
       outputFiles: effect.outputFiles,
       handoffDigest: effect.handoffDigest,
-      artifactRefs: [],
+      artifactRefs: [...(effect.workArtifactRefs ?? [])],
       validationCommands: effect.validationCommands,
     });
     const processIdentity = this.dependencies.taskUidIsolation ? allocateTaskProcessIdentity() : undefined;

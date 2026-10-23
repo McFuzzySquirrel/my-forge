@@ -11,6 +11,7 @@ import type {
   CreateProjectResult,
   DocsIndex,
   ExecutionMode,
+  Executor,
   ExecutionManifest,
   FileContent,
   LaunchCliResult,
@@ -20,6 +21,7 @@ import type {
   RederiveProgress,
   RederiveStepId,
   RemoveProjectsResult,
+  RunnerReadiness,
   SelectionScope,
   SelectResult,
   Summary,
@@ -206,8 +208,11 @@ export const api = {
   launchCli(): Promise<LaunchCliResult> {
     return post<LaunchCliResult>("/api/launch-cli", {});
   },
-  control(action: ControlAction, taskId?: string, from?: RederiveStepId): Promise<ControlResult> {
-    return post<ControlResult>("/api/control", { action, taskId, from });
+  control(action: ControlAction, taskId?: string, from?: RederiveStepId, executor?: Executor): Promise<ControlResult> {
+    return post<ControlResult>("/api/control", { action, taskId, from, executor });
+  },
+  runnerReadiness(): Promise<RunnerReadiness | null> {
+    return request<RunnerReadiness | null>("/api/runner-readiness");
   },
   /**
    * Regenerates the team, project skills, and manifest as one chain. `from`

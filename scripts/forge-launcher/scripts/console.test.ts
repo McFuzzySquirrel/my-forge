@@ -7,7 +7,7 @@ import { get as httpGet, request as httpRequest } from "node:http";
 
 import type { ConsoleServer } from "./console/server.ts";
 import { sessionHeaders, signedFetch, startSignedConsoleServer as startConsoleServer } from "./console-test-session.ts";
-import type { RuntimeAdminState } from "./console/types.ts";
+import type { RuntimeAdminState, RunnerReadiness } from "./console/types.ts";
 import type { SpawnOptions } from "./console/control.ts";
 import { writeFeatureFixture } from "./feature-fixture.ts";
 import { featureIncrementHandoffHasChange, recordFeatureIncrementHandoff } from "./authoring-state.ts";
@@ -221,7 +221,11 @@ function collectSse(url: string) {
 
 async function withServer<T>(
   fn: (server: ConsoleServer, repo: string, spawned: FakeSpawn) => Promise<T>,
-  opts: { repoRoot?: boolean; registered?: boolean } = { repoRoot: true },
+  opts: {
+    repoRoot?: boolean;
+    registered?: boolean;
+    runner?: RunnerReadiness | null | (() => RunnerReadiness | null);
+  } = { repoRoot: true },
 ): Promise<T> {
   const home = mkdtempSync(join(tmpdir(), "forge-home-"));
   const prevHome = process.env.FORGE_HOME;
@@ -240,6 +244,9 @@ async function withServer<T>(
         repositoryId: async () => "test-repository",
         client: async () => { throw new Error("service client is not needed in this test"); },
       },
+    } : {}),
+    ...(opts.runner !== undefined ? {
+      runnerReadiness: async () => typeof opts.runner === "function" ? opts.runner() : opts.runner ?? null,
     } : {}),
     deps: {
       spawner: (cmd, args, o) => { spawn.calls.push({ cmd, args, opts: o }); return { pid: 9000 + spawn.calls.length }; },
@@ -740,6 +747,82 @@ test("host execution requires confirmation and is passed only to explicitly conf
   }, { repoRoot: true, registered: true });
 });
 
+const availableRunner: RunnerReadiness = {
+  repositoryId: "test-repository",
+  registered: true,
+  capabilityEnabled: true,
+  hostRunnerStatus: "running",
+  available: true,
+  blocker: null,
+};
+
+test("a per-run executor overrides the saved default without changing it", async () => {
+  await withServer(async (server, repo, spawned) => {
+    const token = server.token;
+    const configFile = join(repo, "docs", "engine-config.json");
+    assert.equal(existsSync(configFile), false);
+
+    const host = await postJson(`${server.url}/api/control`, { action: "run", executor: "host" }, { "X-Forge-Token": token });
+    assert.equal((host.body as { ok: boolean }).ok, true);
+    assert.ok(spawned.calls.at(-1)!.args.includes("--host-execution"), "an explicit host choice must reach engine-run");
+    assert.equal(existsSync(configFile), false, "a per-run choice must not persist");
+
+    const enabled = await postJson(`${server.url}/api/engine-config`, { hostExecution: true, confirmed: true }, { "X-Forge-Token": token });
+    assert.equal((enabled.body as { ok: boolean }).ok, true);
+
+    const worker = await postJson(`${server.url}/api/control`, { action: "run", executor: "worker" }, { "X-Forge-Token": token });
+    assert.equal((worker.body as { ok: boolean }).ok, true);
+    assert.ok(!spawned.calls.at(-1)!.args.includes("--host-execution"), "an explicit worker choice must not fall back to the saved host default");
+    assert.equal(JSON.parse(readFileSync(configFile, "utf8")).hostExecution, true, "the saved default is unchanged");
+  }, { repoRoot: true, registered: true, runner: availableRunner });
+});
+
+test("a per-run host choice is rejected before submission when the runner is unavailable", async () => {
+  const unavailable: RunnerReadiness = {
+    repositoryId: "test-repository",
+    registered: true,
+    capabilityEnabled: false,
+    hostRunnerStatus: "stopped",
+    available: false,
+    blocker: "Enable this project's host-runner capability, then restart the runtime.",
+  };
+  await withServer(async (server, _repo, spawned) => {
+    const res = await postJson(`${server.url}/api/control`, { action: "run", executor: "host" }, { "X-Forge-Token": server.token });
+    assert.equal(res.status, 409);
+    assert.equal((res.body as { code: string }).code, "host-runner-unavailable");
+    assert.match((res.body as { message: string }).message, /capability/);
+    assert.equal(spawned.calls.length, 0, "no engine-run job should start for a blocked host request");
+  }, { repoRoot: true, registered: true, runner: unavailable });
+});
+
+test("an unknown executor is rejected", async () => {
+  await withServer(async (server) => {
+    const res = await postJson(`${server.url}/api/control`, { action: "run", executor: "sandbox" }, { "X-Forge-Token": server.token });
+    assert.equal(res.status, 400);
+    assert.match((res.body as { message: string }).message, /executor must be 'worker' or 'host'/);
+  }, { repoRoot: true, registered: true, runner: availableRunner });
+});
+
+test("runner readiness is exposed for the selected project", async () => {
+  await withServer(async (server) => {
+    const readiness = await getJson(`${server.url}/api/runner-readiness`) as RunnerReadiness;
+    assert.deepEqual(readiness, availableRunner);
+  }, { repoRoot: true, runner: availableRunner });
+});
+
+test("host preflight checks fresh readiness instead of the display cache", async () => {
+  let available: RunnerReadiness = availableRunner;
+  await withServer(async (server, _repo, spawned) => {
+    assert.equal((await getJson(`${server.url}/api/runner-readiness`) as RunnerReadiness).available, true);
+    available = { ...availableRunner, available: false, hostRunnerStatus: "stopped", blocker: "The native host runner is not running." };
+
+    const res = await postJson(`${server.url}/api/control`, { action: "run", executor: "host" }, { "X-Forge-Token": server.token });
+    assert.equal(res.status, 409);
+    assert.equal((res.body as { code: string }).code, "host-runner-unavailable");
+    assert.equal(spawned.calls.length, 0);
+  }, { repoRoot: true, registered: true, runner: () => available });
+});
+
 test("engine-config rejects a non-boolean harness activity value", async () => {
   await withServer(async (server, _repo) => {
     const res = await postJson(`${server.url}/api/engine-config`, { logHarnessActivity: "yes" }, { "X-Forge-Token": server.token });
@@ -1160,6 +1243,8 @@ test("runtime Console API requires the operator token and serializes mutations",
     missingServices: ["postgres", "placement", "scheduler", "daprd", "forge"],
     diagnostics: [],
     repositories: [],
+    hostRunnerEnabledRepositoryIds: [],
+    hostRunnerStatus: "disabled",
     harnessGrants: { copilot: [], claude: [], opencode: [] },
     startOptions: null,
     restartRequired: false,

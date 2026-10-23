@@ -24,6 +24,7 @@ import type {
   ControlResult,
   CreateProjectRequest,
   CreateProjectResult,
+  Executor,
 } from "./types.ts";
 
 // ─── Spawn seam (testable) ───────────────────────────────────────────────────
@@ -51,12 +52,16 @@ function defaultSpawner(cmd: string, args: string[], opts: SpawnOptions): SpawnR
 }
 
 /** Builds the engine-run invocation args (console is the live view, so no --viz). */
-function engineRunArgs(repoRoot: string): string[] {
+function engineRunArgs(repoRoot: string, executor?: Executor): string[] {
   const cfg = loadEngineConfig(repoRoot);
   const harness = process.env.FORGE_ENGINE_HARNESS ?? cfg?.harness ?? inferEngineHarness(repoRoot);
   assertEngineHarnessAvailable(harness);
   const args = ["engine-run", "--repo", repoRoot, "--harness", harness];
-  if (cfg?.hostExecution === true) args.push("--host-execution");
+  // The Console states the executor for every run it starts. The saved value is
+  // only a pre-selection (and a fallback for a client that predates the
+  // selector); it must never override an explicit worker choice.
+  const resolved: Executor = executor ?? (cfg?.hostExecution === true ? "host" : "worker");
+  if (resolved === "host") args.push("--host-execution");
   // The numeric settings are numbers in engine-config.json but strings in argv;
   // passing one through raw makes the job runner's argv scanning throw on
   // `startsWith`, so a Console-started run with a configured concurrency, task
@@ -110,12 +115,12 @@ export class RunController {
     return { ok: false, message: "Legacy PID controls are retired; stop a run through the local execution service." };
   }
 
-  run(jobType: "engine-run" | "engine-resume" = "engine-run"): ControlResult {
+  run(jobType: "engine-run" | "engine-resume" = "engine-run", executor?: Executor): ControlResult {
     refreshJobs();
     const blocker = authoringBlocker(this.p);
     if (blocker) return { ok: false, message: blocker };
     const logFile = this.p.logPath;
-    const { cmd, args } = engineDetachedCommand(engineRunArgs(this.repoRoot));
+    const { cmd, args } = engineDetachedCommand(engineRunArgs(this.repoRoot, executor));
     const job = this.launchJob(jobType, "Dapr service run started in the background.", cmd, args, logFile);
     const { pid } = job;
     return { ok: job.status !== "failed", message: job.message, pid, job };
@@ -362,7 +367,7 @@ export class RunController {
     };
   }
 
-  dispatch(action: ControlAction, taskId?: string, from?: RederiveStepId): ControlResult {
+  dispatch(action: ControlAction, taskId?: string, from?: RederiveStepId, executor?: Executor): ControlResult {
     if (action === "run" || action === "resume") {
       const validation = this.manualSelectionRequiredMessage(action);
       if (validation) return validation;
@@ -370,8 +375,8 @@ export class RunController {
     switch (action) {
       case "pause": return this.pause();
       case "stop": return this.stop();
-      case "run": return this.run();
-      case "resume": return this.run("engine-resume");
+      case "run": return this.run("engine-run", executor);
+      case "resume": return this.run("engine-resume", executor);
       case "replay": return taskId ? this.replay(taskId) : { ok: false, message: "replay requires a taskId." };
       case "draft-prd":
       case "draft-existing-prd": return interactiveRequirements();

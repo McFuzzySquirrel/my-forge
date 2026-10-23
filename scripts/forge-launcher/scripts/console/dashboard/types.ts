@@ -83,6 +83,8 @@ export interface RunSummary {
   counts: RunCounts;
   total: number;
   blockers: string[];
+  /** Executor bound at submission; null when the snapshot does not report one. */
+  hostExecution: boolean | null;
 }
 
 export interface ManifestSummary {
@@ -135,6 +137,18 @@ export interface Summary {
   authoringStages?: AuthoringStageDetail[];
   /** Progress of the team → skills → manifest re-derivation chain. */
   rederive?: RederiveProgress | null;
+}
+
+/** The executor for one run. The saved project value is only a default. */
+export type Executor = "worker" | "host";
+
+export interface RunnerReadiness {
+  repositoryId: string | null;
+  registered: boolean;
+  capabilityEnabled: boolean;
+  hostRunnerStatus: "disabled" | "running" | "stopped";
+  available: boolean;
+  blocker: string | null;
 }
 
 export type RederiveStepId = "team" | "skills" | "manifest";

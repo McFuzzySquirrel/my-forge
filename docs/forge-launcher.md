@@ -188,7 +188,8 @@ CLI and its child tools run as the logged-in user with access to that account's
 files, processes, and network, not only the registered project. Use it only for
 trusted tasks. A missing or unavailable host runner fails closed; the launcher
 never falls back silently to the worker CLI. The Console's Overview has the
-equivalent per-project host-execution opt-in and warning.
+equivalent per-run choice; its saved project default only preselects that
+selector, and the CLI never reads it.
 
 The Console's **Runtime** view provides local controls for runtime lifecycle,
 reset, backup/restore, token rotation, repository registration, and harness

@@ -2,6 +2,7 @@
 
 import { api } from "../api.js";
 import { store } from "../state.js";
+import { executorFor } from "../executor.js";
 import { el, fmtDuration, fmtTime, minutesToTimeoutMs, statusBadge, timeoutToMinutes, toast } from "../render/dom.js";
 import type { SelectionScope, TaskRow } from "../types.js";
 
@@ -382,7 +383,10 @@ async function runSelectionAction(action: "run" | "resume"): Promise<void> {
       toast(save.message || "save failed");
       return;
     }
-    const res = await api.control(action);
+    // Omit the executor when the project summary is unavailable so the server
+    // keeps its saved-default fallback instead of guessing.
+    const executor = store.summary ? executorFor(store.summary) : undefined;
+    const res = await api.control(action, undefined, undefined, executor);
     toast(res.message || (res.ok ? "ok" : "failed"));
   } catch (err) {
     toast(err instanceof Error ? err.message : "control failed");

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { chmod, lstat, mkdir, open, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readFile, realpath, rename, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { createReadStream } from "node:fs";
 import os from "node:os";
@@ -668,6 +668,68 @@ export async function getRuntimeAdminState(dataDir = getRuntimeDataDir()): Promi
         ...(applied.postgresPort !== undefined ? { postgresPort: applied.postgresPort } : {}),
       },
     restartRequired: await repositoryRestartRequired(repositories, running, applied),
+  };
+}
+
+/**
+ * Per-project host-runner availability for run-time gating.
+ *
+ * Deliberately narrower than `getRuntimeAdminState`: it reads only the
+ * repository registry, host-runner capabilities, and the runner process, so a
+ * caller polling it while a run is live does not shell out to Podman.
+ */
+export interface HostRunnerReadiness {
+  readonly repositoryId: string | null;
+  readonly registered: boolean;
+  readonly capabilityEnabled: boolean;
+  readonly hostRunnerStatus: "disabled" | "running" | "stopped";
+  readonly available: boolean;
+  /** Operator-facing cause when `available` is false. */
+  readonly blocker: string | null;
+}
+
+async function sameRepositoryPath(left: string, right: string): Promise<boolean> {
+  const normalise = async (value: string): Promise<string> => {
+    try {
+      return await realpath(value);
+    } catch {
+      return path.resolve(value);
+    }
+  };
+  return await normalise(left) === await normalise(right);
+}
+
+export async function getHostRunnerReadiness(
+  repoRoot: string,
+  dataDir = getRuntimeDataDir(),
+): Promise<HostRunnerReadiness> {
+  const [repositories, enabledRepositoryIds, hostRunnerStatus] = await Promise.all([
+    listRegisteredRepositories(dataDir),
+    listEnabledHostRunnerRepositories(dataDir),
+    getHostRunnerProcessStatus(dataDir),
+  ]);
+  let registered: RegisteredRepository | null = null;
+  for (const candidate of repositories) {
+    if (await sameRepositoryPath(candidate.path, repoRoot)) {
+      registered = candidate;
+      break;
+    }
+  }
+  const capabilityEnabled = registered !== null && enabledRepositoryIds.includes(registered.id);
+  const blocker = registered === null
+    ? "Register this project with the local runtime before using host execution."
+    : !capabilityEnabled
+      ? "Enable this project's host-runner capability, then restart the runtime."
+      : hostRunnerStatus !== "running"
+        ? "The native host runner is not running. Start the local runtime to use host execution."
+        : null;
+  return {
+    repositoryId: registered?.id ?? null,
+    registered: registered !== null,
+    capabilityEnabled,
+    hostRunnerStatus,
+    available: blocker === null,
+    blocker,
   };
 }
 

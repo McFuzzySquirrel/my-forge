@@ -35,9 +35,10 @@ import { removeProjects, sameProjectPath } from "./remove-projects.ts";
 import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
 import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, latestServiceRun, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
 import { defaultHostRunnerJobsDeps, listHostRunnerJobs, type HostRunnerJobsDeps } from "./host-runner-jobs.ts";
-import type { ControlAction, CreateProjectRequest, ManifestTask, ServiceRunSnapshot } from "./types.ts";
+import type { ControlAction, CreateProjectRequest, Executor, ManifestTask, RunnerReadiness, ServiceRunSnapshot } from "./types.ts";
 import {
   executeRuntimeAdminAction,
+  getHostRunnerReadiness,
   getRuntimeAdminState,
   parseRuntimeAdminAction,
   type RuntimeAdminAction,
@@ -72,6 +73,8 @@ export interface ConsoleServerOptions {
   hostRunnerJobs?: HostRunnerJobsDeps;
   /** Runtime administration seam (defaults to the local Podman runtime). */
   runtimeAdmin?: RuntimeAdminDeps;
+  /** Host-runner readiness seam (defaults to the local runtime registry). */
+  runnerReadiness?: (repoRoot: string) => Promise<RunnerReadiness>;
 }
 
 export interface RuntimeAdminDeps {
@@ -128,6 +131,7 @@ function asServiceRunSnapshot(value: unknown): ServiceRunSnapshot | null {
     status: run.status,
     ...(typeof run.createdAt === "string" ? { createdAt: run.createdAt } : {}),
     ...(typeof run.updatedAt === "string" ? { updatedAt: run.updatedAt } : {}),
+    ...(typeof run.hostExecution === "boolean" ? { hostExecution: run.hostExecution } : {}),
     tasks,
   };
 }
@@ -419,6 +423,21 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
     state: () => getRuntimeAdminState(),
     execute: (action) => executeRuntimeAdminAction(action),
   };
+  const runnerReadiness = options.runnerReadiness ??
+    ((repoRoot: string) => getHostRunnerReadiness(repoRoot));
+  // The Overview refreshes on audit and snapshot events, so cache the answer
+  // for a few seconds. The run preflight below still checks fresh state; the
+  // service re-checks anyway.
+  let readinessCache: { repoRoot: string; fetchedAt: number; value: RunnerReadiness } | null = null;
+  const cachedRunnerReadiness = async (repoRoot: string): Promise<RunnerReadiness> => {
+    const now = Date.now();
+    if (readinessCache?.repoRoot === repoRoot && now - readinessCache.fetchedAt < 3000) {
+      return readinessCache.value;
+    }
+    const value = await runnerReadiness(repoRoot);
+    readinessCache = { repoRoot, fetchedAt: now, value };
+    return value;
+  };
   let serviceRunCache: {
     repoRoot: string;
     expiresAt: number;
@@ -574,6 +593,8 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         switch (urlPath) {
           case "/api/runtime":
             return sendJson(res, 200, await runtimeAdmin.state());
+          case "/api/runner-readiness":
+            return sendJson(res, 200, p ? await cachedRunnerReadiness(p.repoRoot) : null);
           case "/api/summary":
             repo.refreshJobs();
             return p ? sendJson(res, 200, repo.summary(p, await currentServiceRun(currentRepo))) : sendJson(res, 200, null);
@@ -717,6 +738,10 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         if (urlPath === "/api/control") {
           const action = body.action as ControlAction;
           const taskId = typeof body.taskId === "string" ? body.taskId : undefined;
+          if (body.executor !== undefined && body.executor !== "worker" && body.executor !== "host") {
+            return sendJson(res, 400, { ok: false, message: "executor must be 'worker' or 'host'." });
+          }
+          const executor = body.executor as Executor | undefined;
           // Only the re-derivation chain accepts a starting step; anything else
           // in `from` is ignored rather than rejected so an older client that
           // sends the field cannot break an unrelated action.
@@ -732,6 +757,21 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
                 code: "service-required",
                 message: `Register this repository with "forge-launcher runtime repo add ${currentRepo}", then restart the runtime. Legacy execution is retired.`,
               });
+            }
+            // An explicit host request is gated here so the operator learns
+            // about a stopped runner or missing capability before a submission
+            // is created. Clients that omit the field keep the older behaviour;
+            // the service still fails closed for them.
+            if (executor === "host") {
+              const readiness = await runnerReadiness(currentRepo).catch(() => null);
+              if (!readiness?.available) {
+                return sendJson(res, 409, {
+                  ok: false,
+                  code: "host-runner-unavailable",
+                  message: readiness?.blocker ??
+                    "Host execution is unavailable until the local runtime reports a ready host runner.",
+                });
+              }
             }
           }
           if (action === "feature-increment-continue" && !featureIncrementHandoffHasChange(currentRepo)) {
@@ -754,7 +794,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             const routed = await routeServiceControl(serviceRuns(), currentRepo, action, taskId);
             return sendJson(res, routed.status, routed.body);
           }
-          return sendJson(res, 200, controller.dispatch(action, taskId, from));
+          return sendJson(res, 200, controller.dispatch(action, taskId, from, executor));
         }
         if (urlPath === "/api/tasks/timeout") {
           const timeoutMs = Number(body.timeoutMs);

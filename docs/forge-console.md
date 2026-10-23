@@ -414,6 +414,40 @@ does:
 | **Replay** | Acknowledged service `replay-task` control for a failed task. |
 | **Create manifest** *(pipeline card, manual pre-build only)* | `forge-launcher compile-manifest --repo <path>` (installs the adapter if needed and writes `docs/EXECUTION-MANIFEST.json` without starting a run). |
 
+### Executor
+
+The **Executor for the next run** selector sits in the Overview **Controls**
+panel, above **Run** and **Resume**; it is available before the first build too,
+so the initial **Start build** uses the same choice:
+
+- **Worker container** (default) runs the harness CLIs pinned in the worker
+  image with runtime-granted credentials.
+- **This computer** delegates the attempt to the launcher-managed host runner,
+  which uses the CLI installed on the operator's machine and its normal login.
+  The harness and its child processes have the operator's full OS permissions;
+  there is no task sandbox.
+
+The choice applies to the next **Run** or **Resume**; it does not rewrite the
+project default. **Save as default for this project** stores it in
+`docs/engine-config.json`, and the selector preselects that saved value. A
+per-run choice is sent with the run request, so selecting the worker once does
+not disturb a saved host default, and selecting host once does not persist it to
+later runs.
+
+The host option is disabled when readiness cannot be verified, with the reason
+shown inline: the project must be registered with the runtime, its host-runner
+capability must be enabled, and the native runner must be running. An explicit
+host request that the Console cannot verify is rejected before a run is
+submitted, and the service still fails closed with `harness-unavailable` if
+readiness changes between the check and submission. Host execution never falls
+back to the worker.
+
+The executor binds at submission. Selecting a different executor while a run is
+active affects the next run; Overview names the active run's executor, and the
+**Service runs** view shows it for every run. CLI submission commands are
+explicit-only (`--host-execution`), so a saved Console preference cannot change
+what a script runs.
+
 ### Service runs
 
 The **Service runs** view lists runs that the local execution service holds
@@ -480,12 +514,12 @@ marked as truncated. The authenticated Console proxy exposes only repository,
 run/task IDs, harness, state, and lifecycle timestamps—not capability values,
 request/result payloads, CLI output, or raw failure details.
 
-Host execution is a separate opt-in in the Overview **Controls** panel. Before
-enabling it, the Console warns that the local harness CLI runs outside a task
-sandbox with the logged-in user's full OS permissions. Host execution never
-falls back silently to the worker. Use the Host runner page for readiness and
-project authorization, and Runtime to register repositories or start the
-runtime.
+Host execution is selected per run in the Overview **Controls** panel (see
+[Executor](#executor)). Before starting a host run, the Console warns that the
+local harness CLI runs outside a task sandbox with the logged-in user's full OS
+permissions. Host execution never falls back silently to the worker. Use the
+Host runner page for readiness and project authorization, and Runtime to
+register repositories or start the runtime.
 
 For a registered repository, Overview builds and controls also use the
 service ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)):
@@ -527,7 +561,7 @@ manifest**. That compiles `docs/EXECUTION-MANIFEST.json` without starting the
 engine, so task selection can happen only after the manifest exists.
 
 Once the manifest exists, the Overview **Controls** panel persists how the next
-run should behave:
+run should behave (the per-run executor is the exception):
 
 - **Auto** - the engine runs the full ready workflow.
 - **Manual** - the engine runs only the selected task set saved from the

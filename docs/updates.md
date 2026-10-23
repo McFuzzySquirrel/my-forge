@@ -4,6 +4,27 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.150
+
+### Choose the executor per run in the Console
+
+- Replaced the project-level host-execution checkbox with an **Executor for the
+  next run** selector beside **Run** and **Resume**. The choice applies to that
+  run and does not rewrite the project default.
+- **Save as default for this project** persists `hostExecution` in
+  `docs/engine-config.json`; the selector preselects it for later runs.
+- The host option is disabled with the missing prerequisite shown inline until
+  the project is registered, its runner capability is enabled, and the host
+  runner is running. An explicit host request that fails this check returns
+  `409 host-runner-unavailable` before a submission is created.
+- Overview names the executor bound to an active run and states that a change
+  applies to the next run; **Service runs** continues to show the executor for
+  every run.
+- CLI submission commands remain explicit-only: neither `engine-run` nor
+  `service submit` reads the saved Console preference, so a GUI default cannot
+  change what a script runs.
+- Recorded the decision in [ADR-082](adr/082-per-run-executor-selection-and-readiness-gating.md).
+
 ## October 2026 - v3.149
 
 ### Clarify worker and host harness execution

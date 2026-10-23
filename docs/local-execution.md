@@ -101,6 +101,16 @@ workflow ownership. Dapr remains responsible for scheduling, timeouts,
 validation, checkpoint publication, cancellation, and repository integration.
 Host mode never silently falls back to the worker harness.
 
+Selection is per run and explicit. `engine-run --host-execution`,
+`service submit --host-execution`, and the Console's **Executor for the next
+run** selector request the host runner; omitting them requests the worker. The
+`hostExecution` value saved in `docs/engine-config.json` only preselects the
+Console selector, and CLI submission commands never read it, so a saved
+preference cannot change what a script runs. The Console checks project
+registration, runner capability, and runner readiness before submitting an
+explicit host request; the service remains authoritative and still rejects an
+unavailable host runner with `harness-unavailable`.
+
 The host-runner capability authorizes Dapr-to-runner requests for one
 registered repository. It is distinct from provider credentials, the service
 API token, Dapr sidecar authentication, and Git credentials. It does not limit

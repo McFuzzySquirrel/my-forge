@@ -13,6 +13,7 @@ import {
   DEFAULT_RUNTIME_PROJECT,
   executeRuntimeAdminAction,
   ensureRuntimeCredentials,
+  getHostRunnerReadiness,
   getRuntimeAdminState,
   getRuntimeDataDir,
   getRuntimeProject,
@@ -201,6 +202,37 @@ test("Console runtime capability controls never expose raw project credentials",
     confirmed: true,
   }, directory);
   assert.deepEqual((await getRuntimeAdminState(directory)).hostRunnerEnabledRepositoryIds, []);
+});
+
+test("host-runner readiness names the first missing prerequisite", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "forge-runtime-readiness-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(path.join(directory, "repositories.json"), JSON.stringify({
+    version: 1,
+    repositories: [{ id: "demo", path: directory }],
+  }), { mode: 0o600 });
+
+  const unregistered = await getHostRunnerReadiness(path.join(directory, "elsewhere"), directory);
+  assert.equal(unregistered.registered, false);
+  assert.equal(unregistered.available, false);
+  assert.match(unregistered.blocker ?? "", /Register/);
+
+  const noCapability = await getHostRunnerReadiness(directory, directory);
+  assert.equal(noCapability.capabilityEnabled, false);
+  assert.equal(noCapability.available, false);
+  assert.match(noCapability.blocker ?? "", /capability/);
+
+  await executeRuntimeAdminAction({
+    action: "runner-capability",
+    id: "demo",
+    operation: "enable",
+    confirmed: true,
+  }, directory);
+  const stopped = await getHostRunnerReadiness(directory, directory);
+  assert.equal(stopped.capabilityEnabled, true);
+  assert.equal(stopped.hostRunnerStatus, "stopped");
+  assert.equal(stopped.available, false);
+  assert.match(stopped.blocker ?? "", /not running/);
 });
 
 test("Console harness credential actions store secrets but expose only variable names", async (t) => {

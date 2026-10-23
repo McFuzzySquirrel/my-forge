@@ -197,12 +197,22 @@ and cleared from the form; the page lists variable names only. The last
 successful start's host-tools setting and PostgreSQL port prefill later
 restarts. Operations show progress and return actionable errors.
 
-Host execution is off by default. In Overview **Controls**, enable **Run
-harness CLI on this host** only for trusted tasks and confirm the warning. The
-local CLI uses its existing installation and authentication, but runs with your
-user account's full filesystem, process, and network permissions outside a task
-sandbox. This is independent of project runner authorization and worker
-harness-credential grants; there is no automatic fallback between modes.
+Host execution is off by default. In Overview **Controls**, choose **This
+computer** under **Executor for the next run** only for trusted tasks and confirm
+the warning. The choice applies to that run; **Save as default for this project**
+persists it for later runs. The local CLI uses its existing installation and
+authentication, but runs with your user account's full filesystem, process, and
+network permissions outside a task sandbox. The host option is disabled, with
+the reason shown, until the project is registered, its runner capability is
+enabled, and the host runner is running. This is independent of project runner
+authorization and worker harness-credential grants; there is no automatic
+fallback between modes.
+
+The executor binds when a run is submitted. Changing the selector while a run is
+active applies to the next run; Overview names the active run's executor. The
+**Service runs** view shows the executor for every run. CLI submission commands
+remain explicit-only (`--host-execution`), so a saved Console preference never
+changes what a script runs.
 
 ### Manage the host runner
 
@@ -234,9 +244,10 @@ For a repository registered with the local runtime, the **Execution
 deployment** panel reads **Local execution service**. In that case these
 controls go to the service's newest run instead of the local engine process,
 and builds run in the runtime's worker by default, with harness credentials
-granted through `forge-launcher runtime harness grant`. A run explicitly
-configured for host execution instead uses the local CLI with full OS
-permissions. See
+granted through `forge-launcher runtime harness grant`. The **Executor for the
+next run** selector chooses the worker container or this computer for the next
+run (see [Manage local execution](#manage-local-execution)). A run selected for
+host execution uses the local CLI with full OS permissions. See
 [Service runs](forge-console.md#service-runs).
 
 - **Pause**: stop after the current task completes.

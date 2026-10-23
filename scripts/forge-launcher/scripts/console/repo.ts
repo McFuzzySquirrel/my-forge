@@ -289,6 +289,7 @@ function runSummary(run: ServiceRunSnapshot | null): RunSummary | null {
     counts,
     total: run.tasks.length,
     blockers: [],
+    hostExecution: typeof run.hostExecution === "boolean" ? run.hostExecution : null,
   };
 }
 

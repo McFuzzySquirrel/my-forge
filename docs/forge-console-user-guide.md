@@ -166,11 +166,57 @@ recompile the manifest explicitly; the Console will not silently switch roots.
 - **Service runs**: runs held by the local execution service for the open
   repository, whether started from Overview, `engine-run`, or
   `forge-launcher service submit`. Select a run to see its tasks and events,
-  and to pause, resume, stop, cancel, approve, or replay it. Each button shows
-  the service's acknowledgement. Register the repository with
-  `forge-launcher runtime repo add` and start the runtime first.
+  see whether it runs in the worker or on the host runner, and to pause, resume,
+  stop, cancel, approve, or replay it. Each button shows the service's
+  acknowledgement. Host-executed runs link to their runner-job history.
+- **Host runner**: inspect runner readiness, manage project capabilities, and
+  filter active/recent runner jobs by repository.
+- **Runtime**: manage the shared local Podman runtime, register the selected
+  project, start or stop the service, and administer backups, tokens, and
+  harness credentials. Runtime lifecycle controls affect all registered
+  projects; use Service runs to control one workflow run.
 
 The most useful combination for day-to-day work is usually Overview + Board + Logs.
+
+### Manage local execution
+
+Open **Runtime** to check service readiness and register the selected project
+with **Use selected project**. Registration is saved without restarting. If
+the runtime is already running, the page marks the mount change pending and
+offers a separate confirmed **Restart**; if it is stopped, use **Start** to
+apply the registry. Only each repository's `.git` directory is mounted.
+Registering a project also enables its host-runner capability.
+
+The Runtime page also provides explicit-confirmation controls for stopping or
+restarting the shared runtime, destructive reset and restore, API-token
+rotation, and credential revocation. A backup can be created before a reset or
+upgrade. Restore checks the archive and Git refs; selecting **Allow Git drift**
+requires a second acknowledgement because run history can become inconsistent.
+Harness credential grants are entered into a password field, stored locally,
+and cleared from the form; the page lists variable names only. The last
+successful start's host-tools setting and PostgreSQL port prefill later
+restarts. Operations show progress and return actionable errors.
+
+Host execution is off by default. In Overview **Controls**, enable **Run
+harness CLI on this host** only for trusted tasks and confirm the warning. The
+local CLI uses its existing installation and authentication, but runs with your
+user account's full filesystem, process, and network permissions outside a task
+sandbox. This is independent of project runner authorization and worker
+harness-credential grants; there is no automatic fallback between modes.
+
+### Manage the host runner
+
+Open **Host runner** to check native runner readiness and manage each registered
+project's capability. Enabling, rotating, or revoking a capability requires an
+explicit confirmation; the change is saved immediately but the runtime must be
+restarted separately. A capability authorizes Dapr requests only and does not
+sandbox the local CLI or limit its access to your OS account.
+
+The **Runner jobs** table refreshes automatically and lists active jobs plus up
+to 20 recent terminal jobs. Use the repository filter to narrow the list; if
+more than 100 active jobs match, the page marks the active list as truncated.
+The table shows only job identity and lifecycle metadata. It never shows CLI
+output, job payloads, results, raw failure details, or capability values.
 
 Authoring lifecycle records use the `FORGE_EVENT {json}` prefix in
 `docs/engine-run.log` and are also sent as `authoring` SSE events. Ordinary
@@ -187,8 +233,10 @@ The Overview controls panel offers the same actions you would otherwise issue fr
 For a repository registered with the local runtime, the **Execution
 deployment** panel reads **Local execution service**. In that case these
 controls go to the service's newest run instead of the local engine process,
-and builds run in the runtime's worker with the harness credentials granted
-through `forge-launcher runtime harness grant`. See
+and builds run in the runtime's worker by default, with harness credentials
+granted through `forge-launcher runtime harness grant`. A run explicitly
+configured for host execution instead uses the local CLI with full OS
+permissions. See
 [Service runs](forge-console.md#service-runs).
 
 - **Pause**: stop after the current task completes.

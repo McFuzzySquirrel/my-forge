@@ -34,7 +34,16 @@ import * as repo from "./repo.ts";
 import { removeProjects, sameProjectPath } from "./remove-projects.ts";
 import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
 import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, latestServiceRun, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
+import { defaultHostRunnerJobsDeps, listHostRunnerJobs, type HostRunnerJobsDeps } from "./host-runner-jobs.ts";
 import type { ControlAction, CreateProjectRequest, ManifestTask, ServiceRunSnapshot } from "./types.ts";
+import {
+  executeRuntimeAdminAction,
+  getRuntimeAdminState,
+  parseRuntimeAdminAction,
+  type RuntimeAdminAction,
+  type RuntimeAdminResult,
+  type RuntimeAdminState,
+} from "../runtime.ts";
 
 const CLIENT_DIR = fileURLToPath(new URL("../../resources/console/client", import.meta.url));
 
@@ -59,6 +68,15 @@ export interface ConsoleServerOptions {
   inventoryProbe?: InventoryProbe;
   /** Execution-service access seam (defaults to the local runtime API). */
   serviceRuns?: ServiceRunsDeps;
+  /** Host-runner monitor seam (defaults to the local runtime API). */
+  hostRunnerJobs?: HostRunnerJobsDeps;
+  /** Runtime administration seam (defaults to the local Podman runtime). */
+  runtimeAdmin?: RuntimeAdminDeps;
+}
+
+export interface RuntimeAdminDeps {
+  state(): Promise<RuntimeAdminState>;
+  execute(action: RuntimeAdminAction): Promise<RuntimeAdminResult>;
 }
 
 export interface ConsoleServer {
@@ -394,6 +412,13 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
   const sessions = new OperatorSessions({ port });
   let serviceRunsDeps = options.serviceRuns;
   const serviceRuns = (): ServiceRunsDeps => (serviceRunsDeps ??= defaultServiceRunsDeps());
+  let hostRunnerJobsDeps = options.hostRunnerJobs;
+  const hostRunnerJobs = (): HostRunnerJobsDeps => (hostRunnerJobsDeps ??= defaultHostRunnerJobsDeps());
+  let runtimeAdminBusy = false;
+  const runtimeAdmin: RuntimeAdminDeps = options.runtimeAdmin ?? {
+    state: () => getRuntimeAdminState(),
+    execute: (action) => executeRuntimeAdminAction(action),
+  };
   let serviceRunCache: {
     repoRoot: string;
     expiresAt: number;
@@ -547,6 +572,8 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
       if (method === "GET") {
         const p = currentPaths();
         switch (urlPath) {
+          case "/api/runtime":
+            return sendJson(res, 200, await runtimeAdmin.state());
           case "/api/summary":
             repo.refreshJobs();
             return p ? sendJson(res, 200, repo.summary(p, await currentServiceRun(currentRepo))) : sendJson(res, 200, null);
@@ -605,6 +632,11 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           const result = await listServiceRuns(serviceRuns(), currentRepo);
           return sendJson(res, result.status, result.body);
         }
+        if (urlPath === "/api/service/host-runner/jobs") {
+          const query = new URLSearchParams(rawUrl.split("?")[1] ?? "");
+          const result = await listHostRunnerJobs(hostRunnerJobs(), query.get("repositoryId") ?? undefined);
+          return sendJson(res, result.status, result.body);
+        }
         if (urlPath === "/api/service/run") {
           const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");
           const result = await serviceRunDetail(serviceRuns(), currentRepo, q.get("id"), q.get("after"));
@@ -646,6 +678,25 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         if (urlPath === "/api/service/control") {
           const result = await controlServiceRun(serviceRuns(), currentRepo, body);
           return sendJson(res, result.status, result.body);
+        }
+
+        if (urlPath === "/api/runtime/action") {
+          if (runtimeAdminBusy) {
+            return sendJson(res, 409, { ok: false, message: "Another runtime operation is already in progress." });
+          }
+          let action: RuntimeAdminAction;
+          try {
+            action = parseRuntimeAdminAction(body);
+          } catch (error) {
+            return sendJson(res, 400, { ok: false, message: error instanceof Error ? error.message : String(error) });
+          }
+          runtimeAdminBusy = true;
+          try {
+            const result = await runtimeAdmin.execute(action);
+            return sendJson(res, 200, { ok: true, ...result });
+          } finally {
+            runtimeAdminBusy = false;
+          }
         }
 
         if (urlPath === "/api/authoring-config") {
@@ -825,6 +876,17 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
               return sendJson(res, 400, { ok: false, message: "logHarnessActivity must be a boolean." });
             }
             const result = repo.setLogHarnessActivity(currentPaths()!, body.logHarnessActivity);
+            broadcast("snapshot", snapshotEvent());
+            return sendJson(res, result.ok ? 200 : 400, result);
+          }
+          if (body.hostExecution !== undefined) {
+            if (typeof body.hostExecution !== "boolean") {
+              return sendJson(res, 400, { ok: false, message: "hostExecution must be a boolean." });
+            }
+            if (body.hostExecution && body.confirmed !== true) {
+              return sendJson(res, 400, { ok: false, message: "Enabling host execution requires explicit confirmation." });
+            }
+            const result = repo.setHostExecution(currentPaths()!, body.hostExecution);
             broadcast("snapshot", snapshotEvent());
             return sendJson(res, result.ok ? 200 : 400, result);
           }

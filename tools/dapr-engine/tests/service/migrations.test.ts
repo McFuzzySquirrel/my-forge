@@ -110,7 +110,7 @@ test("application migrations require contiguous version numbers", async () => {
   assert.equal(database.released, false);
 });
 
-test("bundled application migrations append run definition versions as version 7", async () => {
+test("bundled application migrations append host-runner summaries as version 9", async () => {
   const database = new MemoryDatabase();
   const { migrateApplicationDatabase } = await import("../../service/migrations.ts");
   await migrateApplicationDatabase(database);
@@ -122,5 +122,7 @@ test("bundled application migrations append run definition versions as version 7
     [5, "run-status.sql"],
     [6, "run-submissions.sql"],
     [7, "run-definition-versions.sql"],
+    [8, "host-runner-jobs.sql"],
+    [9, "host-runner-job-summaries.sql"],
   ]);
 });

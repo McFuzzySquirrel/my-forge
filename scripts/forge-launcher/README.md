@@ -34,7 +34,7 @@ the queued command it prints.
 | `forge-launcher bootstrap <dir> [--harness agents\|github\|claude\|opencode]` | Copy agent/skill templates into an existing project. |
 | `forge-launcher engine-run [--repo <path>] [--harness <h>] …` | Compile the manifest and run the autonomous build through the local Dapr service. The repository must be registered with `runtime repo add` and the runtime restarted. |
 | `forge-launcher resume [--repo <path>]` | Pick up a paused/finished setup where it left off; build execution requires a registered repository and uses the local service. |
-| `forge-launcher console [--repo <path>]` | Local web UI (`http://127.0.0.1:4300`) for authoring, build monitoring, and run controls; sign in with the printed single-use link. |
+| `forge-launcher console [--repo <path>]` | Local web UI (`http://127.0.0.1:4300`) for authoring, build monitoring, service-run controls, and full local runtime administration; sign in with the printed single-use link. |
 | `forge-launcher runtime start [--host-tools]` | Start the Forge worker and persistent PostgreSQL/Dapr services with rootless Podman; host tools publish PostgreSQL on loopback only. |
 | `forge-launcher runtime status` | Show runtime containers and recent logs for unhealthy or stopped services. |
 | `forge-launcher runtime stop` | Stop containers while preserving persistent volumes. |
@@ -58,9 +58,13 @@ repository and is provisioned with `forge-launcher runtime start`.
 The `runtime` commands manage the local service and its infrastructure. The
 `service` commands use its loopback, token-authenticated run API. The worker
 image includes pinned `copilot`, `claude`, and `opencode` CLIs, which run only
-with credentials granted through `runtime harness grant`. For registered repositories, `engine-run`, `resume`, and Console builds and
-controls use the service. Unregistered repositories fail closed; legacy
-workflow histories are not imported. See the [cutover and rollback procedure](../../docs/forge-launcher.md#cut-over-from-the-legacy-engine)
+with credentials granted through `runtime harness grant`. The Console's
+**Runtime** view manages lifecycle, repository registration, backups, token
+rotation, and harness grants; destructive actions require confirmation, and
+registration changes require a separate restart. For registered repositories,
+`engine-run`, `resume`, and Console builds and controls use the service.
+Unregistered repositories fail closed; legacy workflow histories are not
+imported. See the [cutover and rollback procedure](../../docs/forge-launcher.md#cut-over-from-the-legacy-engine)
 and [ADR-079](../../docs/adr/079-dapr-execution-cutover.md).
 
 For an unpublished checkout, run `npm install`, `npm pack`, and

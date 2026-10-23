@@ -28,6 +28,7 @@ const MIGRATIONS = [
   "control-records.sql",
   "run-status.sql",
   "run-definition-versions.sql",
+  "host-runner-jobs.sql",
 ];
 
 export function git(cwd: string, args: readonly string[]): string {

@@ -24,6 +24,7 @@ Usage:
   forge-launcher console [--repo <path>] [--port <n>] [--no-open]
   forge-launcher runtime <start|status|stop|reset> [--host-tools] [--postgres-port <n>] [--confirm]
   forge-launcher runtime repo <add <path> [--id <id>]|list|remove <id>>
+  forge-launcher runtime runner <enable|rotate|revoke> <repository-id>
   forge-launcher runtime harness <list|grant <harness> <VARIABLE>|revoke <harness> [VARIABLE]>
   forge-launcher service <submit|runs|status|events|control|merge> ...  # local execution service API
   forge-launcher engine-run [--repo <path>] [--harness <h>] [--granularity <fine|coarse>]
@@ -31,6 +32,7 @@ Usage:
                             [--retry-delay-ms <ms>] [--heartbeat-ms <ms>] [--yes] [--dry-run]
                             [--viz [--viz-port <n>]] [--no-open]
                             [--allow-noop] [--run-validation]
+                            [--host-execution]
                             [--log-harness-activity|--no-log-harness-activity]
                             [--auto-commit|--no-auto-commit] [--commit-message-template <tmpl>]
                             [--execution-mode <auto|manual>] [--selection-scope <single|range|list>]
@@ -79,6 +81,9 @@ Deployment:
   FORGE_DEPLOYMENT=hosted is not available yet.
   Service runs ignore --task-timeout-ms, --heartbeat-ms, --viz, --run-validation,
   harness-activity, and auto-commit options (the service owns those behaviors).
+  --host-execution runs the local harness CLI with your full OS permissions, outside a task
+  sandbox. Enable only for trusted tasks; the launcher-managed host runner is required and
+  there is no fallback to the worker.
 
 engine-run control:
   --stop              Stop the active local service run after the current task.

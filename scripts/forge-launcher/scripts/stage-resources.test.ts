@@ -19,6 +19,7 @@ test("launcher resources package the execution service but exclude the retired s
   mkdirSync(join(root, "docs"), { recursive: true });
   mkdirSync(join(root, "tools", "dapr-engine", "execution", "node_modules"), { recursive: true });
   mkdirSync(join(root, "tools", "dapr-engine", "deploy", "components"), { recursive: true });
+  mkdirSync(join(root, "tools", "dapr-engine", "scripts"), { recursive: true });
   for (const directory of ["contract", "orchestration", "service", "storage"]) {
     mkdirSync(join(root, "tools", "dapr-engine", directory), { recursive: true });
   }
@@ -29,6 +30,7 @@ test("launcher resources package the execution service but exclude the retired s
   writeFileSync(join(retiredSkill, "scripts", "state.ts"), "legacy writer\n");
   writeFileSync(join(root, "docs", "prompt-playbook.md"), "playbook\n");
   writeFileSync(join(root, "tools", "dapr-engine", "package.json"), JSON.stringify({ type: "module" }));
+  writeFileSync(join(root, "tools", "dapr-engine", "scripts", "host-runner.ts"), "export {};\n");
   writeFileSync(join(root, "tools", "dapr-engine", "execution", "index.ts"), "export {};\n");
   writeFileSync(join(root, "tools", "dapr-engine", "execution", "node_modules", "ignored.js"), "ignored\n");
   writeFileSync(join(root, "tools", "dapr-engine", "workflow.ts"), "service\n");
@@ -51,6 +53,7 @@ test("launcher resources package the execution service but exclude the retired s
   assert.ok(!existsSync(join(resources, "tools", "dapr-engine", "execution", "node_modules")));
   assert.ok(existsSync(join(resources, "tools", "dapr-engine", "service", "main.ts")));
   assert.ok(existsSync(join(resources, "tools", "dapr-engine", "storage", "migration.sql")));
+  assert.ok(existsSync(join(resources, "tools", "dapr-engine", "scripts", "host-runner.ts")));
   assert.ok(existsSync(join(resources, "tools", "dapr-engine", "node_modules")));
   assert.ok(existsSync(join(resources, "tools", "dapr-engine", "deploy", "compose.yaml")));
   assert.ok(existsSync(join(resources, "tools", "dapr-engine", "deploy", "components", "state.yaml")));

@@ -151,6 +151,8 @@ export interface Summary {
   autoCommit: boolean;
   /** Stream harness CLI activity into docs/engine-run.log (engine-config; default off). */
   logHarnessActivity: boolean;
+  /** Execute local harness CLIs on the host with full OS permissions. */
+  hostExecution: boolean;
   /** Max agents to run in parallel (engine-config; 0 or absent means engine default). */
   concurrency: number;
   /** Auto runs the full ready workflow; manual runs only the selected task set. */
@@ -411,4 +413,43 @@ export interface SelectResult {
 export interface OpenResult {
   ok: boolean;
   message?: string;
+}
+
+export interface RuntimeContainerSnapshot {
+  name: string;
+  service: string;
+  state: string;
+  health?: string;
+}
+
+export interface RuntimeAdminState {
+  project: string;
+  initialized: boolean;
+  status: "not-initialized" | "stopped" | "running" | "degraded";
+  containers: RuntimeContainerSnapshot[];
+  missingServices: string[];
+  diagnostics: string[];
+  repositories: Array<{ id: string; path: string }>;
+  harnessGrants: Record<string, string[]>;
+  startOptions: { hostTools: boolean; postgresPort?: number } | null;
+  restartRequired: boolean;
+}
+
+export type RuntimeAdminAction =
+  | { action: "start"; hostTools: boolean; postgresPort?: number }
+  | { action: "stop"; confirmed: boolean }
+  | { action: "restart"; confirmed: boolean; hostTools: boolean; postgresPort?: number }
+  | { action: "reset"; confirmed: boolean }
+  | { action: "backup"; output: string }
+  | { action: "restore"; from: string; confirmed: boolean; allowGitDrift: boolean }
+  | { action: "rotate-tokens"; confirmed: boolean }
+  | { action: "repo-add"; path: string; id?: string }
+  | { action: "repo-remove"; id: string; confirmed: boolean }
+  | { action: "harness-grant"; harness: string; variable: string; value: string }
+  | { action: "harness-revoke"; harness: string; variable?: string; confirmed: boolean };
+
+export interface RuntimeAdminActionResult {
+  ok: boolean;
+  message: string;
+  restartRequired: boolean;
 }

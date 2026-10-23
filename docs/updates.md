@@ -4,6 +4,64 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.149
+
+### Clarify worker and host harness execution
+
+- Updated the README and architecture references to distinguish default
+  worker-container execution from explicit native-host execution. Both use
+  task workspaces and remain under Dapr orchestration.
+- Clarified that host execution uses the locally installed CLI with normal
+  authentication and full user OS permissions; provider, process-cleanup, and
+  per-host-OS qualification remain pending.
+- Recorded the accepted native-host execution trade-off in
+  [ADR-081](adr/081-native-local-harness-execution-without-task-sandbox.md),
+  retaining the originating SDR as decision history.
+
+## October 2026 - v3.148
+
+### Document the current local execution architecture
+
+- Added a coordinated overview and code-grounded deep dive for the launcher
+  service-run path, Dapr orchestration, worker execution, and optional native
+  host runner.
+- Linked the current guides from the README, architecture overview,
+  documentation map, and retired workflow-engine references.
+
+## October 2026 - v3.147
+
+### Add host-runner operations to the Console
+
+- Added a dedicated Host runner view for readiness, project-scoped capability
+  management, and active/recent job summaries with repository filtering.
+- Moved capability controls out of Runtime, labeled service runs by executor,
+  and linked host-executed runs to their runner-job history.
+- Queue diagnostics expose only allowlisted lifecycle metadata; they exclude
+  capabilities, request/result payloads, CLI output, and raw failure details.
+
+## October 2026 - v3.146
+
+### Opt in to native local harness execution
+
+- Added a launcher-managed host runner that uses locally installed harness
+  CLIs and their normal local authentication while Dapr retains orchestration,
+  validation, and repository integration.
+- Added project-scoped runner capabilities, lifecycle/status controls, and
+  explicit host-execution selection in the CLI and Console. Host execution is
+  unsandboxed, discloses full OS permissions, and never falls back silently.
+- Implemented HR-01 through HR-03. Live runtime, local CLI/provider-auth, and
+  per-host-OS qualification remain pending; no host OS is claimed as qualified.
+
+## October 2026 - v3.145
+
+### Administer the local runtime from the Console
+
+- Added a dedicated Runtime view for status, lifecycle, repository registration,
+  backup/restore, token rotation, and harness credential grants/revocation.
+- Added explicit confirmations, serialized operation state, remembered runtime
+  start options, restart-pending visibility, and status that never exposes
+  credential values.
+
 ## October 2026 - v3.144
 
 ### Use the canonical repository links
@@ -2749,7 +2807,7 @@ the autonomous engine (`@workflow-orchestrator` / `forge-launcher engine-run`).*
   conditional-queue coverage in `launcher.test.ts`; `format.test.ts` covers the
   OSC 8 `hyperlink` helper. Launcher suite green.
 
-- [ADR-028](adr/028-launcher-entry-resume-and-auto-build-demotion.md): entry-point
+- [ADR-080](adr/080-launcher-entry-resume-and-auto-build-demotion.md): entry-point
   consolidation, `forge-launcher resume`, and the `forge-auto-build` demotion.
 
 ---

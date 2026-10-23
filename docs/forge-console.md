@@ -384,7 +384,9 @@ button shows the exact command to run manually.
 | **Plan & Team** | authoring settings and stage cards — always actionable, each stating why it is stale — plus the project documents (IDEA, PRD, features, progress, model plan) as a table that opens a document in a wide popup, and agents and skills in collapsible card sections. Requirement and task blocks render as tables. |
 | **Artifacts** | the structured outputs tasks produced (`docs/artifacts/`), browsable by type/task with previews. |
 | **Timeline** | chronological audit events, failures highlighted. |
-| **Service runs** | runs submitted to the local execution service (`forge-launcher service submit`) for the open repository: status, tasks, sequenced events, and acknowledged controls. See [Service runs](#service-runs). |
+| **Service runs** | runs submitted to the local execution service (`forge-launcher service submit`) for the open repository: status, executor (worker or host runner), tasks, sequenced events, and acknowledged controls. Host-executed runs link to their runner jobs. See [Service runs](#service-runs). |
+| **Host runner** | runner readiness, project-scoped capability controls, and bounded active/recent job summaries with repository filtering. See [Host runner operations](#host-runner-operations). |
+| **Runtime** | shared local Podman runtime lifecycle, repository registry, backup/restore, token rotation, and harness credential grants. See [Runtime administration](#runtime-administration). |
 | **Projects** | switch projects, add a folder, or remove one or more projects from Forge. |
 
 A **Help** button (top-right) explains the UI, the pipeline, each view, and key
@@ -416,8 +418,10 @@ does:
 
 The **Service runs** view lists runs that the local execution service holds
 for the open repository, refreshing every two seconds. Selecting a run shows
-its status, tasks, and events. Events are fetched after the last sequence
-number seen, so a reload or reconnect picks up from the service's record.
+its status, executor (worker container or local host runner), tasks, and events.
+Host-executed runs link to their repository's Host runner job history. Events
+are fetched after the last sequence number seen, so a reload or reconnect picks
+up from the service's record.
 
 - **Pause**, **Resume**, **Stop**, and **Cancel** are offered as the run state
   allows. **Approve** appears on a task that is `waiting-for-approval` and
@@ -431,6 +435,57 @@ number seen, so a reload or reconnect picks up from the service's record.
   `POST /api/service/control`).
 - When the repository is not registered (`forge-launcher runtime repo add`) or
   the runtime is not running, the view says so.
+
+### Runtime administration
+
+The dedicated **Runtime** view manages the shared local runtime; it is distinct
+from the **Service runs** view, which controls an individual workflow run.
+Runtime status shows container readiness, registered repositories, harness
+credential variable names, and whether registry changes still need a restart.
+The view can start, stop, restart, or reset the runtime; create and restore
+backups; rotate the service and Dapr tokens; and register/unregister
+repositories or grant/revoke harness credentials. The selected Console project
+can be used as a repository-registration shortcut. Adding a repository also
+enables its project-scoped runner capability; host execution for an individual
+run remains off unless explicitly selected.
+
+Repository changes are saved first and never restart the runtime implicitly.
+The Console offers a separate, confirmed restart to apply mount changes. The
+last successful start's host-tools setting and PostgreSQL port are remembered
+for later restarts. Older installations without saved settings require the
+operator to confirm those options before restarting. Stop and restart display
+an interruption warning, and reset, restore, token rotation, repository
+removal, and credential revocation require explicit confirmation. Restore
+requires a separate Git-drift acknowledgement when that risk is accepted.
+
+Long operations show an in-progress state and serialize against other runtime
+mutations. Runtime operations use the Console's signed operator session,
+same-origin checks, and per-server `X-Forge-Token`. Harness credential values
+are submitted directly to the local Console, stored with restricted
+permissions, and never returned, logged, or shown again; status exposes only
+granted variable names.
+
+### Host runner operations
+
+The **Host runner** view owns project capability management and shows native
+runner readiness. Enabling, rotating, or revoking a capability is explicit;
+changes are saved without restarting the runtime, and the page links to Runtime
+for the separate restart action. A capability authorizes Dapr-to-runner requests
+only; it does not limit filesystem or process access.
+
+The job table refreshes every five seconds and shows active jobs plus the 20
+most recently updated terminal jobs. It can show all repositories or filter by
+one registered repository. More than 100 active jobs are capped and visibly
+marked as truncated. The authenticated Console proxy exposes only repository,
+run/task IDs, harness, state, and lifecycle timestamps—not capability values,
+request/result payloads, CLI output, or raw failure details.
+
+Host execution is a separate opt-in in the Overview **Controls** panel. Before
+enabling it, the Console warns that the local harness CLI runs outside a task
+sandbox with the logged-in user's full OS permissions. Host execution never
+falls back silently to the worker. Use the Host runner page for readiness and
+project authorization, and Runtime to register repositories or start the
+runtime.
 
 For a registered repository, Overview builds and controls also use the
 service ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)):

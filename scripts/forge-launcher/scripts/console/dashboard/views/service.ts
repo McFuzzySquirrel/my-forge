@@ -111,12 +111,13 @@ function renderList(available: boolean, runs: ServiceRunRecord[], message?: stri
       el("td", null, statusBadge(run.status)),
       el("td", { className: "mono small" }, run.targetRef.replace(/^refs\/heads\//, "")),
       el("td", { className: "small" }, fmtTime(run.createdAt)),
+      el("td", null, run.hostExecution === true ? "Host runner" : "Worker"),
     ]);
     row.addEventListener("click", () => select(run.runId));
     return row;
   });
   listHost.appendChild(el("div", { className: "table-scroll" }, el("table", null, [
-    el("thead", null, el("tr", null, [el("th", null, "Run"), el("th", null, "Status"), el("th", null, "Branch"), el("th", null, "Created")])),
+    el("thead", null, el("tr", null, [el("th", null, "Run"), el("th", null, "Status"), el("th", null, "Branch"), el("th", null, "Created"), el("th", null, "Executor")])),
     el("tbody", null, rows),
   ])));
 }
@@ -186,7 +187,13 @@ function renderDetail(run: ServiceRunRecord): void {
     el("div", { className: "row gap" }, [el("h3", null, run.runId), statusBadge(run.status)]),
     el("p", { className: "dim small" },
       `Branch ${run.targetRef.replace(/^refs\/heads\//, "")} · harness ${run.harness?.id ?? "unknown"}. ` +
+      `Executor: ${run.hostExecution === true ? "local host runner" : "worker container"}. ` +
       `Merge finished runs with "forge-launcher service merge ${run.runId}".`),
+    run.hostExecution === true
+      ? el("p", { className: "dim small" }, [
+        el("a", { href: `#/host-runner?repositoryId=${encodeURIComponent(run.repositoryId)}` }, "View this repository's host-runner jobs"),
+      ])
+      : null,
     runControls(run),
   ]));
   detailHost.appendChild(el("div", { className: "panel" }, [

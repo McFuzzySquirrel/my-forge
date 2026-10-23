@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import test from "node:test";
-import { createServiceApiHandler, isLoopbackHost, type RunServiceApi } from "../../service/api.ts";
+import {
+  createServiceApiHandler,
+  isLoopbackHost,
+  type HostRunnerMonitorApi,
+  type RunServiceApi,
+} from "../../service/api.ts";
 
 const TOKEN = "a".repeat(64);
 const RUN_ID = `run_${"0".repeat(32)}`;
@@ -12,7 +17,12 @@ interface Reply {
   readonly body: Record<string, unknown>;
 }
 
-async function start(t: test.TestContext, overrides: Partial<RunServiceApi> = {}, ready = true): Promise<{ port: number; calls: string[] }> {
+async function start(
+  t: test.TestContext,
+  overrides: Partial<RunServiceApi> = {},
+  ready = true,
+  hostRunnerMonitor?: HostRunnerMonitorApi,
+): Promise<{ port: number; calls: string[] }> {
   const calls: string[] = [];
   const ok = (name: string) => async (...args: unknown[]) => {
     calls.push(`${name}:${JSON.stringify(args)}`);
@@ -25,6 +35,7 @@ async function start(t: test.TestContext, overrides: Partial<RunServiceApi> = {}
   const server: Server = createServer(createServiceApiHandler({
     token: TOKEN,
     runs,
+    hostRunnerMonitor,
     health: () => ({ live: true, ready }),
     maxBodyBytes: 1024,
   }));
@@ -112,6 +123,27 @@ test("API routes run status, events, and controls by run ID", async (t) => {
   ]);
   assert.equal((await send(port, { path: "/v1/runs/run_../events", headers: auth })).status, 404);
   assert.equal((await send(port, { method: "DELETE", path: `/v1/runs/${RUN_ID}`, headers: auth })).status, 405);
+});
+
+test("host-runner summaries use the runtime bearer token without exposing runner capabilities", async (t) => {
+  const { port } = await start(t, {}, true, {
+    async list(repositoryId) {
+      assert.equal(repositoryId, "demo");
+      return { ok: true, status: 200, body: { jobs: [], activeTruncated: false } };
+    },
+  });
+  assert.equal((await send(port, { path: "/v1/host-runner/jobs?repositoryId=demo" })).status, 401);
+  const response = await send(port, {
+    path: "/v1/host-runner/jobs?repositoryId=demo",
+    headers: auth,
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { jobs: [], activeTruncated: false });
+  assert.equal((await send(port, {
+    method: "POST",
+    path: "/v1/host-runner/jobs",
+    headers: auth,
+  })).status, 405);
 });
 
 test("API maps service rejections and hides internal errors", async (t) => {

@@ -9,7 +9,7 @@
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 
-**Latest: v3.144** — see [docs/updates.md](docs/updates.md) for release notes.
+**Latest: v3.149** — see [docs/updates.md](docs/updates.md) for release notes.
 
 MyForge is a PRD-first workflow for turning product requirements into working software. It combines structured planning, agent-based implementation, and execution orchestration in one path so a project can move from concept to build without losing the review checkpoints that matter.
 
@@ -23,13 +23,24 @@ converted before building. See [Canonical Features](docs/canonical-features.md).
 - Keeps the PRD as the quality gate before implementation begins.
 - Generates a specialist agent team from the PRD instead of relying on a single generic assistant.
 - Supports both guided, interactive execution and unattended "dark orchestration" runs.
-- Includes a local web console for monitoring and controlling builds.
+- Includes a local web console for monitoring builds and administering the
+  complete local runtime, including repository registration and backups.
+- Provides a dedicated Host runner view for project capabilities and safe,
+  bounded execution-job history.
+- Supports two Dapr-backed harness execution modes: default worker-container
+  execution uses runtime-provided CLIs and granted credentials; explicit
+  native-host execution uses your locally installed CLI and its normal
+  authentication. Both use task workspaces while Dapr retains orchestration
+  and result integration.
+- Native-host execution is unsandboxed, runs with the logged-in user's full OS
+  permissions, and never silently falls back to worker-container execution.
 - Can bootstrap MyForge into an existing Git repository without replacing its application code.
 
 ## Dapr replacement work in this fork
 
-The [implementation tracker](plan.md) records the accepted P0–P6 gates and
-the remaining Dapr Workflow cutover and hosted-profile work.
+The [implementation tracker](plan.md) records the accepted P0–P7 gates, the
+native local host-runner qualification still in progress, and the separate
+hosted-deployment phase.
 The [foundation PRD](docs/PRD.md) and
 [feature contracts](docs/features/dapr-foundation.md) cover the first increment.
 The isolated `tools/dapr-spike` experiment is not the production engine. The
@@ -53,7 +64,10 @@ the full screenshot walkthrough, including current responsive captures.
 
 - Node.js 18+
 - Git
-- A compatible agent harness such as GitHub Copilot, Claude Code, or opencode
+- A compatible harness CLI for interactive authoring. Dapr-backed runs use
+  runtime-provided CLIs in the default worker-container mode; optional
+  native-host mode requires the selected CLI to be installed and authenticated
+  locally.
 - Rootless Podman for Dapr-backed build execution
 
 ### Option 1: Run from a clone
@@ -109,12 +123,16 @@ For the manual prompting flow and the CLI’s expected prompts, see [docs/prompt
 
 - `forge-launcher` - the entry point for onboarding, authoring, and launching builds
 - Dapr execution service - the supported engine for durable orchestration, checkpoints, replay, and run state
+- Native host runner - an opt-in local process that invokes the operator's
+  installed harness CLI for explicitly selected service runs
 - `forge-execution-adapter` - compiles the authored plan into the execution manifest consumed by the Dapr service
 - Legacy workflow-engine package - historical reference only; new runs use the registered Dapr service
 - Forge Console - a local web UI for authoring, monitoring, and controlling runs
 
 ## Documentation
 
+- [Local execution architecture](docs/local-execution.md)
+- [Local execution deep dive](docs/local-execution-deep-dive.md)
 - [docs/task-contracts.md](docs/task-contracts.md)
 - [docs/forge-launcher.md](docs/forge-launcher.md)
 - [docs/forge-console.md](docs/forge-console.md)

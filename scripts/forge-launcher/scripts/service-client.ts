@@ -19,6 +19,23 @@ export class ServiceApiError extends Error {
   }
 }
 
+export interface HostRunnerJobSummary {
+  readonly operationId: string;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly repositoryId: string;
+  readonly harness: string;
+  readonly state: "queued" | "leased" | "completed" | "failed" | "cancelled";
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly leaseExpiresAt?: string;
+}
+
+export interface HostRunnerJobsResponse {
+  readonly jobs: readonly HostRunnerJobSummary[];
+  readonly activeTruncated: boolean;
+}
+
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /** Authenticated client for the local execution service API. */
@@ -72,6 +89,10 @@ export class ServiceClient {
   list(repositoryId?: string) {
     return this.request<{ runs: Record<string, unknown>[] }>("GET",
       `/v1/runs${repositoryId ? `?repositoryId=${encodeURIComponent(repositoryId)}` : ""}`);
+  }
+  hostRunnerJobs(repositoryId?: string) {
+    return this.request<HostRunnerJobsResponse>("GET",
+      `/v1/host-runner/jobs${repositoryId ? `?repositoryId=${encodeURIComponent(repositoryId)}` : ""}`);
   }
   get(runId: string) { return this.request("GET", `/v1/runs/${encodeURIComponent(runId)}`); }
   events(runId: string, after: number, limit = 200) {
@@ -344,7 +365,7 @@ export async function submitRepositoryRun(
 const SERVICE_USAGE = `Usage:
   forge-launcher service submit [--repo <path>] [--harness <h>] [--branch <base>] [--tasks <id,id>]
                                 [--concurrency <n>] [--max-retries <n>] [--retry-delay-ms <ms>]
-                                [--allow-noop] [--key <submission-key>] [--follow]
+                                [--allow-noop] [--host-execution] [--key <submission-key>] [--follow]
   forge-launcher service runs [--repo <path>] [--json]
   forge-launcher service status <run-id> [--json]
   forge-launcher service events <run-id> [--after <n>] [--follow] [--json]
@@ -353,6 +374,8 @@ const SERVICE_USAGE = `Usage:
 
 Submits runs to the local execution service ("forge-launcher runtime start").
 The repository must be registered with "forge-launcher runtime repo add".
+--host-execution runs the local harness CLI with the user's full OS permissions, outside a task sandbox.
+Enable it only for trusted tasks; it requires the launcher-managed host runner and never falls back.
 Runs integrate into forge/<base>, never the checked-out branch; "merge"
 fast-forwards the checked-out branch to the run's forge branch.
 The worker runs the stub (default here), copilot, claude, and opencode harnesses;
@@ -385,7 +408,7 @@ export async function serviceCli(
       const { flags, positional } = parseFlags(rest, {
         "--repo": "value", "--harness": "value", "--branch": "value", "--tasks": "value",
         "--concurrency": "value", "--max-retries": "value", "--retry-delay-ms": "value",
-        "--allow-noop": "flag", "--key": "value", "--follow": "flag",
+        "--allow-noop": "flag", "--host-execution": "flag", "--key": "value", "--follow": "flag",
       });
       if (positional.length) throw new Error(`Unexpected argument: ${positional[0]}`);
       const repoRoot = detectRepoRoot(path.resolve(flags.get("--repo") ?? process.cwd()));
@@ -396,6 +419,7 @@ export async function serviceCli(
         if (value !== undefined) settings[key] = value;
       }
       if (flags.has("--allow-noop")) settings.allowNoop = true;
+      if (flags.has("--host-execution")) settings.hostExecution = true;
       const result = await submitRepositoryRun(client, {
         repoRoot,
         repositoryId,

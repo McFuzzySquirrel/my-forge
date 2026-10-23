@@ -7,7 +7,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test \"tests/**/*.test.ts\"",
-    "test:postgres": "node --import tsx --test tests/storage/postgres-operation-receipts.integration.test.ts tests/storage/postgres-repository-integration.integration.test.ts tests/storage/postgres-operation-executions.integration.test.ts tests/storage/postgres-control-records.integration.test.ts tests/storage/postgres-run-status.integration.test.ts tests/storage/p3-gate.integration.test.ts tests/orchestration/execution-host.integration.test.ts",
+    "test:postgres": "node --import tsx --test tests/storage/postgres-operation-receipts.integration.test.ts tests/storage/postgres-repository-integration.integration.test.ts tests/storage/postgres-operation-executions.integration.test.ts tests/storage/postgres-control-records.integration.test.ts tests/storage/postgres-run-status.integration.test.ts tests/storage/postgres-host-runner-jobs.integration.test.ts tests/storage/p3-gate.integration.test.ts tests/orchestration/execution-host.integration.test.ts",
     "verify:execution": "node --import tsx scripts/verify-execution.ts",
     "measure:bounds": "node --import tsx scripts/measure-bounds.ts"
   },

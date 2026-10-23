@@ -136,6 +136,18 @@ export function setLogHarnessActivity(p: RepoPaths, enabled: boolean): { ok: boo
   };
 }
 
+export function setHostExecution(p: RepoPaths, enabled: boolean): { ok: boolean; message: string } {
+  const existing = loadEngineConfig(p.repoRoot);
+  const cfg = nextEngineConfig(p, existing, { hostExecution: enabled });
+  saveEngineConfig(p.repoRoot, cfg);
+  return {
+    ok: true,
+    message: enabled
+      ? "Native host execution enabled for future runs; local harness CLIs run with your full OS permissions."
+      : "Native host execution disabled for future runs.",
+  };
+}
+
 export function authoringEvents(p: RepoPaths): Record<string, unknown>[] {
   const raw = readText(p.authoringEventsPath);
   if (!raw) return [];
@@ -216,6 +228,7 @@ function nextEngineConfig(
     vizPort: existing?.vizPort ?? "",
     autoCommit: existing?.autoCommit,
     logHarnessActivity: existing?.logHarnessActivity,
+    hostExecution: existing?.hostExecution === true,
     executionMode: normaliseExecutionMode(existing?.executionMode),
     selectionScope: normaliseSelectionScope(existing?.selectionScope, normaliseSelectedTaskIds(existing?.selectedTaskIds)) ?? undefined,
     selectedTaskIds: normaliseSelectedTaskIds(existing?.selectedTaskIds),
@@ -333,6 +346,7 @@ export function summary(p: RepoPaths, serviceRun: ServiceRunSnapshot | null = nu
     defaultTimeoutMs,
     autoCommit: engineCfg?.autoCommit !== false,
     logHarnessActivity: engineCfg?.logHarnessActivity === true,
+    hostExecution: engineCfg?.hostExecution === true,
     concurrency: Math.max(0, Number(engineCfg?.concurrency) || 0),
     executionMode: selection.executionMode,
     selectionScope: selection.selectionScope,

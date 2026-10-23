@@ -7,6 +7,7 @@ import { get as httpGet, request as httpRequest } from "node:http";
 
 import type { ConsoleServer } from "./console/server.ts";
 import { sessionHeaders, signedFetch, startSignedConsoleServer as startConsoleServer } from "./console-test-session.ts";
+import type { RuntimeAdminState } from "./console/types.ts";
 import type { SpawnOptions } from "./console/control.ts";
 import { writeFeatureFixture } from "./feature-fixture.ts";
 import { featureIncrementHandoffHasChange, recordFeatureIncrementHandoff } from "./authoring-state.ts";
@@ -707,6 +708,38 @@ test("engine-config toggles harness activity logging and flows into service-run 
   }, { repoRoot: true, registered: true });
 });
 
+test("host execution requires confirmation and is passed only to explicitly configured runs", async () => {
+  await withServer(async (server, repo, spawned) => {
+    const token = server.token;
+    assert.equal((await getJson(`${server.url}/api/summary`) as { hostExecution: boolean }).hostExecution, false);
+
+    const rejected = await postJson(`${server.url}/api/engine-config`, { hostExecution: true }, { "X-Forge-Token": token });
+    assert.equal(rejected.status, 400);
+    assert.match((rejected.body as { message: string }).message, /explicit confirmation/);
+
+    const enabled = await postJson(
+      `${server.url}/api/engine-config`,
+      { hostExecution: true, confirmed: true },
+      { "X-Forge-Token": token },
+    );
+    assert.equal((enabled.body as { ok: boolean }).ok, true);
+    assert.equal((await getJson(`${server.url}/api/summary`) as { hostExecution: boolean }).hostExecution, true);
+    assert.equal(JSON.parse(readFileSync(join(repo, "docs", "engine-config.json"), "utf8")).hostExecution, true);
+
+    const run = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
+    assert.equal((run.body as { ok: boolean }).ok, true);
+    assert.ok(spawned.calls.at(-1)!.args.includes("--host-execution"));
+
+    await postJson(`${server.url}/api/engine-config`, { concurrency: 3 }, { "X-Forge-Token": token });
+    assert.equal(JSON.parse(readFileSync(join(repo, "docs", "engine-config.json"), "utf8")).hostExecution, true);
+    const disabled = await postJson(`${server.url}/api/engine-config`, { hostExecution: false }, { "X-Forge-Token": token });
+    assert.equal((disabled.body as { ok: boolean }).ok, true);
+    const runWithoutHost = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
+    assert.equal((runWithoutHost.body as { ok: boolean }).ok, true);
+    assert.ok(!spawned.calls.at(-1)!.args.includes("--host-execution"));
+  }, { repoRoot: true, registered: true });
+});
+
 test("engine-config rejects a non-boolean harness activity value", async () => {
   await withServer(async (server, _repo) => {
     const res = await postJson(`${server.url}/api/engine-config`, { logHarnessActivity: "yes" }, { "X-Forge-Token": server.token });
@@ -1116,4 +1149,60 @@ test("model inventory and overrides preserve provider-qualified IDs", async () =
 
   assert.deepEqual(repo.modelInventory(paths).models[0]?.id, "github-copilot/gpt-5.6-luna");
   assert.equal(repo.setModelOverride(paths, "agent", "github-copilot/gpt-5.6-luna").ok, true);
+});
+
+test("runtime Console API requires the operator token and serializes mutations", async (t) => {
+  const state: RuntimeAdminState = {
+    project: "myforge-runtime",
+    initialized: false,
+    status: "not-initialized",
+    containers: [],
+    missingServices: ["postgres", "placement", "scheduler", "daprd", "forge"],
+    diagnostics: [],
+    repositories: [],
+    harnessGrants: { copilot: [], claude: [], opencode: [] },
+    startOptions: null,
+    restartRequired: false,
+  };
+  let entered!: () => void;
+  const operationEntered = new Promise<void>((resolve) => { entered = resolve; });
+  let finish!: (result: { message: string; restartRequired: boolean }) => void;
+  const server = await startConsoleServer({
+    port: nextPort(),
+    open: false,
+    runtimeAdmin: {
+      state: async () => state,
+      execute: async () => {
+        entered();
+        return new Promise((resolve) => { finish = resolve; });
+      },
+    },
+  });
+  t.after(() => server.stop());
+
+  const status = await signedFetch(`${server.url}/api/runtime`);
+  assert.equal(status.status, 200);
+  assert.deepEqual(await status.json(), state);
+
+  const url = `${server.url}/api/runtime/action`;
+  const request = (body: unknown, includeToken = true) => signedFetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(includeToken ? { "X-Forge-Token": server.token } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  assert.equal((await request({ action: "stop", confirmed: true }, false)).status, 403);
+  assert.equal((await request({ action: "reset", confirmed: false })).status, 400);
+
+  const first = request({ action: "start", hostTools: false });
+  await operationEntered;
+  const second = await request({ action: "stop", confirmed: true });
+  assert.equal(second.status, 409);
+
+  finish({ message: "Local infrastructure is running.", restartRequired: false });
+  const completed = await first;
+  assert.equal(completed.status, 200);
+  assert.deepEqual(await completed.json(), { ok: true, message: "Local infrastructure is running.", restartRequired: false });
 });

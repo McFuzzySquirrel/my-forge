@@ -5,6 +5,12 @@ import {
   prepareTaskRequestWithPredecessors,
   type PrepareTaskRequestOptions,
 } from "../execution/request.ts";
+import {
+  parseHarnessRunnerResult,
+  type HarnessRunner,
+  type HarnessRunnerRequestV1,
+} from "../execution/runner-contract.ts";
+import { applyWorkspaceDelta, DEFAULT_MAX_WORKSPACE_DELTA_BYTES } from "../execution/workspace-diff.ts";
 import { admitTaskResult } from "../execution/task-admission.ts";
 import type { HarnessAdapter, ManifestTask, TaskResult } from "../execution/types.ts";
 import { captureWorktree, type WorktreeSnapshot } from "../execution/verify.ts";
@@ -39,6 +45,10 @@ export interface ExecuteVerifiedTaskActivityInputV1 {
   readonly operationId: string;
   readonly request: PrepareTaskRequestOptions;
   readonly harness: HarnessAdapter;
+  readonly hostRunner?: HarnessRunner;
+  readonly repositoryId?: string;
+  readonly baseRevision?: string;
+  readonly maxWorkspaceDeltaBytes?: number;
   readonly artifactStore: ArtifactStore;
   readonly predecessorTaskIds: readonly string[];
   readonly allowNoop: boolean;
@@ -116,7 +126,44 @@ export async function executeVerifiedTaskActivity(
     predecessorTaskIds: input.predecessorTaskIds,
   });
   const baseline = await captureWorktree(request.repoRoot);
-  const result = await input.harness.invoke(request);
+  let result: TaskResult;
+  if (input.hostRunner) {
+    if (!input.repositoryId || !input.baseRevision) {
+      throw new Error("Host-runner execution requires a registered repository ID and accepted base revision.");
+    }
+    const runnerRequest: HarnessRunnerRequestV1 = {
+      schemaVersion: 1,
+      identity: {
+        runId: input.runId,
+        taskId: input.taskId,
+        manifestDigest: input.manifestDigest,
+        logicalAttempt: input.logicalAttempt,
+        operationId: input.operationId,
+      },
+      repositoryId: input.repositoryId,
+      baseRevision: input.baseRevision,
+      harness: input.harness.name,
+      agent: request.agent,
+      task: request.task,
+      ...(request.effectiveModel ? { effectiveModel: request.effectiveModel } : {}),
+      contextBlock: request.contextBlock,
+      requiredCapabilities: request.requiredCapabilities,
+      timeoutMs: request.budget.timeoutMs,
+      instructions: request.instructions,
+    };
+    const remote = parseHarnessRunnerResult(
+      runnerRequest,
+      await input.hostRunner.run(runnerRequest, request.signal),
+      input.maxWorkspaceDeltaBytes ?? DEFAULT_MAX_WORKSPACE_DELTA_BYTES,
+    );
+    await applyWorkspaceDelta(request.repoRoot, remote.workspaceDelta, {
+      ...(request.signal ? { signal: request.signal } : {}),
+      maxBytes: input.maxWorkspaceDeltaBytes ?? DEFAULT_MAX_WORKSPACE_DELTA_BYTES,
+    });
+    result = remote.result;
+  } else {
+    result = await input.harness.invoke(request);
+  }
   const admission = await admitTaskResult({
     task,
     result,

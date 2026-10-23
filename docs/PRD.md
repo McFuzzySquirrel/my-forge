@@ -51,11 +51,14 @@ the human-review tasks below.
 | 1 | Dapr foundation and runtime spike | [features/dapr-foundation.md](features/dapr-foundation.md) | None |
 | 2 | Dapr execution boundary and reusable contracts | [features/dapr-execution-boundary.md](features/dapr-execution-boundary.md) | Dapr foundation and runtime spike |
 | 3 | Dapr local deployment and access profiles | [features/dapr-local-deployment-access.md](features/dapr-local-deployment-access.md) | Dapr execution boundary and reusable contracts |
+| 4 | Native local host harness execution | [features/local-host-harness-execution.md](features/local-host-harness-execution.md) | Dapr local deployment and access profiles |
 
 ## 15. Traceability and rollout
 
 Each feature owns its requirements and executable task contracts. `plan.md`
 owns work-package status and evidence links, not a duplicate requirement
-catalogue. P3–P8 remain blocked until their predecessor gates pass. Planned
-specialist names in feature contracts must be generated deliberately before
-compiling a runnable manifest; this increment does not generate an agent team.
+catalogue. P3–P8 remain blocked until their predecessor gates pass. The
+host-runner follow-up is a post-P7 local capability and does not authorize
+hosted deployment. Planned specialist names in feature contracts must be
+generated deliberately before compiling a runnable manifest; this increment
+does not generate an agent team.

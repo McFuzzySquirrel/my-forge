@@ -6,3 +6,4 @@ export * from "./postgres/repository-integration.ts";
 export * from "./git-effect-reconciliation.ts";
 export * from "./postgres/operation-executions.ts";
 export * from "./postgres/run-submissions.ts";
+export * from "./postgres/host-runner-jobs.ts";

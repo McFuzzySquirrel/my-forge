@@ -439,6 +439,7 @@ function fillServiceProfile(panel: HTMLElement, response: ServiceRunsResponse | 
       el("div", { className: "row gap" }, [statusBadge("unavailable"), el("strong", null, "Execution: local service required")]),
       el("p", { className: "dim" }, "Execution is disabled until this repository is registered with the local runtime " +
         "(forge-launcher runtime repo add <path>) and the runtime is restarted. Legacy workflow histories are not imported."),
+      el("a", { href: "#/runtime", className: "btn" }, "Manage local runtime"),
     );
     return;
   }
@@ -447,6 +448,7 @@ function fillServiceProfile(panel: HTMLElement, response: ServiceRunsResponse | 
       el("div", { className: "row gap" }, [statusBadge("unavailable"), el("strong", null, "Execution: local service")]),
       el("p", { className: "error-text", role: "alert" }, response.message ?? "The local execution service is not reachable."),
       el("p", { className: "dim" }, "Start it with forge-launcher runtime start, then refresh."),
+      el("a", { href: "#/runtime", className: "btn" }, "Manage local runtime"),
     );
     return;
   }
@@ -848,6 +850,7 @@ function renderActions(container: HTMLElement, summary: Summary, actions: Action
   const mode = renderBuildModeControl(container, summary.executionMode, summary.selectedTaskCount);
   const commit = renderAutoCommitToggle(container, store.summary?.autoCommit ?? true);
   const activity = renderLogHarnessActivityToggle(container, store.summary?.logHarnessActivity ?? false);
+  const hostExecution = renderHostExecutionToggle(container, store.summary?.hostExecution ?? false);
   const concurrency = renderConcurrencyControl(container, store.summary?.concurrency ?? 0);
   // Reset lives with the reconciliation data it acts on, in the Manifest panel
   // directly above this one, so this is a pointer rather than a second control.
@@ -870,10 +873,46 @@ function renderActions(container: HTMLElement, summary: Summary, actions: Action
     timeouts,
     commit,
     activity,
+    hostExecution,
     concurrency,
     changedCompleted.length > 0
       ? el("p", { className: "dim small" }, `${changedCompleted.length} changed task${changedCompleted.length === 1 ? " has" : "s have"} already completed; reset them in the Manifest panel above to run them again.`)
       : null,
+  ]);
+}
+
+function renderHostExecutionToggle(container: HTMLElement, enabled: boolean): HTMLElement {
+  const checkbox = el("input", { type: "checkbox", checked: enabled ? true : null }) as HTMLInputElement;
+  checkbox.addEventListener("change", () => {
+    const value = checkbox.checked;
+    if (value && !window.confirm(
+      "Host execution runs the selected local harness CLI as your OS user, outside a task sandbox, with access to files and credentials available to your account. Enable only for trusted tasks. Continue?",
+    )) {
+      checkbox.checked = false;
+      return;
+    }
+    void (async () => {
+      try {
+        const response = await api.setHostExecution(value);
+        toast(response.message || (response.ok ? "updated" : "update failed"));
+      } catch (error) {
+        toast(error instanceof Error ? error.message : "update failed");
+      }
+      void renderOverview(container);
+    })();
+  });
+  return el("div", { style: "margin-top:10px" }, [
+    el("label", { className: "checkbox-row" }, [
+      checkbox,
+      el("span", null, "Run harness CLI on this host (no task sandbox)"),
+    ]),
+    el("p", { className: "dim small", role: "note" }, [
+      "Off by default. The harness uses your local CLI installation and authentication, with the full permissions of your OS account. Host runner readiness, repository registration, and that project's capability are required; there is no worker fallback. Configure these on the ",
+      el("a", { href: "#/host-runner" }, "Host runner page"),
+      " and ",
+      el("a", { href: "#/runtime" }, "Runtime page"),
+      ".",
+    ]),
   ]);
 }
 

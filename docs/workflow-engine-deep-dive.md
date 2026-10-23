@@ -1,9 +1,11 @@
 # How the `forge-workflow-engine` Works - A Deep-Dive Learning Guide
 
 > **Retired legacy reference:** the DAG loop and file-backed state described
-> here are no longer supported for new runs. Use the registered Dapr execution
-> service described in [the launcher cutover guide](forge-launcher.md#cut-over-from-the-legacy-engine).
-> Legacy histories are not imported.
+> here are no longer supported for new runs. See the current
+> [Local Execution Architecture](local-execution.md) and its
+> [code-grounded deep dive](local-execution-deep-dive.md); use the
+> [launcher cutover guide](forge-launcher.md#cut-over-from-the-legacy-engine)
+> for operational commands. Legacy histories are not imported.
 
 ## What we're exploring
 

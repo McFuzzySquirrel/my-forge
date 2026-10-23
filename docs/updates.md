@@ -4,6 +4,16 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.148
+
+### Document the current local execution architecture
+
+- Added a coordinated overview and code-grounded deep dive for the launcher
+  service-run path, Dapr orchestration, worker execution, and optional native
+  host runner.
+- Linked the current guides from the README, architecture overview,
+  documentation map, and retired workflow-engine references.
+
 ## October 2026 - v3.147
 
 ### Add host-runner operations to the Console

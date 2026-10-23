@@ -6,9 +6,10 @@
 
 > **Retired legacy reference:** this document describes the old in-process
 > scheduler. Its commands and workflow-state files are not supported for new
-> runs. Use the registered Dapr execution service described in
-> [the launcher cutover guide](forge-launcher.md#cut-over-from-the-legacy-engine);
-> legacy histories are not imported.
+> runs. For the current end-to-end architecture, see the
+> [Local Execution Architecture](local-execution.md); for commands and runtime
+> administration, use [the launcher guide](forge-launcher.md#cut-over-from-the-legacy-engine).
+> Legacy histories are not imported.
 
 ---
 

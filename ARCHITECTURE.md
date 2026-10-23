@@ -9,6 +9,9 @@ service, not the launcher or Console, owns durable run orchestration and status.
 For the detailed, code-grounded component map, data flow, runtime topology,
 testing boundaries, and extension guidance, see the
 [Project Architecture Blueprint](Project_Architecture_Blueprint.md).
+For the current Dapr-backed service-run lifecycle, see the
+[Local Execution Architecture](docs/local-execution.md) and its
+[code-grounded deep dive](docs/local-execution-deep-dive.md).
 
 ## Core components
 

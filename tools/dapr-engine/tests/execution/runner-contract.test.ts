@@ -88,6 +88,37 @@ test("runner result validation fences the attempt and verifies the bounded diff"
   assert.equal(Buffer.from(result.workspaceDelta.contentBase64, "base64").toString(), "diff");
 });
 
+test("runner result validation accepts bounded host validation evidence", () => {
+  const result = parseHarnessRunnerResult(request, {
+    ...successfulResult(),
+    validation: {
+      ok: true,
+      results: [{ command: "npm test", status: 0, stdout: "ok", stderr: "" }],
+    },
+  }, 16);
+
+  assert.equal(result.validation?.ok, true);
+  assert.deepEqual(result.validation?.results.map(({ command }) => command), ["npm test"]);
+});
+
+test("runner result validation rejects malformed or oversized validation evidence", () => {
+  const valid = successfulResult();
+  assert.throws(() => parseHarnessRunnerResult(request, {
+    ...valid,
+    validation: {
+      ok: true,
+      results: [{ command: 1, status: 0, stdout: "", stderr: "" }],
+    },
+  }, 16), /invalid validation command result/);
+  assert.throws(() => parseHarnessRunnerResult(request, {
+    ...valid,
+    validation: {
+      ok: true,
+      results: [{ command: "npm test", status: 0, stdout: "x".repeat(64 * 1024 + 1), stderr: "" }],
+    },
+  }, 16), /invalid validation command result/);
+});
+
 test("runner result validation rejects stale identity, base revision, digest, and oversized diffs", () => {
   const valid = successfulResult();
   assert.throws(() => parseHarnessRunnerResult(request, {

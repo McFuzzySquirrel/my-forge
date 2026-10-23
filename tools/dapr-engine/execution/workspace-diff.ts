@@ -19,8 +19,17 @@ interface GitOptions {
   readonly inheritEnvironment?: boolean;
 }
 
+/**
+ * Git refuses to inspect a repository owned by another UID. Task-isolated
+ * workspaces are intentionally chowned to the task identity while the service
+ * remains root, so every service-side git command must trust its workspace.
+ */
+function safeDirectory(cwd: string): string[] {
+  return ["-c", `safe.directory=${cwd}`];
+}
+
 async function runGit(cwd: string, args: readonly string[], options: GitOptions = {}): Promise<Buffer> {
-  const { stdout } = await execFileAsync("git", [...args], {
+  const { stdout } = await execFileAsync("git", [...safeDirectory(cwd), ...args], {
     cwd,
     encoding: "buffer",
     maxBuffer: GIT_MAX_BUFFER_BYTES,
@@ -41,11 +50,21 @@ async function assertBaseRevision(
   workspacePath: string,
   baseRevision: string,
   options: GitOptions = {},
+  allowDescendant = false,
 ): Promise<void> {
   if (!isAbsolute(workspacePath)) throw new TypeError("Workspace path must be absolute.");
   if (!GIT_REVISION_PATTERN.test(baseRevision)) throw new TypeError("Base revision must be a full Git object ID.");
   const head = await gitText(workspacePath, ["rev-parse", "--verify", "HEAD^{commit}"], options);
-  if (head !== baseRevision) throw new Error("Workspace HEAD does not match the accepted base revision.");
+  if (head === baseRevision) return;
+  if (allowDescendant) {
+    try {
+      await runGit(workspacePath, ["merge-base", "--is-ancestor", baseRevision, head], options);
+      return;
+    } catch {
+      // Fall through to the rejection below.
+    }
+  }
+  throw new Error("Workspace HEAD does not match the accepted base revision.");
 }
 
 /** Creates a detached, remote-free workspace from a registered local repository. */
@@ -62,6 +81,7 @@ export async function cloneRepositoryAtRevision(
     throw new TypeError("Base revision must be a full Git object ID.");
   }
   await execFileAsync("git", [
+    ...safeDirectory(repositoryPath),
     "clone", "--quiet", "--no-hardlinks", "--no-checkout", "--",
     repositoryPath, workspacePath,
   ], {
@@ -83,7 +103,10 @@ export async function captureWorkspaceDelta(
   baseRevision: string,
   options: GitOptions & { readonly maxBytes?: number } = {},
 ): Promise<HarnessRunnerWorkspaceDeltaV1> {
-  await assertBaseRevision(workspacePath, baseRevision, options);
+  // A harness may commit its work in the disposable clone. Accept a HEAD that
+  // descends from the base so the commit is captured in the delta instead of
+  // rejecting an otherwise successful attempt.
+  await assertBaseRevision(workspacePath, baseRevision, options, true);
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_WORKSPACE_DELTA_BYTES;
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new RangeError("Maximum workspace delta size must be a non-negative safe integer.");

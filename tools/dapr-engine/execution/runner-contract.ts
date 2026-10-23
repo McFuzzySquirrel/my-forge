@@ -37,11 +37,30 @@ export interface HarnessRunnerWorkspaceDeltaV1 {
   readonly contentBase64: string;
 }
 
+export interface HarnessRunnerValidationCommandV1 {
+  readonly command: string;
+  readonly status: number | null;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+export interface HarnessRunnerValidationV1 {
+  readonly ok: boolean;
+  readonly reason?: string;
+  readonly results: readonly HarnessRunnerValidationCommandV1[];
+}
+
 export interface HarnessRunnerResultV1 {
   readonly schemaVersion: 1;
   readonly identity: HarnessRunnerIdentityV1;
   readonly result: TaskResult;
   readonly workspaceDelta: HarnessRunnerWorkspaceDeltaV1;
+  /**
+   * Validation evidence produced on the host, where the harness's dependencies
+   * and browser binaries are installed. The service trusts it instead of
+   * re-running the commands in its own, dependency-free workspace.
+   */
+  readonly validation?: HarnessRunnerValidationV1;
 }
 
 export interface HarnessRunner {
@@ -56,6 +75,7 @@ const GIT_REVISION_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 const SHA256_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
 const REPOSITORY_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 const OPERATION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_VALIDATION_TEXT_BYTES = 64 * 1024;
 
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -199,6 +219,38 @@ function parseTaskResult(value: unknown): TaskResult {
   };
 }
 
+function parseValidation(value: unknown): HarnessRunnerValidationV1 | undefined {
+  if (value === undefined) return undefined;
+  if (!record(value)
+    || typeof value.ok !== "boolean"
+    || (value.reason !== undefined && typeof value.reason !== "string")
+    || !Array.isArray(value.results)) {
+    throw new TypeError("Host-runner response has invalid validation evidence.");
+  }
+  const results = value.results.map((entry) => {
+    if (!record(entry)
+      || typeof entry.command !== "string"
+      || !(entry.status === null || (typeof entry.status === "number" && Number.isInteger(entry.status)))
+      || typeof entry.stdout !== "string"
+      || typeof entry.stderr !== "string"
+      || Buffer.byteLength(entry.stdout, "utf8") > MAX_VALIDATION_TEXT_BYTES
+      || Buffer.byteLength(entry.stderr, "utf8") > MAX_VALIDATION_TEXT_BYTES) {
+      throw new TypeError("Host-runner response has an invalid validation command result.");
+    }
+    return {
+      command: entry.command,
+      status: entry.status,
+      stdout: entry.stdout,
+      stderr: entry.stderr,
+    };
+  });
+  return {
+    ok: value.ok,
+    ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
+    results,
+  };
+}
+
 /** Validates attempt fencing and the integrity/size of a transferred workspace diff. */
 export function parseHarnessRunnerResult(
   request: HarnessRunnerRequestV1,
@@ -235,6 +287,7 @@ export function parseHarnessRunnerResult(
   if (sha256Digest(bytes) !== delta.digest) {
     throw new Error("Host-runner workspace delta digest does not match its content.");
   }
+  const validation = parseValidation(value.validation);
   return {
     schemaVersion: 1,
     identity,
@@ -245,5 +298,6 @@ export function parseHarnessRunnerResult(
       digest: delta.digest as Sha256Digest,
       contentBase64: delta.contentBase64,
     },
+    ...(validation ? { validation } : {}),
   };
 }

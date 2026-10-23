@@ -58,6 +58,10 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
         manifestTask({ id: "T-5", ownerAgent: "delta", expectedOutputs: ["five.txt"], validationCommands: ["grep -qx five five.txt"], approvalRequired: true }),
         manifestTask({ id: "T-6", ownerAgent: "epsilon", expectedOutputs: ["six.txt"], validationCommands: ["grep -qx six six.txt"] }),
         {
+          ...manifestTask({ id: "T-8", ownerAgent: "epsilon", expectedOutputs: ["eight.txt"], validationCommands: ["grep -qx eight eight.txt"] }),
+          timeoutMs: 120_000,
+        },
+        {
           ...manifestTask({ id: "T-7", ownerAgent: "unowned", expectedOutputs: [], validationCommands: [] }),
           ownerAgent: undefined,
           contract: {
@@ -78,7 +82,7 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
   const harness = new ScriptedHarness((request) => {
     const id = request.task.id;
     if (id === "T-3" && request.attempt.number === 1) return { files: { "three.txt": "wrong\n" } };
-    const name = ({ "T-1": "one", "T-2": "two", "T-3": "three", "T-4": "four", "T-5": "five", "T-6": "six" } as Record<string, string>)[id]!;
+    const name = ({ "T-1": "one", "T-2": "two", "T-3": "three", "T-4": "four", "T-5": "five", "T-6": "six", "T-8": "eight" } as Record<string, string>)[id]!;
     return {
       files: { [`${name}.txt`]: `${name}\n` },
       ...(id === "T-1" ? { homeFiles: { "harness-home-marker": "present\n" } } : {}),
@@ -280,6 +284,23 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
   assert.ok((await fixture.checkpoints.resolveArtifact(reviewEvidence.artifactRefs[0]!)).ok);
   assert.equal(head(), reviewHead);
   assert.equal(harness.invocations.length, invocationsBeforeReview);
+
+  // A per-task timeout larger than the service budget also extends the
+  // supervision deadline; otherwise the supervisor aborts at 60s.
+  const timeoutBefore = Date.now();
+  const timeoutTask = await host.executeTask(input("T-8"));
+  assert.equal(timeoutTask.status, "complete", JSON.stringify(timeoutTask));
+  const timeoutExecution = await fixture.executions.get({
+    runId,
+    taskId: "T-8",
+    logicalAttempt: 1,
+    operationId: taskOperationId(runId, "T-8", 1),
+  });
+  assert.ok(timeoutExecution);
+  assert.ok(
+    Date.parse(timeoutExecution.deadlineAt) - timeoutBefore >= 100_000,
+    "task timeout should extend the supervision deadline",
+  );
 
   // Every completed outcome carries validation and checkpoint evidence resolvable from the store.
   for (const outcome of [first, second, retried, p1, p2, resumed]) {

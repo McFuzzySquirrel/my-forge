@@ -91,7 +91,8 @@ export class OpenCodeAdapter implements HarnessAdapter {
 
     // OpenCode model IDs are provider-qualified (for example,
     // `github-copilot/gpt-5.6-luna`); unlike Copilot, do not strip the prefix.
-    const modelFlag = request.effectiveModel ? ["--model", request.effectiveModel] : [];
+    const model = request.effectiveModel ?? this.defaultModel;
+    const modelFlag = model ? ["--model", model] : [];
     const agentFlag = this.canSelectAgent(request) ? ["--agent", agent.name] : [];
 
     const prompt = executionPrompt(request, agentFlag.length === 0 ? inlinePersona(request) : "");

@@ -19,6 +19,8 @@ export interface ScriptedInvocation {
   readonly taskId: string;
   readonly attempt: number;
   readonly repoRoot: string;
+  readonly agentPath: string;
+  readonly budgetMs: number;
   readonly instructions: string;
   /** Variable names visible to an isolated child process (values are never recorded). */
   readonly childEnvironment: readonly string[];
@@ -53,6 +55,8 @@ export class ScriptedHarness implements HarnessAdapter {
       taskId: request.task.id,
       attempt: request.attempt.number,
       repoRoot: request.repoRoot,
+      agentPath: request.agent.path,
+      budgetMs: request.budget.timeoutMs,
       instructions: request.instructions,
       childEnvironment: observed.names,
       ...(observed.home ? { childHome: observed.home } : {}),

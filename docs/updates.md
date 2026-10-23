@@ -4,6 +4,43 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.153
+
+### Honor configured models, native agents, and task timeouts in host execution
+
+- Host-runner execution now rewrites manifest agent paths into the disposable
+  clone before native agent selection. Agents under `.opencode/agents/`,
+  `.github/agents/`, or `.claude/agents/` are selected with `--agent` instead
+  of silently falling back to the harness's default agent.
+- Native agent selection also requires the agent file to exist in the cloned
+  base revision, so an uncommitted agent file falls back to the inline persona
+  rather than passing a missing `--agent` name.
+- The OpenCode, Claude Code, and Copilot adapters now use
+  `request.effectiveModel` first and fall back to the model configured through
+  their extra-flags environment variable. Previously the parsed default model
+  was never passed to the CLI.
+- A per-task or per-run timeout larger than the service's default attempt budget
+  now extends the supervised execution deadline and the post-execution
+  validation budget. The Console's task-timeout setting is no longer capped at
+  the service default.
+- Service-side Git inspection and delta application now trust the task-owned
+  workspace for the duration of each command. A host-runner result is no longer
+  discarded as `execution-error` with "detected dubious ownership" after the
+  model finishes, and no-op detection sees the task's working tree again.
+- Host execution now runs the manifest's validation commands beside the harness
+  and returns bounded, redacted evidence. The service accepts that evidence
+  instead of re-running the commands in its clean, dependency-free workspace,
+  so a task that creates a Node project can run typecheck, unit tests, and
+  browser tests where its dependencies and browsers are installed.
+- A harness that commits its work in the disposable clone is no longer rejected:
+  the delta captures a HEAD that descends from the accepted base, including
+  committed and uncommitted changes.
+- Added regression coverage for host-runner agent-path remapping, configured
+  default-model fallback, per-task supervision deadlines, committed workspace
+  deltas, and host validation evidence.
+
+---
+
 ## October 2026 - v3.152
 
 ### Harden harness credential handling and document the boundary

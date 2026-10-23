@@ -61,6 +61,11 @@ const EVIDENCE_TAIL_BYTES = 4_000;
 
 type FailedOutcome = Extract<TaskExecutionOutcomeV1, { status: "failed" }>;
 
+/** Positive configured timeout, or 0 when the value is absent or invalid. */
+function configuredTimeoutMs(value: number | undefined): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
 /**
  * One accepted run as the host executes it. The task definitions come from the
  * immutable manifest snapshot; the harness and credential resolver are bound
@@ -331,11 +336,24 @@ export class ExecutionHost {
       const previousFailure = input.logicalAttempt > 1
         ? (await this.readJournal(taskOperationId(input.runId, input.taskId, input.logicalAttempt - 1)))?.failureReason
         : undefined;
+      // A per-task or per-run timeout larger than the service default must also
+      // extend the ownership deadline; otherwise the supervisor aborts at the
+      // default budget before the harness request's own timeout can apply.
+      const attemptBudgetMs = Math.max(
+        this.dependencies.budgetMs,
+        configuredTimeoutMs(task.timeoutMs),
+        configuredTimeoutMs(run.timeoutMs),
+      );
+      let hostValidation: {
+        readonly ok: boolean;
+        readonly reason?: string;
+        readonly record: Readonly<Record<string, unknown>>;
+      } | undefined;
       const supervised = await superviseExecution({
         store: this.dependencies.executions,
         key,
         workerId: this.dependencies.workerId,
-        budgetMs: this.dependencies.budgetMs,
+        budgetMs: attemptBudgetMs,
         heartbeatIntervalMs: this.dependencies.heartbeatIntervalMs,
         heartbeatTtlMs: this.dependencies.heartbeatTtlMs,
         run: async (context) => {
@@ -412,6 +430,9 @@ export class ExecutionHost {
                 MYFORGE_LOGICAL_ATTEMPT: String(input.logicalAttempt),
               },
               ...(processIdentity ? { validationProcessIdentity: processIdentity } : {}),
+              onValidation: (validation) => {
+                hostValidation = validation;
+              },
             });
           } finally {
             let cleanupError: unknown;
@@ -453,6 +474,7 @@ export class ExecutionHost {
 
       const prepared = await this.captureEffect(
         run, task, workspace.path, workspace.baseRevision, outcome, input.logicalAttempt, processIdentity,
+        undefined, hostValidation,
       );
       if (!prepared.ok) return this.finishFailed(key, receipt, prepared.outcome);
       this.audit({
@@ -752,9 +774,20 @@ export class ExecutionHost {
     logicalAttempt: number,
     processIdentity?: ProcessIdentityV1,
     parentCheckpointDigest?: Sha256Digest,
+    validationOverride?: {
+      readonly ok: boolean;
+      readonly reason?: string;
+      readonly record: Readonly<Record<string, unknown>>;
+    },
   ): Promise<{ ok: true; effect: PreparedEffect } | { ok: false; outcome: FailedOutcome }> {
-    const timeoutMs = Math.max(1, run.timeoutMs ?? this.dependencies.budgetMs);
-    const validation = await this.runValidation(task, workspacePath, timeoutMs, processIdentity, logicalAttempt);
+    const timeoutMs = Math.max(
+      1,
+      configuredTimeoutMs(run.timeoutMs)
+        || configuredTimeoutMs(task.timeoutMs)
+        || this.dependencies.budgetMs,
+    );
+    const validation = validationOverride
+      ?? await this.runValidation(task, workspacePath, timeoutMs, processIdentity, logicalAttempt);
     if (!validation.ok) {
       return { ok: false, outcome: { status: "failed", retryable: true, failureCode: "validation-failed", reason: validation.reason } };
     }

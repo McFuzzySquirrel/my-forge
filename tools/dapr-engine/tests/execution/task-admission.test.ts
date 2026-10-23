@@ -153,6 +153,48 @@ test("runs declared validation commands regardless of legacy opt-in behavior", a
   assert.equal(admitted.gates.at(-1)?.status, "failed");
 });
 
+test("uses host validation evidence instead of re-running commands in the service workspace", async (t) => {
+  const repoRoot = temporaryRepo();
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  writeFileSync(join(repoRoot, "src", "result.ts"), "export const result = true;\n");
+
+  const admitted = await admitTaskResult({
+    task: task({ validationCommands: ['node -e "process.exit(1)"'] }),
+    result: result(report()),
+    repoRoot,
+    baseline: null,
+    allowNoop: false,
+    timeoutMs: 5_000,
+    validation: { ok: true },
+  });
+
+  assert.equal(admitted.ok, true);
+  if (!admitted.ok) return;
+  assert.equal(admitted.gates.at(-1)?.gate, "validation");
+  assert.equal(admitted.gates.at(-1)?.status, "passed");
+});
+
+test("rejects a failed host validation result", async (t) => {
+  const repoRoot = temporaryRepo();
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  writeFileSync(join(repoRoot, "src", "result.ts"), "export const result = true;\n");
+
+  const admitted = await admitTaskResult({
+    task: task({ validationCommands: ["node --version"] }),
+    result: result(report()),
+    repoRoot,
+    baseline: null,
+    allowNoop: false,
+    timeoutMs: 5_000,
+    validation: { ok: false, reason: "host validation failed" },
+  });
+
+  assert.equal(admitted.ok, false);
+  if (admitted.ok) return;
+  assert.equal(admitted.failureCode, "validation-failed");
+  assert.match(admitted.reason, /host validation failed/);
+});
+
 test("explicit no-op policy does not disable structured outcome or requirement gates", async (t) => {
   const repoRoot = temporaryRepo();
   t.after(() => rmSync(repoRoot, { recursive: true, force: true }));

@@ -67,7 +67,8 @@ export class ClaudeAdapter implements HarnessAdapter {
     const native = this.canSelectAgent(request);
     const prompt = executionPrompt(request, native ? "" : inlinePersona(request));
     const agentFlag = native ? ["--agent", agent.name] : [];
-    const modelFlag = request.effectiveModel ? ["--model", stripProviderPrefix(request.effectiveModel)] : [];
+    const model = request.effectiveModel ?? this.defaultModel;
+    const modelFlag = model ? ["--model", stripProviderPrefix(model)] : [];
     const args = ["-p", prompt, "--output-format", "json", ...agentFlag, ...modelFlag, ...this.extraFlags];
 
     const result = await runCommand(this.bin, args, {

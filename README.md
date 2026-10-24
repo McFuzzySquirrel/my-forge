@@ -134,14 +134,12 @@ git clone https://github.com/McFuzzySquirrel/my-forge.git
 cd my-forge/scripts/forge-launcher
 npm install
 npm run build
-node dist/cli.js
 ```
 
 The shell wrapper delegates to the built Node package and remains available for
 compatibility with existing workflows for one release after the package
-migration. For new usage, run the package directly with `node dist/cli.js` from
-`scripts/forge-launcher`; when the package is available from your registry, use
-`npx forge-launcher@beta`.
+migration. For new usage, run the package directly from `scripts/forge-launcher`;
+when the package is available from your registry, use `npx forge-launcher@beta console`.
 
 ### Option 2: Install the npm package from source
 
@@ -156,25 +154,29 @@ npm pack
 npm install -g ./forge-launcher-1.0.0-beta.6.tgz
 ```
 
-Once installed, run:
+### Start the runtime and open the Console
 
-```bash
-forge-launcher
-```
-
-The launcher walks you through repo bootstrap, idea capture, PRD authoring,
-team generation, and build execution. The Console also supports bootstrapping an
-existing repository and adding Feature PRDs to completed projects.
-
-Start the local runtime once before the first service-backed build:
+Start the local runtime once before the first service-backed build, then open the
+Console:
 
 ```bash
 forge-launcher runtime start
 forge-launcher runtime status
+forge-launcher console
 ```
 
-If you are running the checkout directly, use `node dist/cli.js runtime start`
-from `scripts/forge-launcher` instead.
+For the checkout directly:
+
+```bash
+node dist/cli.js runtime start
+node dist/cli.js runtime status
+node dist/cli.js console
+```
+
+The **Forge Console** is the recommended entry point. It opens the local Console
+and its single-use sign-in link. Create or open a project, author the PRD and
+features, and monitor and control builds there. The interactive terminal launcher
+is still available as `forge-launcher` if you prefer prompts in the terminal.
 
 For the manual prompting flow and the CLI's expected prompts, see
 [docs/prompt-playbook.md](docs/prompt-playbook.md). For the latest changes and

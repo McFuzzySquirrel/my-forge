@@ -29,24 +29,25 @@ unqualified.
 ```bash
 npm install -g forge-launcher
 # or, without a global install:
-npx forge-launcher
+npx forge-launcher console
 ```
 
 ## Quick start
 
-```bash
-forge-launcher            # interactive: create a repo, bootstrap templates, capture your idea
-```
-
-Answer the prompts, then open the generated repo in your agent harness and run
-the queued command it prints.
-
-Start the local execution runtime before the first service-backed build:
+Start the local execution runtime once, then open the **Forge Console**:
 
 ```bash
 forge-launcher runtime start
 forge-launcher runtime status
+forge-launcher console
 ```
+
+The Console is the recommended entry point. It opens the local Console and its
+single-use sign-in link; create or open a project, author requirements, and
+monitor and control builds there.
+
+The interactive terminal launcher remains available as `forge-launcher` if you
+prefer prompts in the terminal.
 
 ## Commands
 

@@ -385,7 +385,7 @@ button shows the exact command to run manually.
 | **Artifacts** | repository-local structured outputs (`docs/artifacts/`), browsable by type/task with previews. |
 | **Evidence** | durable work, validation and git-bundle artifacts from integrated service tasks (worker or host runner). |
 | **Timeline** | chronological service lifecycle events, failures highlighted. |
-| **Service runs** | runs submitted to the local execution service (`forge-launcher service submit`) for the open repository: status, executor (worker or host runner), tasks, sequenced events, and acknowledged controls. Host-executed runs link to their runner jobs. See [Service runs](#service-runs). |
+| **Service runs** | runs submitted to the local execution service (`forge-launcher service submit`) for the open repository: status, executor (worker or host runner), submitted timeout/activity settings, tasks with per-attempt **Activity**, sequenced events, and acknowledged controls. Host-executed runs link to their runner jobs. See [Service runs](#service-runs). |
 | **Host runner** | runner readiness, project-scoped capability controls, and bounded active/recent job summaries with repository filtering. See [Host runner operations](#host-runner-operations). |
 | **Runtime** | shared local Podman runtime lifecycle, repository registry, backup/restore, token rotation, and harness credential grants. See [Runtime administration](#runtime-administration). |
 | **Projects** | switch projects, add a folder, or remove one or more projects from Forge. |
@@ -593,9 +593,10 @@ The **Log harness activity** checkbox (Controls panel) toggles
 `logHarnessActivity` in `docs/engine-config.json`. It defaults to **off** and
 applies to subsequently started runs; the Console's run/resume command passes it
 to the engine as `--log-harness-activity` or `--no-log-harness-activity`, so it
-takes precedence over `FORGE_ENGINE_LOG_HARNESS_ACTIVITY`. When enabled, harness
-CLI stdout/stderr streams into `docs/forge.log` and appears live in the
-**Logs** view. It can contain sensitive repository content and increase log
+takes precedence over `FORGE_ENGINE_LOG_HARNESS_ACTIVITY`. When enabled, worker
+harness CLI stdout/stderr is stored in the runtime activity log and can be opened
+from the **Service runs** task **Activity** action. Host-runner activity appears
+in **Runtime log**. It can contain sensitive repository content and increase log
 volume; command invocation logging is always on regardless of this setting (see [ADR-052](adr/052-harness-invocation-activity-logging.md)).
 
 ### Task timeouts

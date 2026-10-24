@@ -78,6 +78,7 @@ export class ClaudeAdapter implements HarnessAdapter {
       maxBufferBytes: 10 * 1024 * 1024,
       invocation: harnessInvocationContext(this.name, request),
       activity: request.logHarnessActivity === true,
+      ...(request.log ? { log: request.log } : {}),
       ...harnessProcessOptions(request),
     });
 

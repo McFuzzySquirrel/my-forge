@@ -47,6 +47,8 @@ export interface TaskAttemptRequest {
   readonly instructions: string;
   readonly signal?: AbortSignal;
   readonly logHarnessActivity?: boolean;
+  /** Optional per-attempt activity sink; defaults to stdout. */
+  readonly log?: (line: string) => void;
   /** Present for supervised service executions; absent for legacy runs. */
   readonly isolation?: HarnessProcessIsolation;
 }

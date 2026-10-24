@@ -26,6 +26,7 @@ import { RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME } from "../orchestration/workf
 import { FileArtifactCheckpointStore } from "../storage/files/artifact-checkpoint-store.ts";
 import { FileTaskCompletionStore } from "../execution/task-completions.ts";
 import { CompletionEvidenceService } from "./evidence.ts";
+import { FileActivityLogStore } from "./activity.ts";
 import {
   PostgresControlRecordStore,
   PostgresExecutionOwnershipStore,
@@ -166,6 +167,7 @@ async function proveWorkflowAdmission(): Promise<void> {
 const checkpoints = new FileArtifactCheckpointStore(join(DATA_DIR, "artifacts"));
 const completions = new FileTaskCompletionStore(join(DATA_DIR, "completions"));
 const evidence = new CompletionEvidenceService(completions, checkpoints);
+const activity = new FileActivityLogStore(join(DATA_DIR, "activity"));
 const integration = new PostgresRepositoryIntegrationAuthority(database, repositoryRoot, checkpoints);
 
 function createWorkflowHost(): ExecutionHost {
@@ -181,6 +183,7 @@ function createWorkflowHost(): ExecutionHost {
     controls,
     repositoryRoot,
     scratchRoot: join(DATA_DIR, "scratch"),
+    activityRoot: join(DATA_DIR, "activity"),
     taskUidIsolation: true,
     taskScratchRoot: TASK_SCRATCH_DIR,
     workerId: process.env.MYFORGE_WORKER_ID ?? `local-${randomUUID()}`,
@@ -263,6 +266,7 @@ function createRunService(host: ExecutionHost): RunService {
     }, workflowEvents),
     approvals: new TaskApprovalCoordinator(controls, workflowEvents),
     approvalContext: (runId, taskId) => host.approvalContext(runId, taskId),
+    activity,
   });
 }
 

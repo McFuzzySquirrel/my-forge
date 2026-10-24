@@ -17,7 +17,10 @@ let latestPoll = 0;
 let timer: number | undefined;
 let listHost: HTMLElement | null = null;
 let detailHost: HTMLElement | null = null;
+let activityHost: HTMLElement | null = null;
 let selectedRunId: string | null = null;
+let activitySelection: { readonly taskId: string; readonly attempt: number } | null = null;
+let activityCache: { readonly key: string; readonly lines: readonly string[]; readonly truncated: boolean } | null = null;
 let events: ServiceRunEvent[] = [];
 let cursor = 0;
 let pending = new Set<string>();
@@ -28,7 +31,10 @@ export function unmountService(): void {
   timer = undefined;
   listHost = null;
   detailHost = null;
+  activityHost = null;
   selectedRunId = null;
+  activitySelection = null;
+  activityCache = null;
   events = [];
   cursor = 0;
   pending = new Set();
@@ -84,6 +90,8 @@ async function poll(owner: number): Promise<void> {
 function select(runId: string): void {
   if (runId === selectedRunId) return;
   selectedRunId = runId;
+  activitySelection = null;
+  activityCache = null;
   events = [];
   cursor = 0;
   history.replaceState(null, "", `#/service?run=${encodeURIComponent(runId)}`);
@@ -173,12 +181,18 @@ function renderDetail(run: ServiceRunRecord): void {
   if (!detailHost) return;
   detailHost.textContent = "";
   const tasks = run.tasks ?? [];
-  const taskRows = tasks.map((task) => el("tr", null, [
-    el("td", { className: "mono small" }, task.taskId),
-    el("td", null, statusBadge(task.status)),
-    el("td", { className: "small" }, task.logicalAttempt ? String(task.logicalAttempt) : "—"),
-    el("td", null, taskAction(run, task)),
-  ]));
+  const taskRows = tasks.map((task) => {
+    const actions = el("div", { className: "row gap" }, [
+      taskAction(run, task),
+      task.logicalAttempt ? activityButton(run, task) : null,
+    ].filter((item): item is HTMLElement => item !== null));
+    return el("tr", null, [
+      el("td", { className: "mono small" }, task.taskId),
+      el("td", null, statusBadge(task.status)),
+      el("td", { className: "small" }, task.logicalAttempt ? String(task.logicalAttempt) : "—"),
+      el("td", null, actions),
+    ]);
+  });
   const eventItems = [...events].reverse().map((event) => el("div", { className: "tl-item" }, [
     el("div", { className: "tl-time" }, `#${event.sequence} ${fmtTime(event.createdAt)}`),
     el("div", { className: "row gap" }, [el("span", { className: "badge" }, event.eventType), el("span", { className: "dim" }, describe(event))]),
@@ -188,6 +202,9 @@ function renderDetail(run: ServiceRunRecord): void {
     el("p", { className: "dim small" },
       `Branch ${run.targetRef.replace(/^refs\/heads\//, "")} · harness ${run.harness?.id ?? "unknown"}. ` +
       `Executor: ${run.hostExecution === true ? "local host runner" : "worker container"}. ` +
+      (run.taskTimeoutMs ? `Default task timeout: ${Math.round(run.taskTimeoutMs / 1000)}s. ` : "") +
+      `Harness activity: ${run.logHarnessActivity === true ? "on" : "off"}. ` +
+      `Settings are frozen at submission; timeout/activity changes apply to the next run. ` +
       `Merge finished runs with "forge-launcher service merge ${run.runId}".`),
     run.hostExecution === true
       ? el("p", { className: "dim small" }, [
@@ -213,4 +230,55 @@ function renderDetail(run: ServiceRunRecord): void {
     el("h3", null, `Events (${cursor})`),
     el("div", { className: "timeline" }, eventItems.length ? eventItems : el("p", { className: "dim" }, "No events yet.")),
   ]));
+  activityHost = el("div", { className: "panel" });
+  detailHost.appendChild(activityHost);
+  if (activitySelection) void renderActivity(run);
+}
+
+function activityButton(run: ServiceRunRecord, task: ServiceRunTask): HTMLElement {
+  const button = el("button", { className: "btn btn-sm", type: "button" }, "Activity");
+  button.addEventListener("click", () => {
+    if (task.logicalAttempt === undefined) return;
+    activitySelection = { taskId: task.taskId, attempt: task.logicalAttempt };
+    activityCache = null;
+    void renderActivity(run);
+  });
+  return button;
+}
+
+async function renderActivity(run: ServiceRunRecord): Promise<void> {
+  if (!activityHost || !activitySelection) return;
+  const { taskId, attempt } = activitySelection;
+  const key = `${run.runId}:${taskId}:${attempt}`;
+  activityHost.textContent = "";
+  activityHost.appendChild(el("div", { className: "row between" }, [
+    el("h3", null, `Harness activity · ${taskId} · attempt ${attempt}`),
+    el("span", { className: "dim small" }, "Opt-in per-attempt output"),
+  ]));
+  if (run.hostExecution === true) {
+    activityHost.appendChild(el("p", { className: "dim small" }, "This run used the native host runner; its activity is in the Runtime log."));
+  }
+  if (activityCache?.key !== key) {
+    const pre = el("pre", { className: "log-view" }, "Loading activity…");
+    activityHost.appendChild(pre);
+    try {
+      const result = await api.serviceActivity(run.runId, taskId, attempt);
+      activityCache = { key, lines: result.lines, truncated: result.truncated };
+    } catch (error) {
+      pre.textContent = `No activity available: ${(error as Error).message}`;
+      return;
+    }
+    if (!activityHost || activitySelection?.taskId !== taskId || activitySelection.attempt !== attempt) return;
+    activityHost.replaceChildren(
+      el("div", { className: "row between" }, [
+        el("h3", null, `Harness activity · ${taskId} · attempt ${attempt}`),
+        el("span", { className: "dim small" }, "Opt-in per-attempt output"),
+      ]),
+      el("pre", { className: "log-view" }, activityCache.lines.length ? activityCache.lines.join("\n") : "No harness activity was recorded for this attempt. Enable Log harness activity before starting a new run."),
+      ...(activityCache.truncated ? [el("p", { className: "dim small" }, "Activity output was truncated.")] : []),
+    );
+  } else {
+    activityHost.appendChild(el("pre", { className: "log-view" }, activityCache.lines.length ? activityCache.lines.join("\n") : "No harness activity was recorded for this attempt."));
+    if (activityCache.truncated) activityHost.appendChild(el("p", { className: "dim small" }, "Activity output was truncated."));
+  }
 }

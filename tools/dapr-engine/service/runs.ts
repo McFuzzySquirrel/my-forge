@@ -19,6 +19,7 @@ import { StubAdapter } from "../execution/harness/stub-adapter.ts";
 import { harnessUnavailableDetail, type ServiceHarnessV1 } from "./harnesses.ts";
 import type { AgentDescriptor, ManifestTask } from "../execution/types.ts";
 import type { HarnessRunner } from "../execution/runner-contract.ts";
+import type { ActivityLogPage } from "./activity.ts";
 import {
   executionHostRunFromSubmission,
   type ExecutionHostRunV1,
@@ -42,6 +43,7 @@ export const LOCAL_OPERATOR: TrustedPrincipalV1 = Object.freeze({
   roles: Object.freeze(["operator"]),
 });
 const SUBMISSION_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const RUN_ID_PATTERN = /^run_[0-9a-f]{32}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TARGET_REF_PATTERN = /^refs\/heads\/[A-Za-z0-9._/-]{1,200}$/;
 const API_CONTROL_ACTIONS: ReadonlySet<ControlAction> = new Set([
@@ -162,9 +164,13 @@ export class ServiceRunRegistry {
       throw new Error(`Harness '${submission.harness.id}@${submission.harness.adapterVersion}' is not available in this worker`);
     }
     const agents = snapshotAgents(submission);
+    const settings = submission.configuration.settings;
+    const taskTimeoutMs = positiveSetting(settings, "taskTimeoutMs");
     const run = executionHostRunFromSubmission(runId, submission, {
       agentFor: (task: ManifestTask) => agents.get(task.ownerAgent ?? "") ?? fallbackAgent(task.ownerAgent ?? "forge-agent"),
       harness: harness.create(),
+      ...(taskTimeoutMs ? { timeoutMs: taskTimeoutMs } : {}),
+      ...(settings.logHarnessActivity === true ? { logHarnessActivity: true } : {}),
       ...(hostRunner ? { hostRunner: hostRunner.runner } : {}),
       ...(!hostRunner && harness.credentials ? { credentials: harness.credentials } : {}),
     });
@@ -245,6 +251,7 @@ export interface RunServiceDependencies {
   };
   readonly approvalContext: (runId: string, taskId: string) => Promise<ApprovalContextV1 | undefined>;
   readonly newRunId?: () => string;
+  readonly activity?: { read(runId: string, taskId: string, attempt: number): Promise<ActivityLogPage | undefined> };
 }
 
 function reject(status: number, code: string, detail: string): RunServiceResult {
@@ -253,6 +260,11 @@ function reject(status: number, code: string, detail: string): RunServiceResult 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function positiveSetting(settings: Readonly<Record<string, JsonValue>>, key: string): number | undefined {
+  const value = settings[key];
+  return Number.isSafeInteger(value) && Number(value) > 0 ? Number(value) : undefined;
 }
 
 function controlStatus(code: string): number {
@@ -272,6 +284,10 @@ function summary(record: StoredRunSubmissionV1, status: RunStatusSnapshotV1 | un
     manifestDigest: submission.manifestDigest,
     harness: submission.harness,
     hostExecution: submission.configuration.settings.hostExecution === true,
+    taskTimeoutMs: typeof submission.configuration.settings.taskTimeoutMs === "number"
+      ? submission.configuration.settings.taskTimeoutMs
+      : undefined,
+    logHarnessActivity: submission.configuration.settings.logHarnessActivity === true,
     taskIds: submission.selection.effectiveTaskIds ?? [],
     createdAt: record.createdAt,
     status: status?.status ?? "queued",
@@ -307,6 +323,17 @@ export class RunService {
     if (submission.configuration.settings.hostExecution !== undefined
       && typeof submission.configuration.settings.hostExecution !== "boolean") {
       return reject(422, "invalid-submission", "configuration.settings.hostExecution must be boolean when provided");
+    }
+    const taskTimeoutMs = submission.configuration.settings.taskTimeoutMs;
+    if (taskTimeoutMs !== undefined
+      && (!Number.isSafeInteger(taskTimeoutMs) || Number(taskTimeoutMs) <= 0
+        || Number(taskTimeoutMs) > RUN_LIMITS_V1.maxTaskTimeoutMs)) {
+      return reject(422, "invalid-submission",
+        `configuration.settings.taskTimeoutMs must be a positive integer no greater than ${RUN_LIMITS_V1.maxTaskTimeoutMs}`);
+    }
+    if (submission.configuration.settings.logHarnessActivity !== undefined
+      && typeof submission.configuration.settings.logHarnessActivity !== "boolean") {
+      return reject(422, "invalid-submission", "configuration.settings.logHarnessActivity must be boolean when provided");
     }
     const hostExecution = submission.configuration.settings.hostExecution === true;
     const harnessProblem = this.dependencies.registry.harnessUnavailable(submission.harness, {
@@ -403,6 +430,28 @@ export class RunService {
       }
     }
     return recovered;
+  }
+
+  async activity(
+    runId: string,
+    repositoryId: string,
+    taskId: string,
+    attempt: number,
+  ): Promise<RunServiceResult> {
+    if (!RUN_ID_PATTERN.test(runId)) return reject(400, "invalid-run", "runId is invalid");
+    if (!REPOSITORY_ID_PATTERN.test(repositoryId)) return reject(400, "invalid-repository", "repositoryId is invalid");
+    if (typeof taskId !== "string" || taskId.length === 0 || taskId.length > 200) {
+      return reject(400, "invalid-task", "taskId is invalid");
+    }
+    if (!Number.isSafeInteger(attempt) || attempt < 1) return reject(400, "invalid-attempt", "attempt must be a positive integer");
+    const record = await this.dependencies.submissions.get(runId);
+    if (!record || record.repositoryId !== repositoryId) {
+      return reject(404, "unknown-run", "Run does not belong to this repository");
+    }
+    if (!this.dependencies.activity) return reject(404, "activity-unavailable", "Activity logging is not enabled");
+    const page = await this.dependencies.activity.read(runId, taskId, attempt);
+    if (!page) return reject(404, "activity-not-found", "No activity log exists for that run, task and attempt");
+    return { ok: true, status: 200, body: { runId, repositoryId, taskId, attempt, ...page } };
   }
 
   async list(limit: number, repositoryId?: string): Promise<RunServiceResult> {

@@ -152,6 +152,7 @@ export class NativeHarnessRunner implements HarnessRunner {
         },
         budget: { timeoutMs: runnerRequest.timeoutMs },
         instructions: runnerRequest.instructions,
+        logHarnessActivity: runnerRequest.logHarnessActivity === true,
         ...(signal ? { signal } : {}),
         isolation,
       };

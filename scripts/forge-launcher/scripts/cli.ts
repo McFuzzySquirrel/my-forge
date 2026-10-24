@@ -79,8 +79,10 @@ Deployment:
   repositories fail closed; legacy histories are not imported. Service runs integrate
   into forge/<branch> and fast-forward the checked-out branch when they complete.
   FORGE_DEPLOYMENT=hosted is not available yet.
-  Service runs ignore --task-timeout-ms, --heartbeat-ms, --viz, --run-validation,
-  harness-activity, and auto-commit options (the service owns those behaviors).
+  Service runs apply --task-timeout-ms as the fallback for tasks without a
+  manifest timeout and --log-harness-activity to the selected runner's activity
+  log. They ignore --heartbeat-ms, --viz, --run-validation, and auto-commit
+  options because the service owns those behaviors.
   --host-execution runs the local harness CLI with your full OS permissions, outside a task
   sandbox. Enable only for trusted tasks; the launcher-managed host runner is required and
   there is no fallback to the worker.
@@ -96,9 +98,11 @@ run auto-commit:
   --commit-message-template <tmpl>  Commit message with {taskId}/{taskTitle} placeholders.
 
 run harness activity:
-  --log-harness-activity     Stream harness CLI stdout/stderr into docs/forge.log as it
-                             arrives (default: off). May contain sensitive repository content
-                             and increase log volume. Command invocation logging is always on.
+  --log-harness-activity     Capture harness CLI stdout/stderr for each attempt
+                             (default: off). Worker activity is written to the
+                             runtime activity log; host activity goes to the
+                             host-runner log. May contain sensitive repository
+                             content and increase log volume.
   --no-log-harness-activity  Force activity logging off, overriding
                              FORGE_ENGINE_LOG_HARNESS_ACTIVITY and any saved Console setting.
 

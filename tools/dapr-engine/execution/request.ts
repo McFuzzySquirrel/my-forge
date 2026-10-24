@@ -32,6 +32,7 @@ export interface PrepareTaskRequestOptions {
   previousResultPath?: string;
   signal?: AbortSignal;
   logHarnessActivity?: boolean;
+  log?: (line: string) => void;
   /** Supervised service executions pass the isolated environment through to the adapter. */
   isolation?: HarnessProcessIsolation;
 }
@@ -78,6 +79,7 @@ export function prepareTaskRequest(options: PrepareTaskRequestOptions): TaskAtte
     attempt: Object.freeze({ number: options.attempt ?? 1, maxRetries, runId: options.runId ?? "" }),
     budget: Object.freeze({ timeoutMs }), instructions, signal: options.signal,
     logHarnessActivity: options.logHarnessActivity === true,
+    ...(options.log ? { log: options.log } : {}),
     ...(options.isolation ? { isolation: Object.freeze({ ...options.isolation }) } : {}),
   });
 }

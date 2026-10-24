@@ -102,6 +102,13 @@ export class ServiceClient {
   control(runId: string, action: string, payload: Record<string, unknown> = {}, controlId: string = randomUUID()) {
     return this.request("POST", `/v1/runs/${encodeURIComponent(runId)}/controls`, { controlId, action, payload });
   }
+  activity(runId: string, repositoryId: string, taskId: string, attempt: number) {
+    return this.request<{ lines: string[]; truncated: boolean }>(
+      "GET",
+      `/v1/runs/${encodeURIComponent(runId)}/activity?repositoryId=${encodeURIComponent(repositoryId)}`
+        + `&taskId=${encodeURIComponent(taskId)}&attempt=${encodeURIComponent(String(attempt))}`,
+    );
+  }
   evidence(repositoryId: string) {
     return this.request<{ repositoryId: string; tasks: Record<string, unknown>[]; count: number }>(
       "GET", `/v1/evidence?repositoryId=${encodeURIComponent(repositoryId)}`);
@@ -373,6 +380,7 @@ export async function submitRepositoryRun(
 const SERVICE_USAGE = `Usage:
   forge-launcher service submit [--repo <path>] [--harness <h>] [--branch <base>] [--tasks <id,id>]
                                 [--concurrency <n>] [--max-retries <n>] [--retry-delay-ms <ms>]
+                                [--task-timeout-ms <ms>] [--log-harness-activity|--no-log-harness-activity]
                                 [--allow-noop] [--host-execution] [--key <submission-key>] [--follow]
   forge-launcher service runs [--repo <path>] [--json]
   forge-launcher service status <run-id> [--json]
@@ -416,6 +424,7 @@ export async function serviceCli(
       const { flags, positional } = parseFlags(rest, {
         "--repo": "value", "--harness": "value", "--branch": "value", "--tasks": "value",
         "--concurrency": "value", "--max-retries": "value", "--retry-delay-ms": "value",
+        "--task-timeout-ms": "value", "--log-harness-activity": "flag", "--no-log-harness-activity": "flag",
         "--allow-noop": "flag", "--host-execution": "flag", "--key": "value", "--follow": "flag",
       });
       if (positional.length) throw new Error(`Unexpected argument: ${positional[0]}`);
@@ -426,6 +435,10 @@ export async function serviceCli(
         const value = integerFlag(flags, flag);
         if (value !== undefined) settings[key] = value;
       }
+      const taskTimeoutMs = integerFlag(flags, "--task-timeout-ms");
+      if (taskTimeoutMs !== undefined) settings.taskTimeoutMs = taskTimeoutMs;
+      if (flags.has("--log-harness-activity")) settings.logHarnessActivity = true;
+      if (flags.has("--no-log-harness-activity")) settings.logHarnessActivity = false;
       if (flags.has("--allow-noop")) settings.allowNoop = true;
       if (flags.has("--host-execution")) settings.hostExecution = true;
       const result = await submitRepositoryRun(client, {

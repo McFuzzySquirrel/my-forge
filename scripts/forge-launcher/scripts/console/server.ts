@@ -33,7 +33,7 @@ import { harnessCliForHarness } from "./dashboard/harness-rules.ts";
 import * as repo from "./repo.ts";
 import { removeProjects, sameProjectPath } from "./remove-projects.ts";
 import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
-import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, latestServiceRun, listServiceEvidence, listServiceRuns, readServiceEvidenceArtifact, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
+import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, latestServiceRun, listServiceEvidence, listServiceRuns, readServiceEvidenceArtifact, serviceRunActivity, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
 import { defaultHostRunnerJobsDeps, listHostRunnerJobs, type HostRunnerJobsDeps } from "./host-runner-jobs.ts";
 import type { AuditEvent, ControlAction, CreateProjectRequest, Executor, ManifestTask, RunnerReadiness, ServiceRunSnapshot } from "./types.ts";
 import {
@@ -783,6 +783,11 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         if (urlPath === "/api/service/run") {
           const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");
           const result = await serviceRunDetail(serviceRuns(), currentRepo, q.get("id"), q.get("after"));
+          return sendJson(res, result.status, result.body);
+        }
+        if (urlPath === "/api/service/activity") {
+          const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");
+          const result = await serviceRunActivity(serviceRuns(), currentRepo, q.get("runId"), q.get("taskId"), q.get("attempt"));
           return sendJson(res, result.status, result.body);
         }
         if (urlPath === "/api/service/evidence") {

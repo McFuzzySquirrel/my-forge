@@ -35,6 +35,7 @@ import type {
   AuthoringSessionTarget,
   TimeoutUpdateResult,
   UploadResult,
+  ServiceActivityResponse,
   ServiceControlResult,
   ServiceRunDetail,
   ServiceRunsResponse,
@@ -97,6 +98,11 @@ export const api = {
   },
   serviceControl(runId: string, action: string, taskId?: string): Promise<ServiceControlResult> {
     return post<ServiceControlResult>("/api/service/control", { runId, action, ...(taskId ? { taskId } : {}) });
+  },
+  serviceActivity(runId: string, taskId: string, attempt: number): Promise<ServiceActivityResponse> {
+    return request<ServiceActivityResponse>(
+      `/api/service/activity?runId=${encodeURIComponent(runId)}&taskId=${encodeURIComponent(taskId)}&attempt=${attempt}`,
+    );
   },
   serviceEvidence(): Promise<EvidenceIndex> {
     return request<EvidenceIndex>("/api/service/evidence");

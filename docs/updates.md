@@ -4,6 +4,25 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.156
+
+### Run timeouts and harness activity
+
+- Service runs now honor `--task-timeout-ms` and the Console's default timeout
+  as a fallback for tasks without a manifest `timeoutMs`; per-task manifest
+  timeouts still win. A larger value extends the supervised attempt budget.
+- The misleading "ignored for service runs" note for task timeout and harness
+  activity has been removed. Changes apply to new runs; active runs keep their
+  submitted snapshot.
+- Opt-in `--log-harness-activity` now captures worker harness output in a
+  bounded, owner-only runtime activity log, available from the Service runs task
+  **Activity** action. Host activity remains in the Console **Runtime log**.
+- Service run summaries show the submitted default task timeout and activity
+  setting, and the Console explains when changes will take effect.
+- Added [ADR-089](adr/089-run-timeouts-and-harness-activity.md).
+
+---
+
 ## October 2026 - v3.155
 
 ### Runtime evidence, live Console activity, and worker parity

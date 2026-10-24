@@ -1365,7 +1365,7 @@ reflect the running build (monitor + resume) rather than the manual
   | `FORGE_ENGINE_VIZ_PORT` | 8 | Dashboard port when `FORGE_ENGINE_VIZ=1` (default `4299`) |
   | `FORGE_ENGINE_ALLOW_NOOP` | 8 | `1` to relax the engine's output-verification no-op heuristic (`run --allow-noop`) |
   | `FORGE_ENGINE_RUN_VALIDATION` | 8 | `1` to run each task's manifest `validationCommands` before marking it complete (`run --run-validation`) |
-  | `FORGE_ENGINE_LOG_HARNESS_ACTIVITY` | 8 | `1` to stream harness CLI stdout/stderr into `docs/forge.log` as it arrives (`run --log-harness-activity`; `--no-log-harness-activity` overrides). Default off; may contain sensitive content |
+  | `FORGE_ENGINE_LOG_HARNESS_ACTIVITY` | 8 | `1` to capture harness CLI stdout/stderr for each attempt (`run --log-harness-activity`; `--no-log-harness-activity` overrides). Worker activity is stored in the runtime activity log; host activity appears in the host-runner log. Default off; may contain sensitive content |
   | `FORGE_DEPLOYMENT` | 8 | Execution deployment: unset or `local` uses the local service; `hosted` is not available yet and fails. Repository registration with `runtime repo add` is mandatory; unregistered repositories fail closed (ADR-079) |
 
 All other step inputs (repo name, description, visibility, parent directory) use their defaults in non-interactive mode. Override them by setting the variables before running:
@@ -1524,12 +1524,14 @@ use the local image cache and work offline. Removing images (for example with
 `podman system prune -a`) means you need the network again. Moving images to an
 air-gapped machine (`podman save`/`podman load`) is not yet supported.
 
-#### Disabled and retired options
+#### Service-run and retired options
 
 | Option | Status |
 |---|---|
 | Service runs with `copilot`, `claude`, or `opencode` and no credential grant | Rejected at submission (`harness-unavailable`). Run `runtime harness grant <harness> <VARIABLE>`. |
-| `run --task-timeout-ms`, `--heartbeat-ms`, `--viz`, `--viz-port`, `--run-validation`, `--log-harness-activity`, `--auto-commit`, `--commit-message-template` for registered repositories | Ignored with a note. The service applies its own budgets, validation, and per-task commits, and the Console **Service runs** view replaces the board. |
+| `run --task-timeout-ms` for registered repositories | Applied as the fallback for tasks that do not have a manifest `timeoutMs`; per-task manifest values win. Changes apply to new runs because the run snapshot is immutable. |
+| `run --log-harness-activity` for registered repositories | Captures each attempt's activity. Worker output is available from the Service runs **Activity** action; host output appears in the Runtime log. |
+| `run --heartbeat-ms`, `--viz`, `--viz-port`, `--run-validation`, `--auto-commit`, `--commit-message-template` for registered repositories | Ignored with a note. The service applies its own budgets, validation, and per-task commits, and the Console **Service runs** view replaces the board. |
 | `FORGE_DEPLOYMENT=hosted` | Not available until shared access is qualified (P8). |
 | `--postgres-port` without `--host-tools` | Rejected. PostgreSQL stays private unless host tools are requested. |
 | Binding the Console or service API beyond loopback | Not available in the local profile ([ADR-068](adr/068-local-deployment-and-access-profiles.md)). |

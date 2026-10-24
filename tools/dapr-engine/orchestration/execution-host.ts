@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync, statSync } from "node:fs";
 import { appendFile, chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -29,7 +30,7 @@ import { superviseExecution, type ExecutionOwnershipStore } from "../execution/p
 import type { HarnessRunner } from "../execution/runner-contract.ts";
 import type { TaskAdmissionResult } from "../execution/task-admission.ts";
 import type { TaskCompletionStore } from "../execution/task-completions.ts";
-import { TASK_EXECUTION_DIR } from "../execution/task-execution.ts";
+import { TASK_EXECUTION_DIR, taskFileId } from "../execution/task-execution.ts";
 import type { AgentDescriptor, HarnessAdapter, ManifestTask, ProcessIdentityV1 } from "../execution/types.ts";
 import { captureWorkspaceCheckpoint, type WorkspaceCheckpointPublisher } from "../execution/workspace-reconstruction.ts";
 import type { ArtifactResolveResult } from "../storage/files/artifact-checkpoint-store.ts";
@@ -60,6 +61,7 @@ import {
 const execFileAsync = promisify(execFile);
 const GIT_OID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 const EVIDENCE_TAIL_BYTES = 4_000;
+const MAX_ACTIVITY_LOG_BYTES = 2 * 1024 * 1024;
 
 type FailedOutcome = Extract<TaskExecutionOutcomeV1, { status: "failed" }>;
 
@@ -88,6 +90,7 @@ export interface ExecutionHostRunV1 {
   /** Resolves the scoped credential environment for one attempt; never persisted. */
   readonly credentials?: () => Promise<Readonly<Record<string, string>>>;
   readonly timeoutMs?: number;
+  readonly logHarnessActivity?: boolean;
 }
 
 export interface ExecutionHostRunBindingV1 {
@@ -96,6 +99,7 @@ export interface ExecutionHostRunBindingV1 {
   readonly hostRunner?: HarnessRunner;
   readonly credentials?: ExecutionHostRunV1["credentials"];
   readonly timeoutMs?: number;
+  readonly logHarnessActivity?: boolean;
 }
 
 /** Derives the host view of a run from its accepted submission snapshot. */
@@ -169,6 +173,8 @@ export interface ExecutionHostDependenciesV1 {
   readonly repositoryRoot: (repositoryId: string) => string | undefined;
   /** Absolute scratch root for workspaces, harness homes, and the outcome journal; outside the host home. */
   readonly scratchRoot: string;
+  /** Root for opt-in per-attempt harness activity logs; defaults under scratchRoot. */
+  readonly activityRoot?: string;
   readonly taskUidIsolation?: boolean;
   readonly taskScratchRoot?: string;
   readonly workerId: string;
@@ -452,6 +458,9 @@ export class ExecutionHost {
             const artifactStore = new ArtifactStore({
               artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts"),
             });
+            const activityLog = run.logHarnessActivity === true && !run.hostRunner
+              ? this.activityLog(run.runId, task.id, input.logicalAttempt)
+              : undefined;
             return await executeVerifiedTaskActivity({
               runId: input.runId,
               taskId: input.taskId,
@@ -471,6 +480,8 @@ export class ExecutionHost {
                 attempt: input.logicalAttempt,
                 maxRetries: run.maxRetries,
                 timeoutMs: Math.max(1, Math.min(context.remainingMs, run.timeoutMs ?? context.remainingMs)),
+                logHarnessActivity: run.logHarnessActivity === true,
+                ...(activityLog ? { log: activityLog } : {}),
                 signal: context.signal,
                 ...(previousFailure ? { previousFailure } : {}),
                 isolation: {
@@ -830,6 +841,45 @@ export class ExecutionHost {
     });
     if (!published.ok) throw new Error(`Could not publish work artifact: ${published.code}`);
     return [published.ref];
+  }
+
+  /** Opens a bounded, owner-only activity sink for one worker attempt. */
+  private activityLog(
+    runId: string,
+    taskId: string,
+    attempt: number,
+  ): ((line: string) => void) | undefined {
+    const root = this.dependencies.activityRoot ?? join(this.dependencies.scratchRoot, "activity");
+    const directory = join(root, runId, taskFileId(taskId));
+    try {
+      mkdirSync(directory, { recursive: true, mode: 0o700 });
+    } catch {
+      return undefined;
+    }
+    const file = join(directory, `attempt-${attempt}.log`);
+    let size = 0;
+    try {
+      size = statSync(file).size;
+    } catch {
+      // New attempt log.
+    }
+    let truncated = size >= MAX_ACTIVITY_LOG_BYTES;
+    return (line: string): void => {
+      if (truncated) return;
+      const text = `${line}\n`;
+      const bytes = Buffer.byteLength(text, "utf8");
+      try {
+        if (size + bytes > MAX_ACTIVITY_LOG_BYTES) {
+          appendFileSync(file, "[truncated]\n", { mode: 0o600 });
+          truncated = true;
+          return;
+        }
+        appendFileSync(file, text, { mode: 0o600 });
+        size += bytes;
+      } catch {
+        truncated = true;
+      }
+    };
   }
 
   private async captureEffect(

@@ -136,6 +136,9 @@ test("service submission rejects unavailable harnesses, repositories, unsafe ref
     [{ configuration: { settings: { apiToken: "x" }, secretRefs: {} } }, "secret-value-in-snapshot"],
     [{ manifestDigest: `sha256:${"0".repeat(64)}` }, "manifest-digest-mismatch"],
     [{ configuration: { settings: { concurrency: 99 }, secretRefs: {} } }, "invalid-submission"],
+    [{ configuration: { settings: { concurrency: 1, taskTimeoutMs: 0 }, secretRefs: {} } }, "invalid-submission"],
+    [{ configuration: { settings: { concurrency: 1, taskTimeoutMs: 86_400_001 }, secretRefs: {} } }, "invalid-submission"],
+    [{ configuration: { settings: { concurrency: 1, logHarnessActivity: "yes" as never }, secretRefs: {} } }, "invalid-submission"],
   ];
   for (const [overrides, code] of cases) {
     const result = await service.submit(submission(overrides));
@@ -187,6 +190,21 @@ test("snapshot agents bind owners and fall back to a neutral descriptor", () => 
   assert.equal(run.agentFor(run.tasks.get("T2")!).rawBody, "");
   assert.equal(run.agentFor(run.tasks.get("T2")!).name, "reviewer");
   assert.throws(() => new ServiceRunRegistry(new Map()).bind("run_y", accepted), /not available/);
+});
+
+test("service binds run-level timeout and activity settings", () => {
+  const accepted = {
+    ...submission({
+      configuration: {
+        settings: { concurrency: 1, taskTimeoutMs: 1234, logHarnessActivity: true },
+        secretRefs: {},
+      },
+    }),
+    selection: { mode: "auto" as const, requestedTaskIds: [], effectiveTaskIds: ["T1", "T2"] },
+  };
+  const run = new ServiceRunRegistry(defaultServiceHarnesses()).bind("run_settings", accepted);
+  assert.equal(run.timeoutMs, 1234);
+  assert.equal(run.logHarnessActivity, true);
 });
 
 test("host execution binds only an enabled native runner and fails closed otherwise", () => {

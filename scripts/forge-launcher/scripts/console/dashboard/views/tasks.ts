@@ -146,11 +146,13 @@ export async function renderTasks(container: HTMLElement): Promise<void> {
         runSelection,
         resumeSelection,
       ]),
-      el("div", { className: "row gap", style: "margin:0 0 8px" }, [
+      el("div", { className: "row gap", style: "margin:0 0 4px" }, [
         el("span", { className: "dim small" }, "Set every task's timeout:"),
         allTimeoutInput,
         allTimeoutBtn,
       ]),
+      el("p", { className: "dim small", style: "margin:0 0 8px" },
+        "Saved task timeouts apply to new runs; an active run keeps its submitted snapshot."),
       tableHost,
     ]),
   );

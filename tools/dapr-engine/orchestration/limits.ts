@@ -34,6 +34,8 @@ export const RUN_LIMITS_V1 = Object.freeze({
   maxRetries: 10,
   /** `configuration.settings.retryDelayMs` ceiling (24 hours). */
   maxRetryDelayMs: 24 * 60 * 60 * 1000,
+  /** `configuration.settings.taskTimeoutMs` ceiling (24 hours). */
+  maxTaskTimeoutMs: 24 * 60 * 60 * 1000,
   /** Approval waits one logical attempt may enter before it fails closed. */
   maxApprovalWaitsPerAttempt: 16,
   /** History units (child dispatches + processed controls) before the run continues as new. */

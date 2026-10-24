@@ -30,6 +30,7 @@ async function start(
   };
   const runs: RunServiceApi = {
     submit: ok("submit"), list: ok("list"), get: ok("get"), events: ok("events"), control: ok("control"),
+    activity: ok("activity"),
     ...overrides,
   };
   const server: Server = createServer(createServiceApiHandler({
@@ -89,6 +90,12 @@ test("API requires a bearer token compared in constant time", async (t) => {
   const artifact = await send(port, { path: `/v1/evidence/artifact?repositoryId=demo&artifactId=art_${"a".repeat(64)}`, headers: auth });
   assert.equal(artifact.status, 200);
   assert.deepEqual(calls.slice(-2), ['evidence:["demo"]', `evidenceArtifact:["demo","art_${"a".repeat(64)}"]`]);
+  const activity = await send(port, {
+    path: `/v1/runs/run_${"a".repeat(32)}/activity?repositoryId=demo&taskId=T1&attempt=1`,
+    headers: auth,
+  });
+  assert.equal(activity.status, 200);
+  assert.deepEqual(calls.at(-1), `activity:["run_${"a".repeat(32)}","demo","T1",1]`);
 });
 
 test("API rejects non-loopback hosts and browser origins before authentication", async (t) => {

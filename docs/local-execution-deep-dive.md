@@ -244,6 +244,7 @@ checks.
 | Artifacts and task checkpoints | File-backed artifact/checkpoint store | Content-addressed work/validation/bundle evidence and verified workspace state. |
 | Runner capabilities and repository registry | Launcher runtime data | Host-side authority for registered project polling. |
 | Attempt workspaces and harness homes | Worker or host temporary directories | Disposable execution state, cleaned after each attempt. |
+| Per-attempt harness activity | Runtime `activity/` files (worker) or host-runner log (host) | Opt-in, bounded and redacted CLI output exposed by the Service runs Activity action. |
 
 The worker rebinds accepted run snapshots when it restarts and recovers
 workflows through Dapr. Application-owned receipts and repository fencing
@@ -274,7 +275,9 @@ snapshot so Overview, Board, and Tasks update on status/task changes. Run
 lifecycle events feed **Run events** and **Timeline**; `docs/forge.log` feeds
 **Activity log**; the native host-runner log feeds **Runtime log**. The
 **Evidence** view reads the completion/evidence API and is independent of
-repository-local `docs/artifacts/`.
+repository-local `docs/artifacts/`. Service task rows expose **Activity** for
+opt-in worker harness output; the API reads the bounded per-attempt log. Host
+activity remains in **Runtime log**.
 
 Host-mode run summaries identify the executor. Run-level events remain the
 source for workflow progress; the runner job view is bounded operational

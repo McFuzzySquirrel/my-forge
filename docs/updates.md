@@ -4,6 +4,24 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.160
+
+### Idea-to-project process atlas
+
+- Added an ordered ten-diagram process atlas at
+  [`docs/diagrams/idea-to-project/index.html`](diagrams/idea-to-project/index.html).
+  It covers the end-to-end journey, system landscape, requirements authoring,
+  team/skills/manifest derivation, run submission, task attempts and quality
+  gates, run lifecycle, artifact lineage, the durable PostgreSQL state model, and
+  illustrative run timing.
+- Each diagram is a standalone Archify page with dark/light themes, live motion,
+  deep links, and export. Repository-backed facts cite pinned sources; the
+  timing page is explicitly illustrative.
+- Registered the atlas in the documentation map so pipeline or execution
+  changes trigger a diagram refresh.
+
+---
+
 ## October 2026 - v3.159
 
 ### Runtime freshness, host activity clarity, and Artifacts retirement

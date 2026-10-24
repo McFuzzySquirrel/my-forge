@@ -46,6 +46,7 @@ Before completing the change:
 | [`docs/forge-console-screenshots.md`](forge-console-screenshots.md) | Visual tour and current UI captures. | Significant UI layout or interaction changes make screenshots stale. |
 | [`docs/prompt-playbook.md`](prompt-playbook.md) | Interactive launcher prompts and expected answers. | Prompt wording, order, defaults, or onboarding behavior changes. |
 | [`docs/running-with-local-models.md`](running-with-local-models.md) | Local-model setup and operation. | Local model providers, configuration, or supported execution paths change. |
+| [`docs/diagrams/idea-to-project/index.html`](diagrams/idea-to-project/index.html) | Ordered process atlas: idea to completed project, with requirement authoring, team/manifest derivation, submission, task attempts, lifecycle, lineage, durable state, and illustrative timing. | A pipeline stage, review gate, command, state, table, or execution boundary shown in a diagram changes. Regenerate the affected diagram and update its sources. |
 
 ### Requirements and authoring
 

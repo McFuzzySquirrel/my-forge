@@ -667,7 +667,7 @@ function nextStep(summary: Summary, actions: Actions): PipelineStep | null {
     };
   }
   if (!summary.hasManifest && actions.canRun) {
-    return { label: "Start build", action: "run", hint: "Compiles the manifest and runs the workflow engine." };
+    return { label: "Start build", action: "run", hint: "Compiles the manifest and runs the Dapr execution service." };
   }
   return null;
 }

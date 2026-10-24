@@ -142,7 +142,7 @@ for untrusted work.
   ```
 
 - Keep `Log harness activity` off for tasks that may handle secrets. When it
-  is on, harness stdout/stderr is written to `docs/engine-run.log`.
+  is on, harness stdout/stderr is written to `docs/forge.log`.
 - Do not put credentials in task prompts, repository files, handoffs, or
   artifacts. The engine persists admitted handoffs and validation evidence.
 - Keep the runtime data directory private. Use a separate OS account or a
@@ -164,7 +164,7 @@ for untrusted work.
    tokens with `forge-launcher runtime rotate-tokens`, rotate each runner
    capability with `forge-launcher runtime runner rotate <repository-id>`, and
    restart the runtime.
-4. Review `docs/engine-run.log`, runtime logs, and provider audit logs. Treat
+4. Review `docs/forge.log`, runtime logs, and provider audit logs. Treat
    any copied logs or artifacts as sensitive.
 5. If the host account itself may be compromised, stop the runtime and rotate
    credentials from a clean session.

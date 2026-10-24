@@ -160,11 +160,11 @@ so you can review each result and come back later:
 | PRD (no team) | **Generate team** (headless `forge-build-agent-team`) | agent files and ownership metadata |
 | Team (skills incomplete) | **Generate project skills** | project skill candidates and review result |
 | Skills ready (no manifest) | **Compile manifest** (`forge-execution-adapter`) | `docs/EXECUTION-MANIFEST.json` |
-| Manifest ready | **Start build** (`forge-launcher engine-run`) | durable Dapr service run |
+| Manifest ready | **Start build** (`forge-launcher run`) | durable Dapr service run |
 | Paused/incomplete run | **Resume build** | service resumes from its durable workflow history |
 
 The derivation steps run detached in the background (output is appended to
-`docs/engine-run.log`, visible in the **Logs** view). This includes bootstrap,
+`docs/forge.log`, visible in the **Logs** view). This includes bootstrap,
 team, skills, manifest-authoring jobs, and engine output. The console now tracks
 those detached jobs directly, so the Overview can show whether work is actively
 creating the project, generating the team, running the build, paused, complete,
@@ -380,10 +380,11 @@ button shows the exact command to run manually.
 | **Overview** | latest Dapr run status, progress + counts, blockers, the pipeline next-step card with a **Manual build** checkbox, background-job status, run controls, an **auto-commit** toggle, a **Log harness activity** toggle, and a **Launch \<harness\> CLI** button. Also the **Re-derive team & skills** panel when authoring is stale, and manifest reconciliation with a confirmed **Reset changed tasks for review**. |
 | **Board** | the PixiJS Forge Board in **Kanban** or **Gantt** mode, with status filters and a **Table** view of the same data. |
 | **Tasks** | every task in a filterable/sortable table with a detail drawer, editable per-task timeout, explicit/range selection controls for manual mode, and a **Launch \<harness\> CLI** button. |
-| **Logs** | `docs/engine-run.log` tail + the audit event stream (live via SSE). |
+| **Logs** | activity log (`docs/forge.log`), runtime host-runner log, and live service run events. |
 | **Plan & Team** | authoring settings and stage cards — always actionable, each stating why it is stale — plus the project documents (IDEA, PRD, features, progress, model plan) as a table that opens a document in a wide popup, and agents and skills in collapsible card sections. Requirement and task blocks render as tables. |
-| **Artifacts** | the structured outputs tasks produced (`docs/artifacts/`), browsable by type/task with previews. |
-| **Timeline** | chronological audit events, failures highlighted. |
+| **Artifacts** | repository-local structured outputs (`docs/artifacts/`), browsable by type/task with previews. |
+| **Evidence** | durable work, validation and git-bundle artifacts from integrated service tasks (worker or host runner). |
+| **Timeline** | chronological service lifecycle events, failures highlighted. |
 | **Service runs** | runs submitted to the local execution service (`forge-launcher service submit`) for the open repository: status, executor (worker or host runner), tasks, sequenced events, and acknowledged controls. Host-executed runs link to their runner jobs. See [Service runs](#service-runs). |
 | **Host runner** | runner readiness, project-scoped capability controls, and bounded active/recent job summaries with repository filtering. See [Host runner operations](#host-runner-operations). |
 | **Runtime** | shared local Podman runtime lifecycle, repository registry, backup/restore, token rotation, and harness credential grants. See [Runtime administration](#runtime-administration). |
@@ -410,7 +411,7 @@ does:
 |---|---|
 | **Pause** | Acknowledged `pause` control to the active service run; pauses after its current task. |
 | **Stop** | Acknowledged `stop` control to the active service run; stops after its current task and can be resumed. |
-| **Resume** | `forge-launcher engine-run --repo <path> …` (resumes or attaches to the active service run). |
+| **Resume** | `forge-launcher run --repo <path> …` (resumes or attaches to the active service run). |
 | **Replay** | Acknowledged service `replay-task` control for a failed task. |
 | **Create manifest** *(pipeline card, manual pre-build only)* | `forge-launcher compile-manifest --repo <path>` (installs the adapter if needed and writes `docs/EXECUTION-MANIFEST.json` without starting a run). |
 
@@ -532,9 +533,9 @@ repositories or start the runtime.
 For a registered repository, Overview builds and controls also use the
 service ([ADR-071](adr/071-service-harnesses-and-execution-entry-points.md)):
 
-- **Continue**/**Resume** run `forge-launcher engine-run`, which submits a new
+- **Continue**/**Resume** run `forge-launcher run`, which submits a new
   service run or resumes and attaches to the active one. Progress streams
-  into `docs/engine-run.log`, and the checked-out branch is fast-forwarded
+  into `docs/forge.log`, and the checked-out branch is fast-forwarded
   to `forge/<branch>` when the run completes.
 - **Pause** and **Stop** send service controls to the newest active run;
   **Replay** targets the newest run.
@@ -593,11 +594,9 @@ The **Log harness activity** checkbox (Controls panel) toggles
 applies to subsequently started runs; the Console's run/resume command passes it
 to the engine as `--log-harness-activity` or `--no-log-harness-activity`, so it
 takes precedence over `FORGE_ENGINE_LOG_HARNESS_ACTIVITY`. When enabled, harness
-CLI stdout/stderr streams into `docs/engine-run.log` and appears live in the
+CLI stdout/stderr streams into `docs/forge.log` and appears live in the
 **Logs** view. It can contain sensitive repository content and increase log
-volume; command invocation logging is always on regardless of this setting (see
-[legacy workflow-engine reference](workflow-engine.md#harness-invocation-and-activity-logging)
-and [ADR-052](adr/052-harness-invocation-activity-logging.md)).
+volume; command invocation logging is always on regardless of this setting (see [ADR-052](adr/052-harness-invocation-activity-logging.md)).
 
 ### Task timeouts
 

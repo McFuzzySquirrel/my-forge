@@ -128,7 +128,7 @@ test("a run that pauses again returns cleanly with resume guidance", async () =>
   const service = fakeService([{ runId: "p", status: "paused", targetRef: "refs/heads/forge/main", createdAt: "2026-09-02" }], "paused");
   const output: string[] = [];
   assert.equal(await serviceEngineRun(["--repo", repo], dependencies(service, output)), 0);
-  assert.match(output.join(""), /Resume with: forge-launcher engine-run/);
+  assert.match(output.join(""), /Resume with: forge-launcher run/);
 });
 
 test("a running run is attached to without a second submission", async () => {

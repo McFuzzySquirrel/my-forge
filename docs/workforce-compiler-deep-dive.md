@@ -9,7 +9,7 @@ FlowForge kernel adapter. The supported path is:
 1. Author and review the PRD, agent team, and project skills as separate stages.
 2. Run `forge-execution-adapter` to compile `docs/EXECUTION-MANIFEST.json`.
 3. Register the repository with the local Dapr service and use
-   `forge-launcher engine-run` for autonomous execution.
+   `forge-launcher run` for autonomous execution.
 
 Do not use the former `.workforce`, `KERNEL-BRIDGE.json`, `flowforge-kernel`, or
 `FLOWFORGE_*` commands in new projects. Existing downstream `.workforce`

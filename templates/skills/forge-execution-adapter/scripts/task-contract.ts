@@ -81,7 +81,7 @@ export function parseTaskBlocks(body: string, agents: AgentDescriptor[], options
       ...(value.timeoutMs !== undefined ? { timeoutMs: value.timeoutMs as number } : {}),
     };
     validateTaskContract(task);
-    if (task.contract!.kind === "implementation" && (["forge-team-builder", "project-orchestrator", "workflow-orchestrator"].includes(task.ownerAgent!.toLowerCase()) || (!options.plannedOwners && !agents.some((agent) => agent.name === task.ownerAgent)))) {
+    if (task.contract!.kind === "implementation" && (["forge-team-builder", "project-orchestrator"].includes(task.ownerAgent!.toLowerCase()) || (!options.plannedOwners && !agents.some((agent) => agent.name === task.ownerAgent)))) {
       throw new Error(`Task '${task.id}' requires generated implementation owner '${task.ownerAgent}'.`);
     }
     tasks.push(task);

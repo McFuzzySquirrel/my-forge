@@ -89,7 +89,7 @@ function tabButton(label: string): HTMLElement {
 function quickHelp(): HTMLElement {
   return el("div", null, [
     helpSection("What is this?", [
-      "Forge Console is a local web UI that fronts forge-launcher and the workflow engine. It lets you create a project, start interactive PRD authoring, generate the agent team, run the build, and monitor/control it - all from your browser, without remembering terminal commands. It is served on 127.0.0.1 and reads the same files the terminal tools write.",
+      "Forge Console is a local web UI that fronts forge-launcher and the Dapr execution service. It lets you create a project, start interactive PRD authoring, generate the agent team, run the build, and monitor/control it - all from your browser, without remembering terminal commands. It is served on 127.0.0.1 and reads the same files the terminal tools write.",
     ]),
     helpSection("The pipeline", [
       "Projects flow through four stages: Idea → PRD → Agent team → Build.",
@@ -98,7 +98,7 @@ function quickHelp(): HTMLElement {
         ["Idea", "your project description in docs/IDEA.md."],
         ["Requirements", "reviewed docs/PRD.md plus docs/features/*.md, required for every solution."],
         ["Agent team", "specialist agents + skills generated from the PRD."],
-        ["Build", "the workflow engine runs the tasks in the execution manifest."],
+        ["Build", "the Dapr execution service runs the tasks in the execution manifest."],
       ]),
     ]),
     helpSection("Prepare and control a build", [

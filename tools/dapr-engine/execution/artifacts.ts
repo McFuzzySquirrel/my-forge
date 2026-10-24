@@ -1,5 +1,5 @@
 /**
- * Artifact store for the forge-workflow-engine.
+ * Artifact store for the MyForge execution engine.
  *
  * Implements the Task → Agent → Artifact → Task pattern described in the
  * MyForge research document.  Every meaningful agent step produces a

@@ -23,7 +23,7 @@ function fixture(t: TestContext) {
   });
   function project(name: string) {
     const repo = path.join(root, name);
-    for (const file of [".git/HEAD", "src/index.ts", "docs/PRD.md", "docs/engine-run.log",
+    for (const file of [".git/HEAD", "src/index.ts", "docs/PRD.md", "docs/forge.log",
       "docs/WORKFLOW-STATE.json", "docs/artifacts/result.json", ".agents/agents/dev.md",
       ".agents/skills/local/SKILL.md", "package.json"]) {
       const target = path.join(repo, ...file.split("/"));
@@ -90,13 +90,12 @@ test("bulk removal reports removed, blocked and failed independently, including 
   const activeJob = f.job(active, { status: "running", pid: process.pid });
   // A newer terminal record must not hide an older active job.
   saveJobs([activeJob, f.job(active), f.job(stale)]);
-  fs.writeFileSync(path.join(engine, "docs", "engine.pid"), String(process.pid));
-  const before = [snapshot(active), snapshot(engine)];
+  const before = [snapshot(active)];
   const results = removeProjects([stale, active, engine, path.join(f.root, "unknown"), idle, idle], idle);
-  assert.deepEqual(results.map((r) => r.status), ["removed", "blocked", "blocked", "failed", "removed"]);
-  assert.deepEqual(loadRegistry().map((p) => p.path), [active, engine]);
+  assert.deepEqual(results.map((r) => r.status), ["removed", "blocked", "removed", "failed", "removed"]);
+  assert.deepEqual(loadRegistry().map((p) => p.path), [active]);
   assert.equal(loadJobs().length, 2);
-  assert.deepEqual([snapshot(active), snapshot(engine)], before);
+  assert.deepEqual([snapshot(active)], before);
 });
 
 test("running jobs without a verifiable PID block removal rather than terminating or guessing", (t) => {

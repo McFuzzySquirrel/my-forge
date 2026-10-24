@@ -12,7 +12,7 @@ function hasAgents(directory, includeTooling = true) {
   return readdirSync(directory, { withFileTypes: true }).some((entry) => {
     if (entry.isFile()) {
       return entry.name.endsWith(".md") && entry.name !== "SKILL.md"
-        && (includeTooling || !["forge-team-builder.md", "project-orchestrator.md", "workflow-orchestrator.md"].includes(entry.name));
+        && (includeTooling || !["forge-team-builder.md", "project-orchestrator.md"].includes(entry.name));
     }
     return entry.isDirectory()
       && !["node_modules", "dist", ".git"].includes(entry.name)

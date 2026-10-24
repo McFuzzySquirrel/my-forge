@@ -48,6 +48,8 @@ function fakeService(options: { registered?: boolean; unreachable?: boolean } = 
           cursor: 2,
           hasMore: false,
         }),
+        evidence: async (repositoryId: string) => ({ repositoryId, tasks: [{ taskId: "T2", records: [] }], count: 1 }),
+        evidenceArtifact: async (repositoryId: string, artifactId: string) => ({ repositoryId, artifactId, encoding: "base64", content: Buffer.from("{}").toString("base64") }),
         control: async (runId: string, action: string, payload: Record<string, unknown> = {}) => {
           controls.push([runId, action, payload]);
           if (action === "resume") throw new ServiceApiError(409, "invalid-run-state", "Run is not paused.");
@@ -98,6 +100,14 @@ test("the Console lists, monitors, and controls the current repository's service
   assert.equal(detail.cursor, 2);
   const resumed = await (await signedFetch(`${server.url}/api/service/run?id=${RUN}&after=2`)).json() as { events: unknown[] };
   assert.equal(resumed.events.length, 0);
+
+  const evidence = await (await signedFetch(`${server.url}/api/service/evidence`)).json() as { repositoryId: string; count: number };
+  assert.equal(evidence.repositoryId, "demo");
+  assert.equal(evidence.count, 1);
+  const artifactId = `art_${"a".repeat(64)}`;
+  const artifact = await (await signedFetch(`${server.url}/api/service/evidence/artifact?artifactId=${artifactId}`)).json() as { encoding: string; content: string };
+  assert.equal(artifact.encoding, "base64");
+  assert.equal(Buffer.from(artifact.content, "base64").toString("utf8"), "{}");
 
   const approved = await post("/api/service/control", { runId: RUN, action: "approve-task", taskId: "T2" });
   assert.equal(approved.status, 200);

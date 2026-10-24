@@ -94,6 +94,8 @@ export interface RepoPaths {
   progressPath: string;
   pidPath: string;
   logPath: string;
+  /** Pre-rename activity log, read-only for repositories created before the rename. */
+  legacyLogPath: string;
   authoringEventsPath: string;
   artifactsDir: string;
   engineConfigPath: string;
@@ -114,7 +116,8 @@ export function repoPaths(repoRoot: string): RepoPaths {
     auditPath: path.join(docs, "EXECUTION-AUDIT.jsonl"),
     progressPath: path.join(docs, "PROGRESS.md"),
     pidPath: path.join(docs, "engine.pid"),
-    logPath: path.join(docs, "engine-run.log"),
+    logPath: path.join(docs, "forge.log"),
+    legacyLogPath: path.join(docs, "engine-run.log"),
     authoringEventsPath: path.join(docs, "AUTHORING-EVENTS.jsonl"),
     artifactsDir: path.join(docs, "artifacts"),
     engineConfigPath: path.join(docs, "engine-config.json"),

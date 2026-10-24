@@ -204,7 +204,7 @@ and approves the task through the Dapr service:
 
 ```bash
 forge-launcher service control <run-id> approve-task --task ACCESSIBILITY-REVIEW
-forge-launcher engine-run --repo /path/to/project --yes
+forge-launcher run --repo /path/to/project --yes
 ```
 
 The service records approval as a durable control and event; it does not write

@@ -21,6 +21,8 @@ export interface TaskAdmissionOptions {
   /** Isolated environment for validation commands; see `runTaskValidation`. */
   readonly validationEnvironment?: Readonly<Record<string, string>>;
   readonly validationProcessIdentity?: ProcessIdentityV1;
+  /** Install missing project dependencies before validating. Worker/service runs enable this. */
+  readonly installValidationDependencies?: boolean;
   /**
    * Validation evidence already produced beside the harness. Host execution
    * runs the commands where the harness installed its dependencies, so the
@@ -36,6 +38,7 @@ export type TaskAdmissionResult =
       readonly handoffDigest: `sha256:${string}`;
       readonly outputFiles: readonly string[];
       readonly validationCommands: readonly string[];
+      readonly validationRecord: { readonly taskId: string; readonly results: readonly import("./validation.ts").ValidationCommandResult[] };
       readonly gates: readonly TaskGateResult[];
     }
   | {
@@ -205,6 +208,7 @@ export async function admitTaskResult(options: TaskAdmissionOptions): Promise<Ta
     options.timeoutMs,
     options.validationEnvironment,
     options.validationProcessIdentity,
+    options.installValidationDependencies === true,
   );
   if (!validation.ok) {
     const reason = boundedReason(validation.reason ?? "A mandatory validation command failed.");
@@ -228,6 +232,10 @@ export async function admitTaskResult(options: TaskAdmissionOptions): Promise<Ta
     handoffDigest: canonicalDigest(handoff),
     outputFiles,
     validationCommands: [...options.task.validationCommands],
+    validationRecord: {
+      taskId: options.task.id,
+      results: "results" in validation && Array.isArray(validation.results) ? validation.results : [],
+    },
     gates,
   };
 }

@@ -15,6 +15,8 @@ export interface AuditEvent {
   artifactId?: string;
   reductionPercent?: number;
   outputFiles?: string[];
+  sequence?: number;
+  source?: "authoring" | "service";
 }
 
 export interface ServiceTaskSnapshot {
@@ -153,7 +155,7 @@ export interface Summary {
   defaultTimeoutMs: number | null;
   /** Auto-commit after each completed task (engine-config; default on). */
   autoCommit: boolean;
-  /** Stream harness CLI activity into docs/engine-run.log (engine-config; default off). */
+  /** Stream harness CLI activity into docs/forge.log (engine-config; default off). */
   logHarnessActivity: boolean;
   /** Execute local harness CLIs on the host with full OS permissions. */
   hostExecution: boolean;
@@ -330,9 +332,9 @@ export type BackgroundJobType =
   | "draft-skills"
   | "rederive"
   | "compile-manifest"
-  | "engine-run"
-  | "engine-resume"
-  | "engine-replay";
+  | "run"
+  | "resume"
+  | "replay";
 
 export type BackgroundJobStatus = "running" | "complete" | "failed" | "paused";
 

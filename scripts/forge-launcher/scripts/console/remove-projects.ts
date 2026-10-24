@@ -92,18 +92,8 @@ function hasActiveJobs(root: string, jobs: BackgroundJob[]): boolean {
   // Finished jobs are never active: the OS may have reused their PIDs for
   // unrelated processes, so only unfinished jobs are checked for liveness.
   const unfinished = jobs.filter((job) => job.status === "running" || job.status === "paused");
-  if (unfinished.some((job) => (job.pid !== undefined && pidActive(job.pid))
-    || (job.status === "running" && job.pid === undefined))) return true;
-  if (!path.isAbsolute(root)) return false;
-  try {
-    const raw = fs.readFileSync(repoPaths(root).pidPath, "utf8").trim();
-    const pid = Number(raw);
-    if (!Number.isInteger(pid) || pid <= 0) throw new Error("Cannot verify the project's engine PID; removal refused.");
-    return pidActive(pid);
-  } catch (error) {
-    if (missing(error)) return false;
-    throw error;
-  }
+  return unfinished.some((job) => (job.pid !== undefined && pidActive(job.pid))
+    || (job.status === "running" && job.pid === undefined));
 }
 
 function writeStore(file: string, records: unknown[]): void {

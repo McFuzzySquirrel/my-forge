@@ -2,8 +2,8 @@
 
 > **Current architecture:** this guide traces the active Dapr-backed
 > service-run path from launcher submission through durable orchestration,
-> harness execution, result verification, and operator monitoring. It is not a
-> guide to the retired `forge-workflow-engine` scheduler.
+> harness execution, result verification, and operator monitoring. It does not
+> cover the removed pre-Dapr scheduler.
 
 Start with the [local execution overview](local-execution.md) for component
 roles and the compact system diagram. This guide adds implementation detail
@@ -31,7 +31,7 @@ orchestrators.
 ## 1. Compile and submit an immutable run
 
 `scripts/forge-launcher/scripts/service-run.ts` implements the
-`engine-run` path. It:
+`run` path. It:
 
 1. Resolves the repository and requires it to be registered with the local
    runtime.
@@ -289,5 +289,3 @@ do not infer platform support from this guide.
 - [Forge Launcher command guide](forge-launcher.md)
 - [Forge Console user guide](forge-console-user-guide.md)
 - [Dapr execution cutover decision](adr/079-dapr-execution-cutover.md)
-- [Retired workflow-engine overview](workflow-engine.md)
-- [Retired workflow-engine deep dive](workflow-engine-deep-dive.md)

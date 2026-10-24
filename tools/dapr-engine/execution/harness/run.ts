@@ -94,7 +94,7 @@ export interface RunCommandOptions {
   invocation?: HarnessInvocationContext;
   /** When true, mirror stdout/stderr into the log as it arrives. Off by default. */
   activity?: boolean;
-  /** Log sink; defaults to `console.log` so lines reach docs/engine-run.log. */
+  /** Log sink; defaults to `console.log` so lines reach docs/forge.log. */
   log?: (line: string) => void;
 }
 

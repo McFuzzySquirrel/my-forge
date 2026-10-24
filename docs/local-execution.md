@@ -60,7 +60,7 @@ The principal responsibilities are:
 1. Requirements and agent instructions are authored in the target repository.
    The execution adapter validates them and writes
    `docs/EXECUTION-MANIFEST.json`.
-2. `forge-launcher engine-run` or `forge-launcher service submit` resolves the
+2. `forge-launcher run` or `forge-launcher service submit` resolves the
    registered repository and selected harness. The launcher prepares an
    immutable submission snapshot, including the manifest digest, target
    `forge/<base>` branch, task selection, settings, and workflow-definition
@@ -101,7 +101,7 @@ workflow ownership. Dapr remains responsible for scheduling, timeouts,
 validation, checkpoint publication, cancellation, and repository integration.
 Host mode never silently falls back to the worker harness.
 
-Selection is per run and explicit. `engine-run --host-execution`,
+Selection is per run and explicit. `run --host-execution`,
 `service submit --host-execution`, and the Console's **Executor for the next
 run** selector request the host runner; omitting them requests the worker. The
 `hostExecution` value saved in `docs/engine-config.json` only preselects the
@@ -141,7 +141,7 @@ bindings from accepted submissions when it starts.
 
 - Use `forge-launcher runtime` to start, stop, inspect, and configure the local
   runtime and registered repositories.
-- Use `forge-launcher engine-run` or `forge-launcher service` to submit, follow,
+- Use `forge-launcher run` or `forge-launcher service` to submit, follow,
   inspect, and control service runs.
 - Use the Forge Console's **Service runs** view for run-level monitoring and
   controls, and its **Host runner** view for runner readiness, capabilities,

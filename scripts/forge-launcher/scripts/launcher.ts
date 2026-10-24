@@ -43,7 +43,7 @@ function cliNodePrefix(): string[] {
   return IS_SOURCE ? ["--import", nodeRequire.resolve("tsx")] : [];
 }
 
-/** Builds the detached `forge-launcher engine-run` invocation for the given engine args. */
+/** Builds the detached `forge-launcher run` invocation for the given engine args. */
 export function engineDetachedCommand(engineArgs: string[]): { cmd: string; args: string[] } {
   for (let index = 0; index < engineArgs.length; index++) {
     if (engineArgs[index] === "--harness") assertEngineHarnessAvailable(engineArgs[index + 1] ?? "");
@@ -257,13 +257,13 @@ const RUNNER_DEBUG_ARGS: Partial<Record<AuthoringRunner, string[]>> = {
 function hasGeneratedTeam(): boolean {
   const agentsDir = harnessAgentsDir();
   if (!fs.existsSync(agentsDir)) return false;
-  const excluded = new Set(["forge-team-builder.md", "project-orchestrator.md", "workflow-orchestrator.md"]);
+  const excluded = new Set(["forge-team-builder.md", "project-orchestrator.md"]);
   return fs
     .readdirSync(agentsDir)
     .filter((f) => f.endsWith(".md") && !excluded.has(f)).length > 0;
 }
 
-const FORGE_TEMPLATE_AGENTS = new Set(["forge-team-builder.md", "project-orchestrator.md", "workflow-orchestrator.md"]);
+const FORGE_TEMPLATE_AGENTS = new Set(["forge-team-builder.md", "project-orchestrator.md"]);
 const FEATURE_INCREMENT_ALLOWED_OUTPUTS = new Set([
   "docs/EXECUTION-MANIFEST.json",
   "docs/agent-responsibility-matrix.md",
@@ -289,7 +289,7 @@ function walkSnapshotFiles(dir: string, root: string, out: FeatureIncrementSnaps
     const relativePosix = relative.split(path.sep).join("/");
     // The launcher appends its own diagnostic stream while the skill runs; it
     // is not a project change and must not make a valid team update fail.
-    if (relativePosix === "docs/engine-run.log" || relativePosix === "docs/AUTHORING-EVENTS.jsonl" ||
+    if (relativePosix === "docs/forge.log" || relativePosix === "docs/AUTHORING-EVENTS.jsonl" ||
         relativePosix.startsWith("docs/.forge-logs/")) continue;
     const forgeSkillsPrefix = `${harnessRoot}/skills/`;
     const projectAgentsPrefix = `${harnessRoot}/agents/`;
@@ -1027,7 +1027,7 @@ async function autoDraftPrd(opts: LauncherOptions): Promise<void> {
 }
 
 function engineRunArgs(): string[] {
-  const args = ["engine-run", "--repo", state.repoDir];
+  const args = ["run", "--repo", state.repoDir];
   const cfg = state.engineConfig;
   assertEngineHarnessAvailable(cfg.harness);
   const readiness = authoringReadiness(state.repoDir, harnessRootDir());
@@ -1129,7 +1129,7 @@ async function configureEngineOptions(opts: LauncherOptions): Promise<void> {
     cfg.autoCommit = autoCommitAnswer === "y";
 
     const activityAnswer = await promptYesNo(
-      "Stream harness CLI activity into docs/engine-run.log? (may contain sensitive content and grow the log)",
+      "Stream harness CLI activity into docs/forge.log? (may contain sensitive content and grow the log)",
       cfg.logHarnessActivity ? "y" : "n",
     );
     cfg.logHarnessActivity = activityAnswer === "y";
@@ -1160,7 +1160,7 @@ async function runEngineDetached(opts: LauncherOptions): Promise<void> {
   await requireRegisteredRepository(state.repoDir);
   const logDir = path.join(state.repoDir, "docs");
   fs.mkdirSync(logDir, { recursive: true });
-  const logFile = path.join(logDir, "engine-run.log");
+  const logFile = path.join(logDir, "forge.log");
   const { cmd, args } = engineDetachedCommand(engineRunArgs());
   let startupError: Error | undefined;
   const child = (state.options.dependencies?.spawnDetached ?? spawnDetached)(cmd, args, {
@@ -1172,14 +1172,13 @@ async function runEngineDetached(opts: LauncherOptions): Promise<void> {
   });
   await new Promise<void>((resolve) => setImmediate(resolve));
   if (startupError) throw startupError;
-  if (!child.pid) throw new Error("Engine process did not start; inspect docs/engine-run.log.");
+  if (!child.pid) throw new Error("Engine process did not start; inspect docs/forge.log.");
   state.engineStarted = true;
   ok(`Dapr service run started. Log: ${logFile}`);
   out("");
   info("The service owns durable execution; this launcher follows the run in the background.");
   info("Monitor progress from another terminal with:");
   command(`tail -f ${logFile}`);
-  command(`tail -f ${path.join(state.repoDir, "docs", "PROGRESS.md")}`);
   if (state.engineConfig.viz) {
     out("");
     info("The Forge Board dashboard starts when the engine starts");
@@ -1675,7 +1674,7 @@ async function launchAutobuild(opts: LauncherOptions): Promise<void> {
     if (hasGeneratedTeam()) {
       out("  The repository is bootstrapped, PRD in place, and the agent team");
       out("  is generated. In the harness, run /forge-orchestrate-build (project-");
-      out("  orchestrator) for an interactive build, or forge-launcher engine-run");
+      out("  orchestrator) for an interactive build, or forge-launcher run");
       out("  for autonomous execution through the Dapr service.");
     } else {
       out("  The repository is bootstrapped and ready for team generation.");
@@ -1799,15 +1798,6 @@ export interface ResumeOptions extends LauncherOptions {
   dryRun?: boolean;
 }
 
-interface ResumeEngineState {
-  runId?: string;
-  status?: string;
-  harness?: string;
-  currentPhase?: string;
-  tasks?: Record<string, { taskId?: string; status?: string; errorMessage?: string; outputFiles?: string[] }>;
-  blockers?: string[];
-}
-
 /** Detects which harness root a repo was bootstrapped with. */
 function detectHarnessForRepo(repoDir: string): { harness: HarnessName; label: string } {
   const roots: Array<[HarnessName, string]> = [
@@ -1869,16 +1859,6 @@ function setupStateForRepo(repoDir: string): void {
     : [];
 }
 
-function readEngineState(): ResumeEngineState | null {
-  const sp = path.join(state.repoDir, "docs", "WORKFLOW-STATE.json");
-  if (!fs.existsSync(sp)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(sp, "utf8")) as ResumeEngineState;
-  } catch {
-    return null;
-  }
-}
-
 function prdDocName(): string {
   return "PRD.md";
 }
@@ -1889,7 +1869,6 @@ function printResumeWhere(): void {
   const prd = hasPrd();
   const team = hasGeneratedTeam();
   const manifest = fs.existsSync(path.join(state.repoDir, "docs", "EXECUTION-MANIFEST.json"));
-  const engine = readEngineState();
 
   step("Resume project state");
   out("");
@@ -1907,7 +1886,6 @@ function printResumeWhere(): void {
     out(`    - ${stage} model : ${selection.requestedModel ?? "inherit runner default"} (${selection.source})`);
   }
   out(`    - Execution manifest : ${manifest ? "yes" : "no"}`);
-  if (engine) out(`    - Legacy state      : ${engine.status ?? "unknown"}${engine.runId ? ` (run ${engine.runId})` : ""} (read-only)`);
   out("");
 }
 
@@ -2213,7 +2191,7 @@ async function continueFeatureIncrementStages(repoDir: string, featureOutputs: s
   if (manifestCode !== 0) { authoringEvent("authoring.failed", { operation: "feature-increment", stage: "manifest", code: manifestCode }); return manifestCode; }
   authoringEvent("authoring.stage.completed", { operation: "feature-increment", stage: "manifest" });
   if (!run) {
-    out("Feature increment prepared. Review the manifest, then run: forge-launcher engine-run --repo \"" + path.resolve(repoDir) + "\" --yes");
+    out("Feature increment prepared. Review the manifest, then run: forge-launcher run --repo \"" + path.resolve(repoDir) + "\" --yes");
     authoringEvent("authoring.completed", { operation: "feature-increment", run: false });
     return 0;
   }
@@ -2479,37 +2457,6 @@ async function runRederiveInternal(repoDir: string, from?: RederiveStepId): Prom
   return 0;
 }
 
-function printEngineStatus(engine: ResumeEngineState): void {
-  info("Preserved legacy workflow-engine state (read-only):");
-  out(`    - Run id   : ${engine.runId ?? "unknown"}`);
-  out(`    - Status   : ${engine.status ?? "unknown"}`);
-  out(`    - Harness  : ${engine.harness ?? "-"}`);
-  if (engine.currentPhase) out(`    - Phase    : ${engine.currentPhase}`);
-  const tasks = Object.values(engine.tasks ?? {});
-  const counts: Record<string, number> = {};
-  for (const t of tasks) counts[t.status ?? "pending"] = (counts[t.status ?? "pending"] ?? 0) + 1;
-  out(`    - Tasks    : ${Object.entries(counts).map(([k, v]) => `${k}: ${v}`).join(", ") || "0"}`);
-  const hollow = tasks.filter((t) => t.status === "complete" && (!t.outputFiles || t.outputFiles.length === 0));
-  if (hollow.length) {
-    out(`    - Completed without outputs : ${hollow.map((t) => t.taskId).join(", ")} (verify these actually delivered)`);
-  }
-  const failed = tasks.filter((t) => t.status === "failed");
-  if (failed.length) {
-    out(`    - Failed   : ${failed.map((t) => `${t.taskId ?? "?"}${t.errorMessage ? ` (${t.errorMessage})` : ""}`).join("; ")}`);
-  }
-  if (Array.isArray(engine.blockers) && engine.blockers.length) {
-    out(`    - Blockers : ${engine.blockers.join("; ")}`);
-  }
-  out("");
-}
-
-function printMonitorCommands(): void {
-  info("Inspect preserved legacy artifacts (read-only):");
-  command(`tail -f ${path.join(state.repoDir, "docs", "engine-run.log")}`);
-  command(`tail -f ${path.join(state.repoDir, "docs", "PROGRESS.md")}`);
-  out("");
-}
-
 async function openCliFor(cmd: string): Promise<void> {
   // A dry run prints commands instead of opening anything. Without this a dry run
   // (including the automated suite's) spawns a real detached terminal per stage,
@@ -2555,32 +2502,6 @@ async function openCliFor(cmd: string): Promise<void> {
 
 /** Stage: start/resume the build via the engine or hand off to the harness. */
 async function resumeEngineStep(opts: ResumeOptions): Promise<void> {
-  const engine = readEngineState();
-
-  if (engine) {
-    printEngineStatus(engine);
-    warn("This is legacy workflow-engine state. It is not imported, resumed, or controlled by the Dapr service.");
-    warn("The launcher cannot stop a legacy process; use the legacy artifacts above only for historical reference.");
-    if (opts.nonInteractive) {
-      out("  To start a new service-backed run, register this repository and run:");
-      command(`npx forge-launcher ${engineRunArgs().join(" ")}`);
-      return;
-    }
-    printMonitorCommands();
-    const choice = await promptSelect("What would you like to do?", [
-      { value: "run", label: "Start a new Dapr service-backed run" },
-      { value: "cli", label: "Open the harness CLI for project-orchestrator" },
-      { value: "logs", label: "Show preserved legacy artifacts" },
-      { value: "stop", label: "Stop here" },
-    ], { initial: "run" });
-    switch (choice) {
-      case "run": await runEngineDetached(opts); break;
-      case "cli": await openCliFor(autobuildCommand()); break;
-      case "logs": printMonitorCommands(); break;
-    }
-    return;
-  }
-
   // No engine run yet (the team-absent case is handled by the earlier stages).
   if (opts.nonInteractive) {
     out("  Next: compile the manifest and start a service-backed run:");
@@ -2685,7 +2606,7 @@ function completionSummary(): void {
     out("     (the service owns workflow history after this launcher exits).");
     out("  2. Monitor progress from another terminal:");
     out("");
-    out(`       tail -f ${path.join(state.repoDir, "docs", "engine-run.log")}`);
+    out(`       tail -f ${path.join(state.repoDir, "docs", "forge.log")}`);
     out(`       tail -f ${path.join(state.repoDir, "docs", "PROGRESS.md")}`);
     out("");
     out(`  3. Attach to or resume the service run later with:`);
@@ -2694,7 +2615,7 @@ function completionSummary(): void {
     if (state.engineConfig.viz) {
       out("");
       out("  The Forge Board dashboard launches with the engine run; its URL");
-      out("  is printed in docs/engine-run.log once the manifest is prepared.");
+      out("  is printed in docs/forge.log once the manifest is prepared.");
     }
   } else {
     out("  1. Open the project in your agent harness.");
@@ -2704,7 +2625,7 @@ function completionSummary(): void {
     out("");
     if (hasPrd() && hasGeneratedTeam()) {
       out("     (/forge-orchestrate-build drives the interactive build; use");
-      out("      forge-launcher engine-run for autonomous execution instead.)");
+      out("      forge-launcher run for autonomous execution instead.)");
     } else {
       out("  3. Review the pre-flight summary that the skill presents.");
       out("  4. Type GO to start the interactive pipeline; select service-backed");

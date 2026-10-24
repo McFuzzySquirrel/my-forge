@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { ArtifactRefV1, Sha256Digest } from "../contract/v1/index.ts";
@@ -157,6 +157,8 @@ async function isAncestor(repositoryRoot: string, ancestor: string, head: string
 export interface TaskCompletionStore {
   record(record: TaskCompletionRecordV1): Promise<void>;
   resolve(options: ResolveTaskCompletionOptions): Promise<TaskCompletionRecordV1 | undefined>;
+  /** All durable completions for one repository, newest first. */
+  list(repositoryId: string): Promise<readonly TaskCompletionRecordV1[]>;
   hydrate(artifactStore: ArtifactStore, options: HydrateTaskCompletionsOptions): Promise<void>;
 }
 
@@ -190,6 +192,37 @@ export class FileTaskCompletionStore implements TaskCompletionStore {
       if (!selected || record.completedAt > selected.completedAt) selected = record;
     }
     return selected;
+  }
+
+  async list(repositoryId: string): Promise<readonly TaskCompletionRecordV1[]> {
+    if (!REPOSITORY_ID_PATTERN.test(repositoryId)) throw new TypeError("Invalid repository ID");
+    const directory = repositoryDirectory(this.root, repositoryId);
+    let entries: string[];
+    try {
+      entries = await readdir(directory);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    const records: TaskCompletionRecordV1[] = [];
+    for (const entry of entries.sort()) {
+      if (!entry.endsWith(".json")) continue;
+      const file = join(directory, entry);
+      const text = await readFile(file, "utf8");
+      const parsed: unknown = JSON.parse(text);
+      if (!isRecord(parsed)
+        || parsed.schemaVersion !== 1
+        || parsed.repositoryId !== repositoryId
+        || typeof parsed.taskId !== "string"
+        || !Array.isArray(parsed.records)
+        || !parsed.records.every(isRecordV1)) {
+        throw new Error(`Task completion file is invalid: ${file}`);
+      }
+      for (const record of parsed.records) {
+        if (record.repositoryId === repositoryId && record.taskId === parsed.taskId) records.push(record);
+      }
+    }
+    return records.sort((left, right) => right.completedAt.localeCompare(left.completedAt));
   }
 
   async hydrate(artifactStore: ArtifactStore, options: HydrateTaskCompletionsOptions): Promise<void> {

@@ -305,8 +305,8 @@ test("compileExecutionManifest does not treat framework names like ASP.NET as ex
 
 test("compileExecutionManifest excludes Forge coordinators from fallback owners", () => {
   const root = createFixture();
-  writeFileSync(join(root, ".agents", "agents", "workflow-orchestrator.md"), `---
-name: workflow-orchestrator
+  writeFileSync(join(root, ".agents", "agents", "project-orchestrator.md"), `---
+name: project-orchestrator
 description: Coordinates the build and handles cross-cutting polish.
 ---
 `, "utf8");
@@ -330,7 +330,7 @@ test("bootstrapped tooling agents cannot displace a generated specialist during 
   const agentRoot = join(root, ".github", "agents");
   mkdirSync(agentRoot, { recursive: true });
   foundationLayout(root);
-  for (const name of ["forge-team-builder", "project-orchestrator", "workflow-orchestrator"]) {
+  for (const name of ["forge-team-builder", "project-orchestrator"]) {
     writeFileSync(join(agentRoot, `${name}.md`),
       `---\nname: ${name}\ndescription: Creates service entry point src/index.ts and coordinates the foundation build.\n---\n`);
   }
@@ -339,7 +339,7 @@ test("bootstrapped tooling agents cannot displace a generated specialist during 
   writeFileSync(join(root, "docs", "features", "foundation.md"),
     "# PRD\n\n## Phase 1: Foundation\n- Create service entry point `src/index.ts`\n- Zygomorphic flux calibration\n");
   const repo = discoverForgeRepo(root, ".github");
-  assert.equal(repo.agents.length, 4, "discovery must retain tooling for legacy execution");
+  assert.equal(repo.agents.length, 3, "discovery retains the two tooling agents plus the specialist");
   const compiled = compileExecutionManifestDetailed(repo);
   const tasks = compiled.manifest.phases.flatMap((phase) => phase.tasks);
   assert.equal(tasks.length, 2);

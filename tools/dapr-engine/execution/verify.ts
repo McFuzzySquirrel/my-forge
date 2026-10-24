@@ -1,5 +1,5 @@
 /**
- * Output verification for the forge-workflow-engine.
+ * Output verification for the MyForge execution engine.
  *
  * The harness adapters report `success` on a zero-exit call, which is not proof
  * that a task did anything: a model can reply "Ready for the task." and exit 0
@@ -20,7 +20,7 @@ import { join } from "node:path";
 
 import type { ManifestTask, ProcessIdentityV1, TaskResult } from "./types.ts";
 import { runCommand } from "./harness/run.ts";
-import { quarantineTaskProcessIdentity } from "./isolation.ts";
+import { runValidationCommands, type ValidationCommandResult } from "./validation.ts";
 
 /** Trivial responses are short and contain no content line of real length. */
 const MIN_SUBSTANTIVE_OUTPUT_LEN = 40;
@@ -31,6 +31,7 @@ const ENGINE_OWNED_PREFIXES = [
   "docs/WORKFLOW-STATE.json",
   "docs/EXECUTION-AUDIT.jsonl",
   "docs/PROGRESS.md",
+  "docs/forge.log",
   "docs/engine-run.log",
   "docs/artifacts/",
   "docs/task-executions/",
@@ -212,34 +213,17 @@ export async function runTaskValidation(
    */
   environment?: Readonly<Record<string, string>>,
   processIdentity?: ProcessIdentityV1,
-): Promise<VerifyResult> {
-  if (task.validationCommands.length === 0) return { ok: true };
-
-  for (const command of task.validationCommands) {
-    const result = await runCommand(command, [], {
-      shell: true,
-      cwd: repoRoot,
-      timeoutMs,
-      maxBufferBytes: 10 * 1024 * 1024,
-      ...(environment ? { env: { ...environment }, inheritEnvironment: false, reapProcessGroupOnExit: true } : {}),
-      ...(processIdentity ? { processIdentity } : {}),
-    });
-    const ownedProcess = environment !== undefined || processIdentity !== undefined;
-    if (processIdentity && result.processCleanup === "unconfirmed") {
-      quarantineTaskProcessIdentity(processIdentity);
-    }
-    if (ownedProcess && result.processCleanup === "unconfirmed") {
-      return { ok: false, reason: `validation command process cleanup could not be confirmed: ${command}` };
-    }
-    if (result.status !== 0) {
-      const detail = (result.stderr || result.stdout).trim();
-      return {
-        ok: false,
-        reason: `validation command failed (exit ${result.status}): ${command}${detail ? `\n${detail}` : ""}`,
-      };
-    }
-  }
-  return { ok: true };
+  installDependencies = false,
+): Promise<VerifyResult & { readonly results?: readonly ValidationCommandResult[] }> {
+  if (task.validationCommands.length === 0) return { ok: true, results: [] };
+  return runValidationCommands({
+    task,
+    workspacePath: repoRoot,
+    timeoutMs,
+    ...(environment ? { environment } : {}),
+    ...(processIdentity ? { processIdentity } : {}),
+    installDependencies,
+  });
 }
 
 /**

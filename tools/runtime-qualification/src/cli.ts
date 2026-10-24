@@ -3,7 +3,6 @@ import path from "node:path";
 import { createFixtureRepo } from "./fixture.ts";
 import { captureHistories } from "./histories.ts";
 import { removeInstallation, runBackupSuite } from "./backup.ts";
-import { runCutoverSuite } from "./cutover.ts";
 import { PREVIOUS_RELEASE, removePreviousRelease, runUpgradeSuite } from "./upgrade.ts";
 import { DETERMINISTIC_FAILURE_COVERAGE, FAILURE_SCENARIOS, runFailureSuite, type Scenario, type ScenarioContext } from "./failures.ts";
 import { connect, waitForApi } from "./service.ts";
@@ -21,15 +20,11 @@ Suites:
   upgrade    P6-03 upgrade/rollback from the previous release (${PREVIOUS_RELEASE},
              checked out as a git worktree under --root) with an approval wait
              and a pending retry timer in flight
-  cutover    P7-01/02 migration/rollback rehearsal with archived legacy state,
-             fresh Dapr runs, stopped writers, and preserved Git changes
-
 Also: capture-histories <project> <output-dir> [limit] exports recorded workflow
 histories from an isolated installation as replay fixtures (P6-03).
 
 Suites use isolated Compose projects and never touch the operator's myforge-runtime:
   failures/backup/upgrade: myforge-qual, API port 18483, default /tmp/myforge-qual
-  cutover:                 myforge-p7, API port 18485, default /tmp/myforge-p7-cutover
 --teardown resets the isolated runtime at the end.`;
 
 interface Options {
@@ -46,7 +41,7 @@ function parse(args: readonly string[]): Options {
     process.stdout.write(`${USAGE}\n`);
     process.exit(suite ? 0 : 2);
   }
-  let root = suite === "cutover" ? "/tmp/myforge-p7-cutover" : "/tmp/myforge-qual";
+  let root = "/tmp/myforge-qual";
   let only: Set<string> | undefined;
   let report: string | undefined;
   let teardown = false;
@@ -95,9 +90,7 @@ async function main(): Promise<number> {
     return await captureHistories(project, path.resolve(output), Number(limit ?? 20)) > 0 ? 0 : 1;
   }
   const options = parse(process.argv.slice(2));
-  const isolation = options.suite === "cutover"
-    ? isolate(options.root, "myforge-p7", 18485)
-    : isolate(options.root);
+  const isolation = isolate(options.root);
   const report = new Report(options.suite, { ...hostEnvironment(), project: isolation.project, apiPort: isolation.apiPort });
   const extraInstallations: Isolation[] = [];
   try {
@@ -115,9 +108,6 @@ async function main(): Promise<number> {
       case "upgrade":
         await runUpgradeSuite(report, isolation);
         break;
-      case "cutover":
-        await runCutoverSuite(report, isolation);
-        break;
       default:
         throw new Error(`Unknown suite '${options.suite}'.\n${USAGE}`);
     }
@@ -133,7 +123,7 @@ async function main(): Promise<number> {
       }
       activate(isolation);
       await launcher(["runtime", "reset", "--confirm"]);
-      if (options.suite === "upgrade" || options.suite === "cutover") removePreviousRelease(options.root);
+      if (options.suite === "upgrade") removePreviousRelease(options.root);
     }
   }
   const failed = report.entries.filter((entry) => !entry.passed).map((entry) => entry.id);

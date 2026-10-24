@@ -10,6 +10,8 @@ import type {
   CreateProjectRequest,
   CreateProjectResult,
   DocsIndex,
+  EvidenceArtifactResponse,
+  EvidenceIndex,
   ExecutionMode,
   Executor,
   ExecutionManifest,
@@ -95,6 +97,12 @@ export const api = {
   },
   serviceControl(runId: string, action: string, taskId?: string): Promise<ServiceControlResult> {
     return post<ServiceControlResult>("/api/service/control", { runId, action, ...(taskId ? { taskId } : {}) });
+  },
+  serviceEvidence(): Promise<EvidenceIndex> {
+    return request<EvidenceIndex>("/api/service/evidence");
+  },
+  serviceEvidenceArtifact(artifactId: string): Promise<EvidenceArtifactResponse> {
+    return request<EvidenceArtifactResponse>(`/api/service/evidence/artifact?artifactId=${encodeURIComponent(artifactId)}`);
   },
   summary(): Promise<Summary | null> {
     return request<Summary | null>("/api/summary");

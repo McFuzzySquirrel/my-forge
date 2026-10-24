@@ -10,6 +10,7 @@ import { renderTasks, unmountTasks } from "./views/tasks.js";
 import { renderLogs, unmountLogs } from "./views/logs.js";
 import { refreshDocuments, renderDocuments, unmountDocuments } from "./views/documents.js";
 import { renderArtifacts, unmountArtifacts } from "./views/artifacts.js";
+import { renderEvidence, unmountEvidence } from "./views/evidence.js";
 import { renderTimeline, unmountTimeline } from "./views/timeline.js";
 import { renderService, unmountService } from "./views/service.js";
 import { renderRuntime, unmountRuntime } from "./views/runtime.js";
@@ -34,6 +35,7 @@ const views: View[] = [
   { id: "logs", label: "Logs", render: renderLogs, unmount: unmountLogs },
   { id: "documents", label: "Plan & Team", render: renderDocuments, unmount: unmountDocuments, refresh: refreshDocuments },
   { id: "artifacts", label: "Artifacts", render: renderArtifacts, unmount: unmountArtifacts },
+  { id: "evidence", label: "Evidence", render: renderEvidence, unmount: unmountEvidence },
   { id: "timeline", label: "Timeline", render: renderTimeline, unmount: unmountTimeline },
   { id: "service", label: "Service runs", render: renderService, unmount: unmountService },
   { id: "host-runner", label: "Host runner", render: renderHostRunner, unmount: unmountHostRunner },

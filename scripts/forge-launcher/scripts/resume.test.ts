@@ -104,18 +104,18 @@ test("resume with a PRD but no team queues team generation", async () => {
   assert.ok(!out.includes("--dir"), out);
 });
 
-test("resume with a team but no manifest queues an engine-run", async () => {
+test("resume with a team but no manifest queues an run", async () => {
   const repo = makeRepo();
   write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
   write(repo, ".agents/agents/api-engineer.md", "---\nname: api-engineer\ndescription: API specialist.\n---\n");
   const { code, out } = await runCli(["resume", "--repo", repo, "--non-interactive"]);
   assert.equal(code, 0, out);
-  assert.ok(out.includes(`engine-run --repo ${repo}`), out);
+  assert.ok(out.includes(`run --repo ${repo}`), out);
   assert.ok(out.includes("--harness opencode"), out);
   assert.ok(out.includes("--yes"), out);
 });
 
-test("resume with a paused engine run queues a resume", async () => {
+test("resume ignores legacy paused state and queues a service run", async () => {
   const repo = makeRepo();
   write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
   write(repo, ".agents/agents/api-engineer.md", "---\nname: api-engineer\ndescription: API specialist.\n---\n");
@@ -129,8 +129,8 @@ test("resume with a paused engine run queues a resume", async () => {
   }));
   const { code, out } = await runCli(["resume", "--repo", repo, "--non-interactive"]);
   assert.equal(code, 0, out);
-  assert.ok(out.includes("Status   : paused"), out);
-  assert.ok(out.includes(`engine-run --repo ${repo}`), out);
+  assert.doesNotMatch(out, /Status\s+: paused/, out);
+  assert.ok(out.includes(`run --repo ${repo}`), out);
 });
 
 test("resume carries persisted engine config (concurrency/retries/viz)", async () => {
@@ -161,7 +161,7 @@ test("resume carries persisted engine config (concurrency/retries/viz)", async (
   }));
   const { code, out } = await runCli(["resume", "--repo", repo, "--non-interactive"]);
   assert.equal(code, 0, out);
-  assert.ok(out.includes(`engine-run --repo ${repo}`), out);
+  assert.ok(out.includes(`run --repo ${repo}`), out);
   assert.ok(out.includes("--concurrency 4"), out);
   assert.ok(!out.includes("--keep-alive"), out);
   assert.ok(!out.includes("--attach"), out);
@@ -204,7 +204,7 @@ test("explicit env overrides persisted engine config on resume", async () => {
   assert.ok(out.includes("--log-harness-activity"), out);
 });
 
-test("resume treats complete legacy engine state as read-only history", async () => {
+test("resume ignores complete legacy engine state", async () => {
   const repo = makeRepo();
   write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
   write(repo, ".agents/agents/api-engineer.md", "---\nname: api-engineer\ndescription: API specialist.\n---\n");
@@ -217,14 +217,13 @@ test("resume treats complete legacy engine state as read-only history", async ()
   }));
   const { code, out } = await runCli(["resume", "--repo", repo, "--non-interactive"]);
   assert.equal(code, 0, out);
-  assert.ok(out.includes("Status   : complete"), out);
-  assert.ok(out.includes("legacy workflow-engine state"), out);
-  assert.ok(out.includes("not imported"), out);
-  assert.ok(out.includes("service-backed run"), out);
+  assert.doesNotMatch(out, /Status\s+: complete/, out);
+  assert.doesNotMatch(out, /legacy workflow-engine state/, out);
+  assert.ok(out.includes(`run --repo ${repo}`), out);
   assert.doesNotMatch(out, /resume the engine|already running|engine-control\.json/);
 });
 
-test("resume does not treat a running legacy state file as an active service run", async () => {
+test("resume ignores a running legacy state file", async () => {
   const repo = makeRepo();
   write(repo, "docs/PRD.md", "# PRD\n\nBuild a thing.\n");
   write(repo, ".agents/agents/api-engineer.md", "---\nname: api-engineer\ndescription: API specialist.\n---\n");
@@ -237,9 +236,8 @@ test("resume does not treat a running legacy state file as an active service run
   }));
   const { code, out } = await runCli(["resume", "--repo", repo, "--non-interactive"]);
   assert.equal(code, 0, out);
-  assert.ok(out.includes("Status   : running"), out);
-  assert.ok(out.includes("legacy workflow-engine state"), out);
-  assert.ok(out.includes("not imported"), out);
-  assert.ok(out.includes("service-backed run"), out);
+  assert.doesNotMatch(out, /Status\s+: running/, out);
+  assert.doesNotMatch(out, /legacy workflow-engine state/, out);
+  assert.ok(out.includes(`run --repo ${repo}`), out);
   assert.doesNotMatch(out, /already running|SIGTERM|workflow-engine -- stop/);
 });

@@ -12,7 +12,7 @@ You are running the **build pipeline** on behalf of the user in one continuous, 
 > `opencode run --auto` / `copilot -p --yolo`. It is **not** the in-harness
 > interactive entry point. If you are already inside a chat harness, drive the
 > build with `@project-orchestrator` (`forge-orchestrate-build`, interactive,
-> per-phase approval). Autonomous execution uses `forge-launcher engine-run`
+> per-phase approval). Autonomous execution uses `forge-launcher run`
 > against a repository registered with the local Dapr service. The service
 > expects the agent team and execution manifest to already exist
 > (generate it via `forge-launcher resume` or `/forge-build-agent-team`).
@@ -32,7 +32,7 @@ The underlying skills (`forge-build-agent-team`, `forge-assign-models`, `forge-o
 | `forge-auto-build-prd` | idea to reviewed canonical vision and features (always interactive) | Review gate inside authoring flow |
 | `forge-build-prd` | idea/seed docs to vision and features directly (always interactive) | Review gate before save |
 | `@project-orchestrator` | In-harness interactive build execution only (no PRD, no team) | Optional pause between each phase |
-| `forge-launcher engine-run` | Autonomous execution through the registered Dapr service | Service run controls |
+| `forge-launcher run` | Autonomous execution through the registered Dapr service | Service run controls |
 | **`forge-auto-build`** | **Terminal/headless** fast-path: existing PRD → agent team → (optional models) → choose interactive or Dapr service execution → committed result | **One** pre-flight gate, then fully autonomous |
 
 Use this skill when you want the build pipeline to run hands-free after a single approval, from a PRD that has already been reviewed and confirmed.
@@ -244,7 +244,7 @@ forge-launcher runtime restart
 Then start or attach to the service run:
 
 ```bash
-forge-launcher engine-run --repo "$PWD" --harness "${FORGE_ENGINE_HARNESS:-opencode}" --yes
+forge-launcher run --repo "$PWD" --harness "${FORGE_ENGINE_HARNESS:-opencode}" --yes
 ```
 
 The service owns run history and repository integration. Harness CLI execution
@@ -259,7 +259,7 @@ Use `forge-launcher service runs --repo "$PWD"` and
 completed service run has status `complete`; report task failures and blockers
 from the service snapshot. After fixing a failed task, replay it with
 `forge-launcher service control <run-id> replay-task --task <task-id>`, then
-resume with `forge-launcher engine-run --repo "$PWD" --yes`.
+resume with `forge-launcher run --repo "$PWD" --yes`.
 
 When it finishes, report: "Stage 3 complete - Dapr service run finished. All
 tasks complete."
@@ -275,7 +275,7 @@ After the selected Stage 3 build path is complete:
 
 1. Commit any remaining uncommitted work. **Never commit engine dependencies**: skip the `node_modules/` directories under the skill packages and the engine log:
    ```
-   git add . ':(exclude)**/node_modules/**' ':(exclude)docs/engine-run.log'
+   git add . ':(exclude)**/node_modules/**' ':(exclude)docs/run.log'
    git commit -m "chore: auto-build complete -all phases delivered"
    ```
 2. Produce a **Final Summary** report in the terminal:
@@ -299,7 +299,7 @@ Next steps:
   - Add a new feature: @workspace /forge-build-feature-prd I want to add [feature]...
   - Audit generated skills (automated): cd .agents/skills/skill-review && npm install && npm run skill-review -- --provider stdout --min-score 1.5
   - Audit generated skills (manual): @workspace /forge-optimize-skills Audit all skills...
-   - Run the service path later if desired: `forge-launcher engine-run --repo . --yes` (repository registration required)
+   - Run the service path later if desired: `forge-launcher run --repo . --yes` (repository registration required)
 ```
 
 ---
@@ -313,7 +313,7 @@ If this skill is invoked in a repo that has an incomplete auto-build (detected b
    - If interrupted mid-Stage 1: re-invoke `forge-build-agent-team`.
    - If interrupted mid-Stage 2: re-run the affected stage from the beginning.
    - If interrupted mid-Stage 3 on the prompt-driven path: invoke `forge-orchestrate-build` with `resume from last checkpoint`.
-   - If interrupted mid-Stage 3 on the Dapr service path: run `forge-launcher engine-run --repo . --yes`; it resumes or attaches to the active service run.
+   - If interrupted mid-Stage 3 on the Dapr service path: run `forge-launcher run --repo . --yes`; it resumes or attaches to the active service run.
 3. Report to the user: "Resuming auto-build from Stage N, last completed: [task description]."
 4. Do not re-run stages whose outputs are already committed and verified.
 

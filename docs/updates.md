@@ -4,6 +4,43 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.155
+
+### Runtime evidence, live Console activity, and worker parity
+
+- The execution service now exposes completion evidence for a repository, and
+  the Console has an **Evidence** view for durable work, validation and
+  git-bundle artifacts from both worker-container and host-runner executions.
+- Console dashboards consume the service run snapshot as their live source.
+  Overview, Board and Tasks refresh on service status/task changes; Run events
+  and Timeline use service lifecycle events; Board durations come from service
+  task timings rather than the legacy audit file.
+- Worker-container execution now shares the dependency-install and validation
+  implementation with host execution, publishes validation evidence once, and
+  applies agent-path remapping. A worker task no longer validates a
+  dependency-free clone twice.
+- Added [ADR-087](adr/087-runtime-evidence-and-live-console.md).
+
+### Remove the pre-Dapr legacy engine
+
+- Removed the retired `forge-workflow-engine` skill package, the
+  `workflow-orchestrator` persona, bootstrap staging, and legacy
+  `WORKFLOW-STATE.json` / `engine-control.json` / `engine.pid` handling.
+  Existing repository files are left untouched but ignored.
+- Removed the `engine-run` CLI; use `forge-launcher run`. Authoring and manifest
+  interactive sessions (`draft-team`, `draft-skills`, `rederive`,
+  `feature-increment-continue`, `resume`, and interactive requirements) are
+  unchanged.
+- Renamed the activity log to `docs/forge.log`; existing `docs/engine-run.log`
+  files remain readable but receive no new writes. The Console tab is now
+  **Activity log**.
+- Deleted the historical workflow-engine overview/deep-dive, legacy artifact
+  store deep dive, and historical board/rederive plan. ADRs and changelog
+  entries remain as historical records.
+- Added [ADR-088](adr/088-remove-pre-dapr-legacy.md).
+
+---
+
 ## October 2026 - v3.154
 
 ### Replay completed tasks and show runtime logs in the Console

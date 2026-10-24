@@ -239,25 +239,6 @@ export interface TaskRow {
   unmetPrerequisites: string[];
 }
 
-export interface ArtifactMeta {
-  artifactId: string;
-  type: string;
-  category: string;
-  taskId: string;
-  producedBy: string;
-  status: string;
-  summary: string;
-  confidence?: number;
-  createdAt: string;
-  filesChanged: string[];
-  inputs: string[];
-}
-
-export interface ArtifactIndex {
-  artifacts: ArtifactMeta[];
-  types: string[];
-}
-
 export interface EvidenceArtifactRef {
   artifactId: string;
   uri: string;
@@ -637,6 +618,9 @@ export interface RuntimeAdminState {
   harnessGrants: Record<string, string[]>;
   startOptions: { hostTools: boolean; postgresPort?: number } | null;
   restartRequired: boolean;
+  launcherVersion: string;
+  appliedLauncherVersion: string | null;
+  hostRunnerLauncherVersion: string | null;
 }
 
 export type RuntimeAdminAction =

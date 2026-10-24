@@ -1486,6 +1486,7 @@ the failures it recognizes:
 | Credential mismatch ("password authentication failed") | `runtime.env` no longer matches the volumes. Restore the original file, or run `runtime reset --confirm` to recreate the volumes, which deletes runtime data. |
 | Credential file malformed or invalid | The launcher refuses to replace it. Restore it from your own copy. Backups do not include it. |
 | `service` commands return 401 | Tokens were rotated but not applied. Run `runtime stop`, then `runtime start`. |
+| Harness activity is on but **Runtime log** has no harness lines | The runtime is running code from an older launcher. Run `runtime restart` (or `runtime start`, which replaces an outdated runtime and host runner automatically). |
 | Corrupt volume (PostgreSQL `PANIC`, unreadable blocks) | Run `runtime restore --from <backup> --confirm`, or `runtime reset --confirm` to discard runtime data. |
 | Version mismatch ("schema version … is newer") | The data was written by a newer Forge. Update `forge-launcher`, or restore a backup taken with this version. Downgrades are not supported. |
 
@@ -1496,7 +1497,11 @@ event per line. Attach that output when you report a problem.
 #### Upgrading
 
 Take a `runtime backup` before you upgrade `forge-launcher`. The next
-`runtime start` applies compatible schema migrations. If the worker image tag
+`runtime start` applies compatible schema migrations. It also compares the
+launcher version that started the runtime with the installed version: when they
+differ, `start` recreates the runtime and replaces an outdated host runner, so
+the new build actually loads. `runtime status` reports the mismatch until then
+([ADR-091](adr/091-runtime-build-freshness.md)). If the worker image tag
 changed, the image is rebuilt, which needs the network. Runs that are waiting
 for approval, retrying, or paused continue after the upgrade; you do not need
 to drain them first.

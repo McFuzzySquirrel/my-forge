@@ -324,16 +324,11 @@ test("serves the user guide at /guide.md", async () => {
   });
 });
 
-test("serves logs and artifacts", async () => {
+test("serves logs", async () => {
   await withServer(async (server) => {
     const logs = await getJson(`${server.url}/api/logs?lines=1`) as { lines: string[]; truncated: boolean };
     assert.deepEqual(logs.lines, ["line two"]);
     assert.equal(logs.truncated, true);
-
-    const artifacts = await getJson(`${server.url}/api/artifacts`) as { artifacts: Array<{ artifactId: string; type: string }>; types: string[] };
-    assert.equal(artifacts.artifacts.length, 1);
-    assert.equal(artifacts.artifacts[0]!.artifactId, "solution-001");
-    assert.deepEqual(artifacts.types, ["solution.architecture"]);
   });
 });
 
@@ -585,10 +580,19 @@ test("project list, add, and select round-trip through the registry", async () =
   });
 });
 
-test("artifact content path traversal is rejected", async () => {
+test("document content path traversal is rejected", async () => {
   await withServer(async (server) => {
-    const res = await getJson(`${server.url}/api/artifact/content?path=..%2F..%2Fetc%2Fpasswd`);
+    const res = await getJson(`${server.url}/api/docs/content?path=..%2F..%2Fetc%2Fpasswd`);
     assert.equal(res, null);
+  });
+});
+
+test("the retired artifacts API is not served", async () => {
+  await withServer(async (server) => {
+    for (const path of ["/api/artifacts", "/api/artifacts/solution-001", "/api/artifact/content?path=x"]) {
+      const res = await signedFetch(`${server.url}${path}`);
+      assert.equal(res.status, 404, `${path} should no longer be routed`);
+    }
   });
 });
 

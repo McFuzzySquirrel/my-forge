@@ -550,7 +550,12 @@ export function logs(p: RepoPaths, lines = 400): LogsResponse {
   return logLines(path, lines);
 }
 
-// ─── Artifacts ───────────────────────────────────────────────────────────────
+// ─── Legacy repository artifact index ────────────────────────────────────────
+//
+// Current service runs publish work/validation/bundle evidence through the
+// completion ledger; the Console reads that through the Evidence view. This
+// index remains only to surface validation limitations recorded by the retired
+// scheduler in older repositories. Do not add new writers.
 
 export function artifacts(p: RepoPaths): ArtifactIndex {
   const dir = p.artifactsDir;
@@ -586,16 +591,6 @@ export function artifacts(p: RepoPaths): ArtifactIndex {
   }
   out.sort((x, y) => y.createdAt.localeCompare(x.createdAt));
   return { artifacts: out, types: [...types].sort() };
-}
-
-export function artifactById(p: RepoPaths, id: string): unknown | null {
-  const dir = p.artifactsDir;
-  if (!fs.existsSync(dir)) return null;
-  for (const subdir of fs.readdirSync(dir)) {
-    const file = path.join(dir, subdir, `${id}.json`);
-    if (fs.existsSync(file)) return readJson(file);
-  }
-  return null;
 }
 
 // ─── Documents ───────────────────────────────────────────────────────────────
@@ -1043,12 +1038,4 @@ export function readDocContent(p: RepoPaths, relPath: string): FileContent | nul
 
 function HARNESS_DIRS(repoRoot: string): string[] {
   return [".agents", ".opencode", ".claude", ".github"].map((r) => path.join(repoRoot, r));
-}
-
-export function readArtifactContent(p: RepoPaths, relPath: string): FileContent | null {
-  const abs = resolveWithin(p.artifactsDir, relPath);
-  if (!abs) return null;
-  const content = readText(abs);
-  if (content === null) return null;
-  return { path: relPath, content };
 }

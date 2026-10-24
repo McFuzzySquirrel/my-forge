@@ -28,7 +28,7 @@ export function renderHome(container: HTMLElement): void {
       ),
       actionCard(
         "Open an existing project",
-        "Pick a forge repo to monitor its build, resume a run, or browse artifacts and docs.",
+        "Pick a forge repo to monitor its build, resume a run, or browse evidence and docs.",
         "#/projects",
         "Open existing",
       ),

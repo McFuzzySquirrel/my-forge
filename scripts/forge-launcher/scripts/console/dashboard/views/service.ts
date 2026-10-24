@@ -5,6 +5,7 @@
 // rather than from browser state.
 
 import { api } from "../api.js";
+import { activityPresentation } from "../activity.js";
 import { el, fmtTime, statusBadge, toast } from "../render/dom.js";
 import type { ServiceRunDetail, ServiceRunEvent, ServiceRunRecord, ServiceRunTask } from "../types.js";
 
@@ -255,8 +256,20 @@ async function renderActivity(run: ServiceRunRecord): Promise<void> {
     el("h3", null, `Harness activity · ${taskId} · attempt ${attempt}`),
     el("span", { className: "dim small" }, "Opt-in per-attempt output"),
   ]));
-  if (run.hostExecution === true) {
-    activityHost.appendChild(el("p", { className: "dim small" }, "This run used the native host runner; its activity is in the Runtime log."));
+  const presentation = activityPresentation(run);
+  if (presentation.kind === "disabled") {
+    activityHost.appendChild(el("p", { className: "dim small" },
+      "Harness activity logging was off when this run was submitted. Enable \"Log harness activity\" on the Overview page, then start a new run."));
+    return;
+  }
+  if (presentation.kind === "host-log") {
+    const filter = `task=${taskId}`;
+    activityHost.appendChild(el("p", { className: "dim small" }, [
+      "Native host activity streams to the ",
+      el("a", { href: `#/logs?filter=${encodeURIComponent(filter)}` }, "Runtime log"),
+      ` as the harness writes it. The log is shared by all repositories; filter it for "${filter}".`,
+    ]));
+    return;
   }
   if (activityCache?.key !== key) {
     const pre = el("pre", { className: "log-view" }, "Loading activity…");

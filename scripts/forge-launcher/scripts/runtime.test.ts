@@ -21,6 +21,7 @@ import {
   readRuntimeApiAccess,
   readRuntimeEnvironment,
   rotateRuntimeTokens,
+  runtimeBuildIsStale,
   runtimeCli,
   unreadyServices,
   verifyRestoreSource,
@@ -125,6 +126,13 @@ test("runtime rejects symlink credential files", async (t) => {
   await writeFile(target, "not credentials\n", { mode: 0o600 });
   await symlink(target, credentials);
   await assert.rejects(ensureRuntimeCredentials(directory), /regular file/);
+});
+
+test("a runtime started by a different launcher build is stale", () => {
+  assert.equal(runtimeBuildIsStale(null, "1.0.0"), false);
+  assert.equal(runtimeBuildIsStale({ launcherVersion: "1.0.0" }, "1.0.0"), false);
+  assert.equal(runtimeBuildIsStale({ launcherVersion: "1.0.0" }, "1.0.1"), true);
+  assert.equal(runtimeBuildIsStale({}, "1.0.1"), true, "records from before build tracking must be restarted");
 });
 
 test("runtime data directory follows platform conventions", () => {

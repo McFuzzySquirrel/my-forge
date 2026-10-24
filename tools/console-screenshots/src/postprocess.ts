@@ -15,12 +15,10 @@ export const NUMBERED: Array<{ numbered: string; from: string }> = [
   { numbered: "07-logs-audit", from: "logs-audit-1440" },
   { numbered: "08-plan-team", from: "documents-1440" },
   { numbered: "09-plan-team-doc", from: "documents-detail-1440" },
-  { numbered: "10-artifacts", from: "artifacts-1440" },
-  { numbered: "11-artifacts-detail", from: "artifacts-detail-1440" },
-  { numbered: "12-timeline", from: "timeline-1440" },
-  { numbered: "13-new-project", from: "new-1440" },
-  { numbered: "14-help", from: "help-1440" },
-  { numbered: "15-host-runner", from: "host-runner-1024" },
+  { numbered: "10-timeline", from: "timeline-1440" },
+  { numbered: "11-new-project", from: "new-1440" },
+  { numbered: "12-help", from: "help-1440" },
+  { numbered: "13-host-runner", from: "host-runner-1024" },
 ];
 
 function run(bin: string, args: string[]): void {

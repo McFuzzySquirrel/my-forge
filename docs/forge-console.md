@@ -330,7 +330,7 @@ cards flowing left to right.
 Filters dim tasks rather than hiding them, so the shape of the build stays
 visible. **Table** renders the same data as a real table for keyboard and
 screen-reader use. Hovering a card or bar offers **Open in Tasks**, **Logs** and
-**Artifacts**, so the board is not a dead end. Failures stay listed in the lower
+**Evidence**, so the board is not a dead end. Failures stay listed in the lower
 left with a link into Tasks, rather than only flashing once.
 
 The former standalone Board was available via `workflow-engine run --viz`; its
@@ -382,7 +382,6 @@ button shows the exact command to run manually.
 | **Tasks** | every task in a filterable/sortable table with a detail drawer, editable per-task timeout, task/range/phase selection for manual mode, **Run phase** and **Run next phase** actions, and a **Launch \<harness\> CLI** button. See [Long-running projects](long-running-projects.md#phase-by-phase-execution). |
 | **Logs** | activity log (`docs/forge.log`), runtime host-runner log, and live service run events. |
 | **Plan & Team** | authoring settings and stage cards — always actionable, each stating why it is stale — plus the project documents (IDEA, PRD, features, progress, model plan) as a table that opens a document in a wide popup, and agents and skills in collapsible card sections. Requirement and task blocks render as tables. |
-| **Artifacts** | repository-local structured outputs (`docs/artifacts/`), browsable by type/task with previews. |
 | **Evidence** | durable work, validation and git-bundle artifacts from integrated service tasks (worker or host runner). The **Git bundle** action downloads the checkpoint for offline inspection or recovery; see [Git bundle evidence](git-bundle-evidence.md). |
 | **Timeline** | chronological service lifecycle events, failures highlighted. |
 | **Service runs** | runs submitted to the local execution service (`forge-launcher service submit`) for the open repository: status, executor (worker or host runner), submitted timeout/activity settings, tasks with per-attempt **Activity**, sequenced events, and acknowledged controls. Host-executed runs link to their runner jobs. See [Service runs](#service-runs). |
@@ -462,9 +461,11 @@ up from the service's record.
 - **Pause**, **Resume**, **Stop**, and **Cancel** are offered as the run state
   allows. **Approve** appears on a task that is `waiting-for-approval` and
   **Replay** on a failed task.
-- Each task row shows its attempt and offers **Activity** when harness activity
-  was enabled for the run. Worker activity is read from the bounded per-attempt
-  runtime log; host activity is in **Runtime log**.
+- Each task row shows its attempt and offers **Activity**. When activity logging
+  was enabled for the run, worker activity is read from the bounded per-attempt
+  runtime log and host activity streams to **Runtime log**, which opens filtered
+  to `task=<id>`. When logging was off at submission, the panel says so instead
+  of pointing at an empty log.
 - The run header shows the submitted default task timeout and activity setting.
   These are frozen at submission, so changes apply to the next run.
 - Each control goes to the service API, and the toast shows the service's
@@ -616,7 +617,9 @@ to the engine as `--log-harness-activity` or `--no-log-harness-activity`, so it
 takes precedence over `FORGE_ENGINE_LOG_HARNESS_ACTIVITY`. When enabled, worker
 harness CLI stdout/stderr is stored in the runtime activity log and can be opened
 from the **Service runs** task **Activity** action. Host-runner activity appears
-in **Runtime log**. It can contain sensitive repository content and increase log
+in **Runtime log**; the Activity action links there with a `task=<id>` filter,
+and says when logging was off at submission. It can contain sensitive repository
+content and increase log
 volume; command invocation logging is always on regardless of this setting (see [ADR-052](adr/052-harness-invocation-activity-logging.md)).
 
 ### Task timeouts
@@ -678,7 +681,7 @@ job status keeps updating even if you switch between **Home**, **Projects**, and
   per-server random token embedded in the served page, so cross-origin web pages
   cannot trigger actions.
 - File reads are confined to `docs/`, the harness `agents/`/`skills/` dirs, and
-  `docs/artifacts/` with path-traversal guards.
+  the selected resident documents, with path-traversal guards.
 - "Open externally" (`POST /api/open`) only opens a whitelisted path in the
   current repo.
 

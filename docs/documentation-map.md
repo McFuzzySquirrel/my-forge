@@ -108,7 +108,6 @@ be treated as hand-maintained source documentation in this repository:
 - `docs/forge.log`
 - `docs/AUTHORING-EVENTS.jsonl`
 - `docs/engine-config.json`
-- `docs/artifacts/` execution briefs and local artifact output
 
 Old `docs/WORKFLOW-STATE.json`, `docs/engine-control.json`, `docs/engine.pid`,
 `docs/PROGRESS.md`, and `docs/engine-run.log` files are read-only history where

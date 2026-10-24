@@ -69,7 +69,6 @@ export async function buildFixture(repoRoot: string, homeDir: string): Promise<F
   writeAudit(repoRoot);
   writeEngineLog(repoRoot);
   writeDocs(repoRoot);
-  writeArtifacts(repoRoot);
   writeConfig(repoRoot);
   await writeAuthoringState(repoRoot);
   writeRegistry(homeDir, repoRoot);
@@ -524,57 +523,6 @@ function writeDocs(repoRoot: string): void {
   });
 
   json(repoRoot, "docs/AGENT-RESPONSIBILITY-MATRIX.md", {});
-}
-
-function writeArtifacts(repoRoot: string): void {
-  const artifact = (overrides: Record<string, unknown>) => ({
-    category: "work",
-    status: "complete",
-    confidence: 0.9,
-    inputs: [],
-    nextActions: [],
-    ...overrides,
-  });
-  json(repoRoot, "docs/artifacts/solution/solution-001.json", artifact({
-    artifactId: "solution-001",
-    type: "solution.architecture",
-    taskId: "1.1",
-    producedBy: "api-engineer",
-    summary: "Workspace scaffold and module boundaries decided.",
-    createdAt: "2026-09-22T12:11:42.000Z",
-    filesChanged: ["package.json", "src/index.ts", "tsconfig.json"],
-    payload: { decision: "Vite + React + Express", rationale: "Small operational surface for a 5-40 person team." },
-  }));
-  json(repoRoot, "docs/artifacts/solution/solution-002.json", artifact({
-    artifactId: "solution-002",
-    type: "solution.capture",
-    taskId: "2.1",
-    producedBy: "ui-engineer",
-    summary: "Expense capture form with inline validation.",
-    createdAt: "2026-09-22T13:31:07.000Z",
-    filesChanged: ["src/expenses/capture.tsx"],
-    payload: { fields: ["amount", "merchant", "category", "receipt"], validation: "client and server" },
-  }));
-  json(repoRoot, "docs/artifacts/decision/decision-001.json", artifact({
-    artifactId: "decision-001",
-    type: "decision.interface",
-    taskId: "1.3",
-    producedBy: "api-engineer",
-    summary: "Session cookie contract fixed for the auth surface.",
-    createdAt: "2026-09-22T12:39:51.000Z",
-    filesChanged: ["src/auth/session.ts"],
-    payload: { cookie: "ledgerly_session", sameSite: "Lax", maxAgeSeconds: 43200, httpOnly: true },
-  }));
-  json(repoRoot, "docs/artifacts/review/review-001.json", artifact({
-    artifactId: "review-001",
-    type: "review.result",
-    taskId: "1.2",
-    producedBy: "qa-engineer",
-    summary: "Magic-link verification passed review with two minor notes.",
-    createdAt: "2026-09-22T12:24:20.000Z",
-    filesChanged: [],
-    payload: { outcome: "approved-with-notes", notes: ["Add rate limiting later", "Log failed verifications"] },
-  }));
 }
 
 function writeConfig(repoRoot: string): void {

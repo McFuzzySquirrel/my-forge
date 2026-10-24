@@ -142,7 +142,7 @@ Once the build starts, switch between the views to follow the work:
     build stays visible.
   - **Table** renders the same data as a real table — the Board is a canvas, so
     this is the route for keyboard and screen-reader use.
-  - Hovering a card or bar offers **Open in Tasks**, **Logs** and **Artifacts**, so
+  - Hovering a card or bar offers **Open in Tasks**, **Logs** and **Evidence**, so
     you can follow a card into the task that produced it.
   - Failed tasks stay listed at the lower left with a link into Tasks.
   - The mode and filters are remembered per project.
@@ -153,8 +153,9 @@ Once the build starts, switch between the views to follow the work:
 - **Logs**: the repository activity log, the local runtime host-runner log, and
   the live service run-event stream. **Activity log** follows `docs/forge.log`
   for authoring, team, skills, manifest and service-command output; **Runtime
-  log** follows the native host runner; **Run events** follows the latest
-  service run. Each tab has an empty state explaining which source is missing.
+  log** follows the native host runner and can be filtered (for example
+  `task=EVD-01`); **Run events** follows the latest service run. Each tab has an
+  empty state explaining which source is missing.
 - **Plan & Team**: the project documents as a table (kind, title, path, status)
   and the generated agent/skill files. Selecting a document opens it in a wide
   popup with an **Open externally** button; `forge-requirement` and `forge-task`
@@ -168,8 +169,6 @@ roots, so a skills-only directory cannot silently replace the generated team.
 For an existing compiled manifest, the manifest's `harnessRoot` is preferred
 over automatic detection. If that path is stale, update the selected root and
 recompile the manifest explicitly; the Console will not silently switch roots.
-- **Artifacts**: repository-local structured outputs under `docs/artifacts/`,
-  browsable by type and task.
 - **Evidence**: durable work, validation and git-bundle artifacts recorded by
   integrated service tasks. Works for both worker-container and host-runner
   executions because both write the same completion ledger. See
@@ -182,8 +181,9 @@ recompile the manifest explicitly; the Console will not silently switch roots.
   `forge-launcher service submit`. Select a run to see its tasks and events,
   see whether it runs in the worker or on the host runner, and to pause, resume,
   stop, cancel, approve, or replay it. Each button shows the service's
-  acknowledgement. Each task row offers **Activity** for opt-in worker harness
-  output when the run enabled it; host activity is in **Runtime log**. Run
+  acknowledgement. Each task row offers **Activity**: worker output is read
+  from the service and host output streams to **Runtime log** when the run
+  enabled logging; otherwise the panel says it was off at submission. Run
   summaries show the submitted default timeout and activity setting, and
   changes apply to the next run. Host-executed runs link to their runner-job
   history.

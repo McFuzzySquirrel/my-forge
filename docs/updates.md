@@ -4,6 +4,29 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.159
+
+### Runtime freshness, host activity clarity, and Artifacts retirement
+
+- `runtime start` now replaces a runtime and host runner started by a different
+  `forge-launcher` version, so installing an update takes effect without a
+  separate restart. `runtime status` reports the installed and applied versions
+  and marks the runtime for restart when they differ. Added
+  [ADR-091](adr/091-runtime-build-freshness.md).
+- The Service runs **Activity** action is explicit about host execution: when
+  logging was off at submission it says so, and when it is on it links to the
+  **Runtime log** filtered to `task=<id>`. The Runtime log tab gains a line
+  filter with the same deep link.
+- Removed the Console **Artifacts** view. It read the retired scheduler's
+  repository-local `docs/artifacts/` directory; current runs publish durable
+  work, validation and git-bundle evidence through the service and the
+  **Evidence** view. Legacy repository artifact files are still read for task
+  validation gaps where present.
+- Updated the Console guides, screenshot tour, Help view, and screenshots
+  tooling for the removed view.
+
+---
+
 ## October 2026 - v3.158
 
 ### Phase-gated runs and the temporary host default

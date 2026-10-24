@@ -2,8 +2,6 @@
 
 import type {
   Actions,
-  ArtifactIndex,
-  ArtifactMeta,
   AuditEvent,
   ControlAction,
   ControlResult,
@@ -121,15 +119,6 @@ export const api = {
   },
   logs(lines = 400, source: "engine" | "runtime" = "engine"): Promise<LogsResponse> {
     return request<LogsResponse>(`/api/logs?lines=${lines}&source=${encodeURIComponent(source)}`);
-  },
-  artifacts(): Promise<ArtifactIndex> {
-    return request<ArtifactIndex>("/api/artifacts");
-  },
-  artifact(id: string): Promise<unknown> {
-    return request<unknown>(`/api/artifacts/${encodeURIComponent(id)}`);
-  },
-  artifactContent(relPath: string): Promise<FileContent> {
-    return request<FileContent>(`/api/artifact/content?path=${encodeURIComponent(relPath)}`);
   },
   docs(): Promise<DocsIndex> {
     return request<DocsIndex>("/api/docs");
@@ -265,5 +254,3 @@ export const api = {
     return post("/api/tasks/human-review", { taskId, reviewer, notes, resume });
   },
 };
-
-export type { ArtifactMeta };

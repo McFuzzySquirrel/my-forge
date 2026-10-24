@@ -4,6 +4,7 @@ import { chmod, lstat, mkdir, open, readFile, rename, unlink } from "node:fs/pro
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { listRegisteredRepositories } from "./runtime-repositories.ts";
+import { currentVersion } from "./update-check.ts";
 
 const CAPABILITY_FILE = "host-runner-capabilities.json";
 const HASH_FILE = "host-runner-capability-hashes.json";
@@ -23,6 +24,11 @@ interface HostRunnerPidFileV1 {
   readonly version: 1;
   readonly pid: number;
   readonly instanceId: string;
+  /**
+   * Launcher version that started the process. Absent on records written by
+   * launchers that predate build tracking; those are treated as stale.
+   */
+  readonly launcherVersion?: string;
 }
 
 async function writeAtomic(file: string, contents: string): Promise<void> {
@@ -154,7 +160,10 @@ async function readPidFile(dataDir: string): Promise<HostRunnerPidFileV1 | undef
     || (value as { version?: unknown }).version !== 1
     || !Number.isSafeInteger((value as { pid?: unknown }).pid)
     || Number((value as { pid: number }).pid) <= 0
-    || typeof (value as { instanceId?: unknown }).instanceId !== "string") {
+    || typeof (value as { instanceId?: unknown }).instanceId !== "string"
+    || ((value as { launcherVersion?: unknown }).launcherVersion !== undefined
+      && (typeof (value as { launcherVersion?: unknown }).launcherVersion !== "string"
+        || (value as { launcherVersion: string }).launcherVersion.length === 0))) {
     throw new Error("Host-runner process record is invalid.");
   }
   return value as HostRunnerPidFileV1;
@@ -199,6 +208,12 @@ export async function getHostRunnerProcessStatus(
   return record && await ownsProcess(record) ? "running" : "stopped";
 }
 
+/** Launcher version that started the live host runner, if one is recorded. */
+export async function getHostRunnerLauncherVersion(dataDir: string): Promise<string | undefined> {
+  const record = await readPidFile(dataDir);
+  return record?.launcherVersion;
+}
+
 export async function startHostRunner(
   dataDir: string,
   apiToken: string,
@@ -208,9 +223,20 @@ export async function startHostRunner(
 ): Promise<void> {
   const files = await ensureHostRunnerFiles(dataDir);
   if (files.enabledRepositoryIds.length === 0) return;
+  const launcherVersion = currentVersion();
   const existing = await readPidFile(dataDir);
-  if (existing && await ownsProcess(existing)) return;
-  if (existing) await unlink(path.join(dataDir, PID_FILE));
+  if (existing && await ownsProcess(existing)) {
+    // A runner started by a different launcher keeps its old in-memory code
+    // until restarted; reuse would silently hide host activity logging and
+    // other fixes until the next explicit runtime restart.
+    if (existing.launcherVersion === launcherVersion) return;
+    await stopHostRunner(dataDir);
+  }
+  if (existing) {
+    await unlink(path.join(dataDir, PID_FILE)).catch((error) => {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    });
+  }
 
   const script = path.join(engineDir, "scripts", "host-runner.ts");
   const logPath = path.join(dataDir, LOG_FILE);
@@ -247,7 +273,8 @@ export async function startHostRunner(
     throw new Error("Could not start the native host runner.", { cause: spawnError });
   }
   child.unref();
-  await writeAtomic(path.join(dataDir, PID_FILE), `${JSON.stringify({ version: 1, pid: child.pid, instanceId })}\n`);
+  await writeAtomic(path.join(dataDir, PID_FILE),
+    `${JSON.stringify({ version: 1, pid: child.pid, instanceId, launcherVersion })}\n`);
   const startDeadline = Date.now() + 30_000;
   while (Date.now() < startDeadline) {
     if (spawnError || exited || child.exitCode !== null || child.signalCode !== null) {

@@ -1,8 +1,8 @@
 # Local Execution Architecture
 
 > **Current architecture:** this guide describes how MyForge runs Dapr-backed
-> service runs on an operator-managed local runtime. The retired in-process
-> workflow engine is historical; it is not the current scheduler.
+> service runs on an operator-managed local runtime. The pre-Dapr in-process
+> workflow engine has been removed; it is not the current scheduler.
 
 This is the system-level overview of the path from a compiled execution
 manifest to verified repository changes. The launcher submits and observes
@@ -36,10 +36,12 @@ flowchart LR
     I --> M["Result admission"]
     L --> N["Bounded workspace delta"]
     N --> M
-    M --> O["Checkpoint and repository integration"]
+    M --> O["Checkpoint, completion record and repository integration"]
+    O --> R["Durable evidence: work, validation, Git bundle"]
     E --> P["Run status and lifecycle events"]
     D --> P
     Q["Forge Console"] --> P
+    Q --> R
 ```
 
 The principal responsibilities are:
@@ -53,7 +55,8 @@ The principal responsibilities are:
 | `ExecutionHost` | Executes task activities, supervises attempts, verifies outcomes, publishes checkpoints, and integrates accepted changes. |
 | Worker harness runner | Invokes the selected harness in the worker container; this is the default mode. |
 | Native host runner | Polls the service for jobs and invokes a locally installed harness only when host mode is explicitly selected. |
-| Forge Console | Projects authoring and service-run state; it is an operator client, not an execution authority. |
+| Completion ledger | Records integrated tasks and their artifact refs so later runs can replay completed work. |
+| Forge Console | Projects authoring, live service-run state, and durable evidence; it is an operator client, not an execution authority. |
 
 ## A run from source to result
 
@@ -78,9 +81,15 @@ The principal responsibilities are:
    a durable PostgreSQL queue and waits for the host runner to return the
    result.
 6. The activity applies the same output, no-op, structured-result, and
-   validation gates to either execution mode. Accepted changes are checkpointed
-   and integrated into the run's Forge branch. The service publishes run
-   status and lifecycle events for launcher and Console clients.
+   validation gates to either execution mode. Missing project dependencies are
+   installed before validation, and validation evidence is recorded once. Accepted
+   changes are checkpointed, recorded in the completion ledger, and integrated
+   into the run's Forge branch. The service publishes run status and lifecycle
+   events for launcher and Console clients.
+7. A later run whose target head already contains an integrated task replays its
+   completion, hydrates the work artifact for dependants, and skips the harness
+   call. The Console reads the completion ledger through the authenticated
+   evidence API.
 
 The checked-out branch is not used as the service run's integration target.
 Run changes are committed to the run's `forge/<base>` branch; use the service
@@ -94,6 +103,7 @@ merge operation to fast-forward the checked-out branch when appropriate.
 | Selection | Used when host execution is not requested. | Opted into for a run; the service also requires a capability for that repository. |
 | Provider authentication | Uses credentials granted to the runtime for the selected harness. | Uses that local CLI's normal host authentication. |
 | Workspace handoff | The worker activity operates on its managed workspace. | The host runner clones the registered repository at the accepted base revision, runs in a disposable attempt workspace, and returns a bounded binary Git diff. |
+| Validation | Runs in the worker after installing missing project dependencies; one evidence record is published. | Runs beside the harness in the disposable clone before the delta is returned; the service trusts that evidence. |
 | Permissions | Constrained by the worker container's runtime configuration. | The harness and its child tools run with the operator's normal OS permissions; there is no task sandbox. |
 
 The runner choice changes where the harness process runs; it does not transfer
@@ -128,14 +138,16 @@ Each store has a specific role:
 - **Dapr Workflow history** is the durable orchestration record.
 - **PostgreSQL application records** hold accepted submissions, run/task
   status, controls, ownership and receipts, and durable host-runner jobs.
-- **File-backed artifacts and checkpoints** hold validated execution
-  artifacts and workspace snapshots.
-- **Local runtime data** holds operator credentials and host-runner
-  capabilities with restrictive file permissions where supported.
+- **File-backed completion ledger, artifacts, and checkpoints** hold integrated
+  task records, validated evidence, and workspace snapshots.
+- **Local runtime data** holds operator credentials, host-runner capabilities,
+  and the activity/runtime logs with restrictive file permissions where
+  supported.
 
-`docs/WORKFLOW-STATE.json` and other files from the retired scheduler are not
-current execution authority. The service reconstructs its in-memory run
-bindings from accepted submissions when it starts.
+Old `docs/WORKFLOW-STATE.json`, `docs/engine-control.json`, `docs/engine.pid`,
+and `docs/engine-run.log` files are ignored for execution and are not current
+authority. The service reconstructs its in-memory run bindings from accepted
+submissions when it starts.
 
 ## Operational entry points
 
@@ -144,8 +156,10 @@ bindings from accepted submissions when it starts.
 - Use `forge-launcher run` or `forge-launcher service` to submit, follow,
   inspect, and control service runs.
 - Use the Forge Console's **Service runs** view for run-level monitoring and
-  controls, and its **Host runner** view for runner readiness, capabilities,
-  and bounded job summaries.
+  controls, its **Evidence** view for durable work/validation/bundle artifacts,
+  and its **Host runner** view for runner readiness, capabilities, and bounded
+  job summaries. **Activity log**, **Runtime log**, and **Run events** are
+  separate live sources.
 
 The [launcher guide](forge-launcher.md) documents commands and options. The
 [Console user guide](forge-console-user-guide.md) documents the operator
@@ -164,4 +178,6 @@ procedures.
 - [ADR-071: service harnesses and execution entry points](adr/071-service-harnesses-and-execution-entry-points.md)
 - [ADR-081: Native local harness execution without task sandbox](adr/081-native-local-harness-execution-without-task-sandbox.md)
 - [ADR-079: Dapr execution cutover](adr/079-dapr-execution-cutover.md)
+- [ADR-087: Runtime evidence and live Console activity](adr/087-runtime-evidence-and-live-console.md)
+- [ADR-088: Remove the pre-Dapr legacy engine](adr/088-remove-pre-dapr-legacy.md)
 - [Code-grounded local execution deep dive](local-execution-deep-dive.md)

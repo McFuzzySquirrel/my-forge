@@ -28,23 +28,31 @@ For the current Dapr-backed service-run lifecycle, see the
   validates source documents and compiles `docs/EXECUTION-MANIFEST.json`.
 - **Dapr execution service** (`tools/dapr-engine/`): service API, durable Dapr
   workflows, runner selection, PostgreSQL-backed run records, and file-backed
-  artifacts/checkpoints.
+  completion/artifact evidence.
 - **Local runtime** (`tools/dapr-engine/deploy/`): rootless Podman Compose
   deployment for PostgreSQL, Dapr placement/Scheduler/sidecar, and the Forge
   worker, which provides the default worker-container execution mode.
-  Registered repositories are mounted by the launcher.
+  Registered repositories are mounted by the launcher. Podman and a Compose
+  provider are operator prerequisites; see the
+  [platform installation links](docs/forge-launcher.md#podman-installation).
 - **Native host runner** (`tools/dapr-engine/execution/` and launcher runtime
   controls): polls for explicitly selected host-mode jobs and invokes the
   operator's locally installed CLI against a disposable host workspace. It is
   unsandboxed and uses the operator's normal OS permissions and CLI
-  authentication; provider, process-cleanup, and per-host-OS qualification
-  remains in progress.
+  authentication. Host execution is implemented; HR-04 live-runtime/host-OS
+  qualification and HR-GATE remain pending, and macOS/Windows profiles are not
+  advertised as qualified.
+- **Runtime evidence store** (`tools/dapr-engine/execution/task-completions.ts`
+  and `service/evidence.ts`): durable completion records and content-addressed
+  work, validation, and Git-bundle artifacts used for cross-run replay and the
+  Console Evidence view.
 - **Forge Console** (`scripts/forge-launcher/scripts/console/`): local browser
-  projection for authoring, service-run status and controls, logs, artifacts,
-  tasks, and the Console-owned Kanban/Gantt Board.
-- **Legacy workflow-engine skill**: a fail-closed compatibility reference;
-  it is not an execution scheduler. The canonical Dapr-independent execution
-  library is owned by `tools/dapr-engine/execution/`.
+  projection for authoring, live service-run status and controls, completion
+  evidence, activity/runtime logs, tasks, and the Console-owned Kanban/Gantt
+  Board. The Console never owns run state.
+- The pre-Dapr scheduler and its compatibility package have been removed. The
+  canonical Dapr-independent execution library is owned by
+  `tools/dapr-engine/execution/`.
 
 ## Runtime data flow
 
@@ -61,10 +69,12 @@ For the current Dapr-backed service-run lifecycle, see the
    queue and uses the local CLI's normal authentication. Both modes operate on
    task workspaces.
 6. The Dapr execution service validates and integrates accepted task changes
-   into the repository in both modes. Dapr Workflow remains the durable
-   orchestration authority. The Console reads service-backed status and
-   exposes acknowledged controls; legacy `WORKFLOW-STATE.json` remains
-   archival and is not execution authority.
+   into the repository in both modes, then records a durable completion and
+   publishes work/validation/bundle evidence. Later runs replay already-integrated
+   tasks from that ledger. Dapr Workflow remains the durable orchestration
+   authority. The Console reads service-backed status and lifecycle events and
+   exposes acknowledged controls; old pre-Dapr state files are ignored and are
+   not execution authority.
 
 ## Architectural boundaries
 
@@ -83,14 +93,18 @@ For the current Dapr-backed service-run lifecycle, see the
   restrict its full user-level filesystem, process, or network permissions.
   Host mode never silently falls back to worker-container execution.
 - Hosted execution is not available. New runs require local runtime
-  registration; legacy histories are not imported or silently resumed.
+  registration. Pre-Dapr histories and control files are not imported, read, or
+  silently resumed.
+- Completion evidence is owned by the service. The Console reads it through the
+  authenticated evidence API; it does not scan a repository-local artifact
+  directory to reconstruct service state.
 
 ## Repository layout
 
 - [templates](templates) — reusable agents, skills, and execution-manifest
   compiler.
-- [scripts](scripts) — launcher package and shell/PowerShell compatibility
-  wrappers.
+- [scripts](scripts) — launcher package and remaining bootstrap/launcher
+  shell/PowerShell compatibility wrappers.
 - [tools/dapr-engine](tools/dapr-engine) — execution contracts, reusable
   execution library, Dapr service, storage adapters, and deployment files.
 - [docs](docs) — user guidance, deep dives, ADRs, release notes, and contracts.

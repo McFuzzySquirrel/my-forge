@@ -1,11 +1,10 @@
-
 # MyForge
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Node.js 18+](https://img.shields.io/badge/Node.js-18%2B-339933?logo=node.js&logoColor=fff)
 ![Dapr](https://img.shields.io/badge/Dapr-execution-0D2192?logo=dapr&logoColor=fff)
-![Legacy Bash wrappers](https://img.shields.io/badge/legacy-Bash%20wrappers-4EAA25?logo=gnubash&logoColor=fff)
-![Legacy PowerShell wrappers](https://img.shields.io/badge/legacy-PowerShell%20wrappers-5391FE?logo=powershell&logoColor=fff)
+![Local-first](https://img.shields.io/badge/local--first-operator%20managed-2F6F4E)
+![Rootless Podman](https://img.shields.io/badge/Podman-rootless-892CA0)
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 
@@ -22,41 +21,59 @@ converted before building. See [Canonical Features](docs/canonical-features.md).
 
 - Keeps the PRD as the quality gate before implementation begins.
 - Generates a specialist agent team from the PRD instead of relying on a single generic assistant.
-- Supports both guided, interactive execution and unattended "dark orchestration" runs.
-- Includes a local web console for monitoring builds and administering the
-  complete local runtime, including repository registration and backups.
-- Provides a dedicated Host runner view for project capabilities and safe,
-  bounded execution-job history.
-- Supports two Dapr-backed harness execution modes: default worker-container
-  execution uses runtime-provided CLIs and granted credentials; explicit
-  native-host execution uses your locally installed CLI and its normal
-  authentication. Both use task workspaces while Dapr retains orchestration
-  and result integration.
+- Supports guided, interactive authoring and unattended service-backed builds.
+- Includes a local web console for authoring, live run monitoring, durable task
+  evidence, and complete local runtime administration.
+- Supports two Dapr-backed harness execution modes: the default worker container
+  uses runtime-provided CLIs and granted credentials; explicit native-host
+  execution uses your locally installed CLI and its normal authentication.
 - Native-host execution is unsandboxed, runs with the logged-in user's full OS
   permissions, and never silently falls back to worker-container execution.
+- Keeps completion evidence, validation results, and Git bundles across runs so
+  later builds can replay already-integrated tasks instead of paying for them again.
 - Can bootstrap MyForge into an existing Git repository without replacing its application code.
 
-## Dapr replacement work in this fork
+## Architecture and current status
 
-The [implementation tracker](plan.md) records the accepted P0–P7 gates, the
-native local host-runner qualification still in progress, and the separate
-hosted-deployment phase.
-The [foundation PRD](docs/PRD.md) and
-[feature contracts](docs/features/dapr-foundation.md) cover the first increment.
-The isolated `tools/dapr-spike` experiment is not the production engine. The
-launcher requires a running local Dapr service and registered repositories for
-execution; the runtime uses rootless Podman, and legacy histories are not
-imported. See the
+MyForge is local-first. The supported build path compiles authored requirements
+with `forge-execution-adapter`, submits an immutable snapshot to the local Dapr
+execution service, and lets Dapr own workflow state, task controls, validation,
+checkpoints, completion evidence and Git integration.
+
+A task's harness can run in two explicit locations:
+
+- **Worker container (default):** the pinned CLI runs inside the Forge worker
+  with credentials granted through `forge-launcher runtime harness grant`.
+- **Native host runner (opt-in):** a launcher-managed process invokes your
+  locally installed, locally authenticated CLI with your full OS permissions.
+  It is not sandboxed and never silently falls back to the worker.
+
+The Forge Console reads service-backed run status and lifecycle events live,
+and reads durable work/validation/bundle evidence from the service. Authoring,
+team, skills and manifest activity is written to `docs/forge.log`; the native
+host-runner log is separate.
+
+The pre-Dapr workflow engine and its `engine-run` CLI have been removed. Use
+`forge-launcher run` (or `forge-launcher service submit`). Existing
+`WORKFLOW-STATE.json`, `engine-control.json`, `engine.pid` and
+`docs/engine-run.log` files are ignored for execution; `docs/engine-run.log`
+remains readable as legacy history.
+
+**Status:** P7 cutover is complete. The Linux rootless profile is qualified for
+stub, Copilot and OpenCode. The native host runner is implemented, but HR-04
+live-runtime/host-OS qualification and HR-GATE remain pending; native
+macOS/Windows and Claude are unqualified. Hosted deployment (P8) has not
+started.
+
+See the [architecture blueprint](Project_Architecture_Blueprint.md),
+[local execution overview](docs/local-execution.md),
+[implementation tracker](plan.md), and
 [runtime backup and rollback procedure](docs/forge-launcher.md#rollback).
-
-
 
 ![Forge Console live walkthrough](docs/images/forge-console/current/console-walkthrough.gif)
 
 See the [Forge Console visual tour](docs/forge-console-screenshots.md) for
 the full screenshot walkthrough, including current responsive captures.
-
-
 
 ## Quick start
 
@@ -68,14 +85,53 @@ the full screenshot walkthrough, including current responsive captures.
   runtime-provided CLIs in the default worker-container mode; optional
   native-host mode requires the selected CLI to be installed and authenticated
   locally.
-- Rootless Podman for Dapr-backed build execution
+- **Rootless Podman** with a Compose provider for the local Dapr execution
+  service. Podman runs the worker container, PostgreSQL, Dapr, and the runtime
+  data volumes. Even native-host runs require the local service runtime.
+
+#### Install Podman
+
+- **Linux:** [Install Podman for your distribution](https://podman.io/docs/installation#linux-distributions).
+  Confirm rootless mode with `podman info`; see the upstream
+  [rootless tutorial](https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md)
+  if user namespaces or subuid/subgid mappings need configuration.
+- **macOS:** [Install Podman](https://podman.io/docs/installation#macos),
+  then create and start the Podman machine:
+
+  ```bash
+  podman machine init
+  podman machine start
+  ```
+
+- **Windows:** [Install Podman](https://podman.io/docs/installation#windows)
+  with WSL2, then create and start the Podman machine:
+
+  ```bash
+  podman machine init
+  podman machine start
+  ```
+
+  The upstream [Podman for Windows guide](https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/podman-for-windows.md)
+  covers WSL2 and machine setup in more detail.
+- **GUI option:** [Podman Desktop](https://podman-desktop.io/downloads) can
+  install and manage Podman on macOS and Windows.
+
+Verify the runtime prerequisites before starting the service:
+
+```bash
+podman info
+podman compose version
+```
+
+A Compose provider such as `podman-compose` must be available. MyForge currently
+qualifies the Linux rootless profile. macOS and Windows use a Podman machine;
+those native-host execution profiles remain unqualified in this release.
 
 ### Option 1: Run from a clone
 
 ```bash
 git clone https://github.com/McFuzzySquirrel/my-forge.git
-cd my-forge
-cd scripts/forge-launcher
+cd my-forge/scripts/forge-launcher
 npm install
 npm run build
 node dist/cli.js
@@ -106,50 +162,79 @@ Once installed, run:
 forge-launcher
 ```
 
-The launcher walks you through repo bootstrap, idea capture, PRD drafting, team generation, and build execution. The Console also supports bootstrapping an existing repository and adding Feature PRDs to completed projects.
+The launcher walks you through repo bootstrap, idea capture, PRD authoring,
+team generation, and build execution. The Console also supports bootstrapping an
+existing repository and adding Feature PRDs to completed projects.
 
-For the manual prompting flow and the CLI’s expected prompts, see [docs/prompt-playbook.md](docs/prompt-playbook.md). For the latest changes and release notes, see [docs/updates.md](docs/updates.md).
+Start the local runtime once before the first service-backed build:
+
+```bash
+forge-launcher runtime start
+forge-launcher runtime status
+```
+
+If you are running the checkout directly, use `node dist/cli.js runtime start`
+from `scripts/forge-launcher` instead.
+
+For the manual prompting flow and the CLI's expected prompts, see
+[docs/prompt-playbook.md](docs/prompt-playbook.md). For the latest changes and
+release notes, see [docs/updates.md](docs/updates.md).
 
 > [!NOTE]
-> The canonical launcher runtime lives in [scripts/forge-launcher](scripts/forge-launcher). The shell wrappers are deprecated compatibility shims retained for one release after the package migration.
+> The canonical launcher runtime lives in [scripts/forge-launcher](scripts/forge-launcher).
+> The shell wrappers are deprecated compatibility shims retained for one release
+> after the package migration.
 
 ## How it works
 
-1. Capture your idea and review the PRD.
-2. Generate the agent team and any model plan.
-3. Run the build interactively or unattended.
+1. Capture your idea and review the PRD and feature contracts.
+2. Generate the agent team, project skills, and execution manifest.
+3. Run the build through the local Dapr execution service, using the worker
+   container by default or the explicit host runner when selected.
+4. Review live run status, logs, and durable evidence in the Console or with
+   `forge-launcher service`.
 
 ## Main components
 
-- `forge-launcher` - the entry point for onboarding, authoring, and launching builds
-- Dapr execution service - the supported engine for durable orchestration, checkpoints, replay, and run state
-- Native host runner - an opt-in local process that invokes the operator's
-  installed harness CLI for explicitly selected service runs
-- `forge-execution-adapter` - compiles the authored plan into the execution manifest consumed by the Dapr service
-- Legacy workflow-engine package - historical reference only; new runs use the registered Dapr service
-- Forge Console - a local web UI for authoring, monitoring, and controlling runs
+- `forge-launcher` — onboarding, interactive authoring, manifest submission,
+  runtime lifecycle, service client, and Console.
+- `forge-execution-adapter` — compiles the authored plan into the execution
+  manifest consumed by the service.
+- Dapr execution service — durable orchestration, task controls, validation,
+  checkpointing, completion replay, and Git integration.
+- Worker container and native host runner — the two explicit harness locations.
+- Runtime evidence store — completion records plus content-addressed work,
+  validation, and Git-bundle artifacts.
+- Forge Console — a local web UI for authoring, live service-run monitoring,
+  logs, task evidence, and runtime administration.
 
 ## Documentation
 
 - [Local execution architecture](docs/local-execution.md)
 - [Local execution deep dive](docs/local-execution-deep-dive.md)
-- [docs/task-contracts.md](docs/task-contracts.md)
-- [docs/forge-launcher.md](docs/forge-launcher.md)
-- [docs/forge-console.md](docs/forge-console.md)
-- [docs/forge-console-user-guide.md](docs/forge-console-user-guide.md)
+- [Task contracts](docs/task-contracts.md)
+- [Forge Launcher reference](docs/forge-launcher.md)
+- [Forge Console reference](docs/forge-console.md)
+- [Forge Console user guide](docs/forge-console-user-guide.md)
 - [Harness credentials and execution boundaries](docs/harness-credentials.md)
-- [docs/research/myforge-agentic-development-value-chain.md](docs/research/myforge-agentic-development-value-chain.md)
-- [docs/prompt-playbook.md](docs/prompt-playbook.md)
-- [docs/updates.md](docs/updates.md)
-- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [Canonical features](docs/canonical-features.md)
+- [Prompt playbook](docs/prompt-playbook.md)
+- [Release notes](docs/updates.md)
+- [Architecture overview](ARCHITECTURE.md)
 - [Project Architecture Blueprint](Project_Architecture_Blueprint.md)
-- [CONTRIBUTING.md](CONTRIBUTING.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Development
 
 ```bash
 cd scripts/forge-launcher
 npm install
+npm test
+npm run typecheck
+npm run build
+npm run check:version
+
+cd ../../tools/dapr-engine
 npm test
 npm run typecheck
 ```

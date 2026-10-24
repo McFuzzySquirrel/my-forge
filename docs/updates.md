@@ -20,6 +20,12 @@ Detailed release and change notes for MyForge.
   applies agent-path remapping. A worker task no longer validates a
   dependency-free clone twice.
 - Added [ADR-087](adr/087-runtime-evidence-and-live-console.md).
+- Refreshed the README, architecture overview, architecture blueprint, local
+  execution guides, launcher package README, and documentation map for the
+  current worker/host execution model, runtime evidence, live Console sources,
+  removed legacy CLI, and post-P7 qualification status. The README now
+  documents rootless Podman prerequisites with Linux, macOS, Windows, and
+  Podman Desktop installation links.
 
 ### Remove the pre-Dapr legacy engine
 
@@ -1512,7 +1518,7 @@ See [ADR-063](adr/063-forge-board-chrome-and-accessibility.md).
   and the engine is now correct without it. The PRD authoring guide tells
   authors to list every task whose outputs the review reads.
 - See [ADR-056](adr/056-parallel-execution-task-sandboxes.md) and the
-  [implementation plan](parallel-execution-plan.md); amends
+  the historical implementation plan; amends
   [ADR-021](adr/021-parallel-task-dispatch.md) and
   [ADR-040](adr/040-native-adapter-contracts.md). Review-wait semantics are
   recorded in
@@ -1652,7 +1658,7 @@ See [ADR-063](adr/063-forge-board-chrome-and-accessibility.md).
   structured parsing, so its live activity is limited to whatever the CLI writes
   before the completion envelope. See
   [ADR-052](adr/052-harness-invocation-activity-logging.md) and
-  [workflow-engine.md](workflow-engine.md#harness-invocation-and-activity-logging).
+  the historical workflow-engine guide (removed in v3.155).
 
 ### Forge Console visual tour refresh
 
@@ -3511,7 +3517,7 @@ Related architecture decision:
   task it emits, so `docs/artifacts/` is populated on every successful run
   without hand-editing the manifest. Semantic types are still available as a
   manual override.
-- **New user guide.** Added `docs/workflow-engine.md`, a `forge-launcher.md`-style
+- **New user guide.** Added the historical `docs/workflow-engine.md` guide, a `forge-launcher.md`-style
   reference for running, resuming, and troubleshooting the workflow engine.
 - **Skipped tasks no longer deadlock.** The DAG readiness checks now treat a
   `skipped` task as done (matching `isComplete`), so a skipped task no longer
@@ -3619,7 +3625,7 @@ Related architecture decision:
 - Extended `ManifestTask` with two optional fields (`inputs` and `produces`) so workflows can declare the artifact hand-off contract directly in `EXECUTION-MANIFEST.json`.
 - Extended the `HarnessAdapter` interface with an optional `contextBlock` parameter; `OpenCodeAdapter` and `OpenAIAdapter` both prepend it when present. Existing adapters that ignore it remain unchanged.
 - Added two new audit event actions: `artifact.created` and `context.projected` (with `sourceTokenEstimate`, `projectedTokenEstimate`, and `reductionPercent` fields).
-- Added [`docs/artifact-store-deep-dive.md`](artifact-store-deep-dive.md): full walkthrough of the pattern, artifact schema, the three-category taxonomy, projection mechanics, and extension points.
+- Added the historical `docs/artifact-store-deep-dive.md`: full walkthrough of the pattern, artifact schema, the three-category taxonomy, projection mechanics, and extension points.
 
 Related architecture decision:
 

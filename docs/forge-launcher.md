@@ -59,6 +59,7 @@ configuration.
 |------|----------|---------|
 | `node` (18+) | For the npm package | Runs the `forge-launcher` package (canonical implementation) |
 | `git` | **Yes** | All harnesses |
+| Podman + Compose provider | **Yes for builds** | Runs the local Dapr execution service, worker container, PostgreSQL, and runtime volumes |
 | `xdg-open` | Linux desktop optional | Opens the Console, workflow board, and documents automatically |
 | `gh` (GitHub CLI) | For GitHub harness | Creates and clones the GitHub repo |
 | `opencode` | For opencode harness auto-launch | Spawns the opencode session |
@@ -72,6 +73,31 @@ configuration.
 > delegate to the package. They are retained for one release after the package
 > migration for existing scripts and CI; use the package command for new
 > integrations.
+
+### Podman installation
+
+Build execution requires **rootless Podman** with a Compose provider. Install
+Podman for your platform:
+
+- **Linux:** [distribution packages](https://podman.io/docs/installation#linux-distributions);
+  see the [rootless tutorial](https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md)
+  if user namespaces or subuid/subgid mappings need configuration.
+- **macOS:** [Podman installation](https://podman.io/docs/installation#macos),
+  then `podman machine init` and `podman machine start`.
+- **Windows:** [Podman installation](https://podman.io/docs/installation#windows)
+  with WSL2, then `podman machine init` and `podman machine start`; see the
+  [Podman for Windows guide](https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/podman-for-windows.md).
+- **GUI option:** [Podman Desktop](https://podman-desktop.io/downloads).
+
+Verify before starting the runtime:
+
+```bash
+podman info
+podman compose version
+```
+
+The Linux rootless profile is currently qualified. Native macOS and Windows
+Podman-machine behavior remains unqualified, including native host execution.
 
 On Linux, install `xdg-open` from the `xdg-utils` package for automatic browser
 and document opening:

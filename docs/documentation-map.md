@@ -31,13 +31,13 @@ Before completing the change:
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contributor workflow and contribution expectations. | Contributor-facing workflow or contribution policy changes. |
 | [`ARCHITECTURE.md`](../ARCHITECTURE.md) | High-level repository architecture. | Component boundaries, data flow, or system structure changes. |
 | [`Project_Architecture_Blueprint.md`](../Project_Architecture_Blueprint.md) | Detailed, code-grounded architecture reference and extension guide. | Package boundaries, runtime topology, persisted contracts, or architecture governance change. |
-| [`plan.md`](../plan.md) | Project-level planning and direction. | Roadmap, priorities, or planned work changes. |
+| [`plan.md`](../plan.md) | Project-level planning, phase status, and qualification evidence. P7 is complete; P8 hosted deployment is not started; post-P7 host-runner HR-04/HR-GATE is pending. | Roadmap, priorities, qualification status, or planned work changes. |
 
 ### Product and user-facing documentation
 
 | Document | Authority and purpose | Update when |
 |---|---|---|
-| [`README.md`](../README.md) | Public overview, quick start, main components, and top-level usage. | Installation, quick start, major features, commands, or public terminology change. Keep `**Latest:**` synchronized with [`docs/updates.md`](updates.md). |
+| [`README.md`](../README.md) | Public overview, runtime prerequisites, quick start, architecture/status summary, main components, and top-level usage. | Installation, Podman requirements, quick start, major features, commands, qualification status, or public terminology change. Keep `**Latest:**` synchronized with [`docs/updates.md`](updates.md). |
 | [`docs/forge-launcher.md`](forge-launcher.md) | Detailed launcher command and workflow reference. | Launcher commands, options, environment variables, setup flow, supported harnesses, or credential grants change. |
 | [`scripts/forge-launcher/README.md`](../scripts/forge-launcher/README.md) | NPM package and launcher-specific reference. | Package commands, installation, autonomous-build options, or package behavior change. |
 | [`docs/forge-console.md`](forge-console.md) | Forge Console capabilities and operation. | Console routes, controls, setup, or user workflows change. |
@@ -66,8 +66,8 @@ requirements. Legacy layouts and migration rules are documented in
 
 | Document | Authority and purpose | Update when |
 |---|---|---|
-| [`docs/local-execution.md`](local-execution.md) | Current overview of the local Dapr-backed service-run path across launcher, Dapr, worker execution, and optional host runner. | Service-run responsibilities, runtime topology, execution modes, or authority boundaries change. |
-| [`docs/local-execution-deep-dive.md`](local-execution-deep-dive.md) | Code-grounded lifecycle and implementation guide for current local execution. | Submission, orchestration, runner dispatch, workspace handoff, recovery, persistence, or implementation seams change. |
+| [`docs/local-execution.md`](local-execution.md) | Current overview of the local Dapr-backed service-run path, completion evidence, live Console activity, worker execution, and optional host runner. | Service-run responsibilities, runtime topology, execution modes, evidence, observability, or authority boundaries change. |
+| [`docs/local-execution-deep-dive.md`](local-execution-deep-dive.md) | Code-grounded lifecycle and implementation guide for current local execution, validation parity, completion replay, evidence, and Console activity. | Submission, orchestration, runner dispatch, workspace handoff, validation, evidence, recovery, persistence, or implementation seams change. |
 | [`docs/workforce-compiler-deep-dive.md`](workforce-compiler-deep-dive.md) | Workforce compiler and kernel handoff details. | Workforce compilation or handoff behavior changes. |
 | [`docs/testing-guide.md`](testing-guide.md) | Repository testing and validation guidance. | Supported test commands, package setup, or verification practice changes. |
 | `templates/skills/forge-execution-adapter/SKILL.md` | Bootstrapped manifest compiler usage and contract. | Compilation inputs, options, output manifest, or validation behavior change. |
@@ -103,10 +103,14 @@ These files are generated in target repositories by Forge skills and should not
 be treated as hand-maintained source documentation in this repository:
 
 - `docs/EXECUTION-MANIFEST.json`
-- `docs/WORKFLOW-STATE.json`
-- `docs/PROGRESS.md`
-- `docs/EXECUTION-AUDIT.jsonl`
-- `docs/task-executions/`
+- `docs/forge.log`
+- `docs/AUTHORING-EVENTS.jsonl`
+- `docs/engine-config.json`
+- `docs/artifacts/` execution briefs and local artifact output
+
+Old `docs/WORKFLOW-STATE.json`, `docs/engine-control.json`, `docs/engine.pid`,
+`docs/PROGRESS.md`, and `docs/engine-run.log` files are read-only history where
+present; they are not current generated state and are not execution authority.
 
 Update the templates, skills, compiler, or engine that produce them instead.
 Only update generated examples or fixtures when a test explicitly requires

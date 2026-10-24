@@ -95,6 +95,31 @@ The checked-out branch is not used as the service run's integration target.
 Run changes are committed to the run's `forge/<base>` branch; use the service
 merge operation to fast-forward the checked-out branch when appropriate.
 
+### How repository changes reach a run
+
+The service does not watch, poll, or rescan registered repositories. It only
+knows the requirements compiled into a submission, so a feature increment
+becomes visible to Dapr when the launcher submits a new run, not when the
+documents are written.
+
+- Authoring tools read and write the working tree directly. The service never
+  reads `docs/PRD.md` or `docs/features/`.
+- `forge-launcher run` and `service submit` snapshot the compiled manifest and
+  agent descriptions into the run. Editing the repository after submission does
+  not change the in-flight run; submit again to execute new work.
+- Only the registered repository's `.git` directory is mounted. New commits need
+  no re-registration; a new repository path needs
+  `forge-launcher runtime repo add` and a runtime restart.
+- A later run replays integrated tasks from the completion ledger by repository
+  and task ID. New task IDs start pending, and a task executes again when its
+  validation commands or expected outputs no longer match the recorded
+  completion.
+- The manifest comes from the working tree, while task workspaces clone the
+  committed `forge/<base>` tip. Merge a completed run back before the next
+  increment, or the new tasks execute against code that does not contain the
+  previous run's commits. See
+  [Long-running projects](long-running-projects.md#phase-completion-and-the-source-repository).
+
 ## Worker mode and host mode
 
 | | Native host mode (temporary default) | Worker mode (explicit) |

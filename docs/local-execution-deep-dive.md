@@ -42,6 +42,15 @@ orchestrators.
    requires recompilation.
 4. Attaches to, resumes, or submits the active service run for the repository.
 
+Compilation reads the working tree, whereas a task workspace is a clone of the
+committed `forge/<base>` tip: `prepareForgeBranch` creates or fast-forwards that
+ref from HEAD (or the selected base branch), and `prepareWorkspace` in
+`tools/dapr-engine/orchestration/execution-host.ts` checks out its tip. Authored
+documents and agent changes must therefore be committed for the harness to see
+them. Because `run` compiles only when the manifest is missing, an increment
+must pass through `feature-increment-continue` or `compile-manifest` first; the
+authoring readiness gate rejects a run whose team or skills stage is stale.
+
 The `service submit` path uses `submitRepositoryRun` in
 `scripts/forge-launcher/scripts/service-client.ts`. That function reads the
 compiled manifest and agent descriptions, prepares a dedicated

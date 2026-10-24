@@ -1603,3 +1603,20 @@ additive-only; the launcher rejects manifest rewrites that alter or remove
 pre-existing tasks. Use the Overview task controls to select and run the new
 tasks after review. The `feature-increment --prompt ...` command remains available
 for the offline stub runner, which can author requirements without a human session.
+
+The service does not observe repository changes; submission is the handoff. After
+derivation, run the increment explicitly:
+
+```bash
+forge-launcher service merge <previous-run-id>   # bring forge/<base> into the checked-out branch
+forge-launcher run --repo <path>                 # submit a new run
+```
+
+Merge first when the previous run advanced `forge/<base>`. A run always executes
+the committed `forge/<base>` tip, so a checked-out branch that does not contain
+that tip makes the new tasks run against older code. `run` in auto mode includes
+every pending task; select only the new task IDs in the Overview, or use
+`service submit --tasks <id,...>`, when older pending work should stay
+untouched. The service never advances the checked-out branch; see
+[Long-running projects](long-running-projects.md#phase-completion-and-the-source-repository)
+for the merge and divergence rules.

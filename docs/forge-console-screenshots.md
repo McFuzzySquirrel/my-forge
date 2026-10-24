@@ -106,25 +106,13 @@ rendered Markdown (requirement and task blocks become tables), with an
 
 ![Plan & Team - rendered document detail](images/forge-console/current/documents-detail-1440.png)
 
-## 10. Artifacts
-
-The structured outputs each task produced, browsable by type.
-
-![Artifacts - browser](images/forge-console/10-artifacts.png)
-
-## 11. Artifact detail
-
-Selecting an artifact shows its metadata, payload, and changed files.
-
-![Artifacts - detail](images/forge-console/11-artifacts-detail.png)
-
-## 12. Timeline
+## 10. Timeline
 
 Chronological audit events, with failures highlighted.
 
-![Timeline - audit events](images/forge-console/12-timeline.png)
+![Timeline - audit events](images/forge-console/10-timeline.png)
 
-## 13. New project
+## 11. New project
 
 The **New Project** wizard (`#/new`) collects project details, supported text
 documents, and three optional authoring model choices. The wizard does not
@@ -133,28 +121,28 @@ an interactive terminal session.
 Selecting an existing PRD skips drafting it. Failed uploads or saves keep
 the draft available rather than silently starting with missing inputs.
 
-![New project - wizard](images/forge-console/13-new-project.png)
+![New project - wizard](images/forge-console/11-new-project.png)
 
-## 14. Help
+## 12. Help
 
 The **Help** dialog explains the pipeline, views, and key terms. Opening it moves
 keyboard focus into the dialog; Escape closes it and returns focus to Help.
 
-![Help - modal](images/forge-console/14-help.png)
+![Help - modal](images/forge-console/12-help.png)
 
-## 15. Host runner
+## 13. Host runner
 
 The **Host runner** view shows runner readiness, project-scoped capabilities,
 and bounded active/recent job history. The operator view excludes capability
 values, request/result payloads, CLI output, and raw failure details.
 
-![Host runner - readiness, capabilities, and job history](images/forge-console/15-host-runner.png)
+![Host runner - readiness, capabilities, and job history](images/forge-console/13-host-runner.png)
 
 ## Responsive current captures
 
 The current build was captured at 1440px, 1024px, 720px, 390px, and 320px for
 each responsive route in the visual tour. Detail-state captures (expanded task,
-rendered PRD, rendered feature, artifact detail, and audit log) are also
+rendered PRD, rendered feature, and audit log) are also
 included in `images/forge-console/current/`.
 
 | View | 1024px | 720px | 390px | 320px |
@@ -164,7 +152,6 @@ included in `images/forge-console/current/`.
 | Tasks | [image](images/forge-console/current/tasks-1024.png) | [image](images/forge-console/current/tasks-720.png) | [image](images/forge-console/current/tasks-390.png) | [image](images/forge-console/current/tasks-320.png) |
 | Logs | [image](images/forge-console/current/logs-1024.png) | [image](images/forge-console/current/logs-720.png) | [image](images/forge-console/current/logs-390.png) | [image](images/forge-console/current/logs-320.png) |
 | Plan & Team | [image](images/forge-console/current/documents-1024.png) | [image](images/forge-console/current/documents-720.png) | [image](images/forge-console/current/documents-390.png) | [image](images/forge-console/current/documents-320.png) |
-| Artifacts | [image](images/forge-console/current/artifacts-1024.png) | [image](images/forge-console/current/artifacts-720.png) | [image](images/forge-console/current/artifacts-390.png) | [image](images/forge-console/current/artifacts-320.png) |
 | Timeline | [image](images/forge-console/current/timeline-1024.png) | [image](images/forge-console/current/timeline-720.png) | [image](images/forge-console/current/timeline-390.png) | [image](images/forge-console/current/timeline-320.png) |
 | Projects | [image](images/forge-console/current/projects-1024.png) | [image](images/forge-console/current/projects-720.png) | [image](images/forge-console/current/projects-390.png) | [image](images/forge-console/current/projects-320.png) |
 | New project | [image](images/forge-console/current/new-1024.png) | [image](images/forge-console/current/new-720.png) | [image](images/forge-console/current/new-390.png) | [image](images/forge-console/current/new-320.png) |

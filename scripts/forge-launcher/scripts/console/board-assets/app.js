@@ -1051,7 +1051,7 @@ function truncate(text, maxChars) {
     for (const [label, hash] of [
       ["Open in Tasks", `#/tasks?task=${encodeURIComponent(taskId)}`],
       ["Logs", "#/logs"],
-      ["Artifacts", "#/artifacts"],
+      ["Evidence", "#/evidence"],
     ]) {
       const button = document.createElement("button");
       button.type = "button";

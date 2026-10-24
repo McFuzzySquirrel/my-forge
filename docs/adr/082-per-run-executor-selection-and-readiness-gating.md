@@ -10,6 +10,11 @@ date: '2026-10-23'
 
 # ADR-082: Per-run executor selection with readiness gating in the Console
 
+> **Temporary default update:** [ADR-090](090-phase-runs-and-host-default.md)
+> makes native host execution the temporary local default and keeps worker
+> execution as an explicit opt-out. The selection and readiness rules in this
+> ADR still apply.
+
 ## Context
 
 [ADR-081](081-native-local-harness-execution-without-task-sandbox.md) made

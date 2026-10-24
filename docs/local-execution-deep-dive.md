@@ -18,7 +18,7 @@ the [feature requirements](features/dapr-execution-boundary.md), or the
 | Service run | One accepted immutable submission and its durable task workflow. |
 | Execution service | The local HTTP API and Dapr Workflow worker in `tools/dapr-engine/service/`. |
 | Worker runner | The in-process harness adapter selected for ordinary worker-container execution. |
-| Host runner | The separate launcher-managed process that polls durable jobs and executes a local harness when a run explicitly selects host execution. |
+| Host runner | The separate launcher-managed process that polls durable jobs and executes a local harness; host execution is the temporary local default. |
 | Attempt | One execution of a task under a logical attempt identity and operation ID. |
 | Accepted result | A harness result that has passed the task's result, output, no-op, artifact, and validation gates. |
 | Completion record | Durable evidence that an integrated task is already present at a revision; later runs replay it and hydrate its work artifact for dependants. |
@@ -41,6 +41,15 @@ orchestrators.
 3. Compiles the manifest if it is missing or an explicit granularity override
    requires recompilation.
 4. Attaches to, resumes, or submits the active service run for the repository.
+
+Compilation reads the working tree, whereas a task workspace is a clone of the
+committed `forge/<base>` tip: `prepareForgeBranch` creates or fast-forwards that
+ref from HEAD (or the selected base branch), and `prepareWorkspace` in
+`tools/dapr-engine/orchestration/execution-host.ts` checks out its tip. Authored
+documents and agent changes must therefore be committed for the harness to see
+them. Because `run` compiles only when the manifest is missing, an increment
+must pass through `feature-increment-continue` or `compile-manifest` first; the
+authoring readiness gate rejects a run whose team or skills stage is stale.
 
 The `service submit` path uses `submitRepositoryRun` in
 `scripts/forge-launcher/scripts/service-client.ts`. That function reads the
@@ -149,11 +158,11 @@ it becomes durable repository state.
 
 ## 5. Worker-container execution
 
-For the default mode, `ServiceRunRegistry` binds the accepted submission to
-the selected service harness adapter. `ExecutionHost` builds the worker-side
-harness environment, including only the credentials granted for that
-execution, and `executeVerifiedTaskActivity` invokes the adapter on the
-prepared workspace.
+Worker execution is selected explicitly. `ServiceRunRegistry` binds the
+accepted submission to the selected service harness adapter. `ExecutionHost`
+builds the worker-side harness environment, including only the credentials
+granted for that execution, and `executeVerifiedTaskActivity` invokes the
+adapter on the prepared workspace.
 
 The task activity then checks the changed workspace against the task contract:
 
@@ -174,7 +183,8 @@ an unaccepted task result does not become an integrated repository change.
 
 ## 6. Native host-runner dispatch
 
-Host mode is selected in the run's snapshotted settings. Admission also checks
+Host mode is the temporary local default and is recorded in the run's
+snapshotted settings; `--worker-execution` selects the worker instead. Admission also checks
 that a compatible harness is available on the host and that the repository
 has an enabled project capability. If the selected mode is unavailable, the
 service rejects the submission; it does not silently use the worker adapter.
@@ -182,7 +192,7 @@ service rejects the submission; it does not silently use the worker adapter.
 The main path crosses several modules:
 
 1. `ServiceRunRegistry` binds the run to `QueuedHarnessRunner` only for an
-   explicitly host-executed run.
+   host-executed run (the temporary default) or a worker-selected run.
 2. `executeVerifiedTaskActivity` makes a request with stable run, task,
    manifest, logical-attempt, and operation identity.
 3. `QueuedHarnessRunner` validates and enqueues that request in
@@ -280,6 +290,10 @@ opt-in worker harness output; the API reads the bounded per-attempt log. Host
 activity remains in **Runtime log**. The [Git bundle evidence](git-bundle-evidence.md)
 guide explains the checkpoint bundle's role in integration, reconstruction and
 audit.
+
+Phase selection uses the same immutable task graph: a phase run expands to its
+tasks plus prerequisites and ends after the selected phase. See
+[Long-running projects](long-running-projects.md#phase-by-phase-execution).
 
 Host-mode run summaries identify the executor. Run-level events remain the
 source for workflow progress; the runner job view is bounded operational

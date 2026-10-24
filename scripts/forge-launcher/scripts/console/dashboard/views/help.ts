@@ -125,7 +125,7 @@ function quickHelp(): HTMLElement {
       ["Tasks", "filterable, sortable task table with detail, timeout editing, and saved single/range/list selection."],
       ["Logs", "engine and authoring output plus audit and lifecycle event streams."],
       ["Plan & Team", "project documents plus agents and skills grouped into Forge skills and Project skills."],
-      ["Artifacts", "the files and records each task produced."],
+      ["Evidence", "durable work, validation and git-bundle artifacts from integrated service tasks."],
       ["Timeline", "chronological audit events, failures highlighted."],
       ["Projects", "switch to a different project or add a folder."],
     ])]),

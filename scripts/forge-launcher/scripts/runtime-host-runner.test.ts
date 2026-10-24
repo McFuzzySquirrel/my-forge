@@ -13,6 +13,7 @@ import {
   stopHostRunner,
   updateHostRunnerCapability,
 } from "./runtime-host-runner.ts";
+import { currentVersion } from "./update-check.ts";
 
 const roots: string[] = [];
 
@@ -129,6 +130,22 @@ test("host-runner startup waits for service readiness and stops cleanly", { time
 
   try {
     await startHostRunner(dataDir, apiToken, address.port, engineDir, packageDir);
+    assert.equal(await getHostRunnerProcessStatus(dataDir), "running");
+    const pidFile = path.join(dataDir, "host-runner.pid");
+    const started = JSON.parse(await readFile(pidFile, "utf8")) as {
+      instanceId: string;
+      launcherVersion?: string;
+    };
+    assert.equal(started.launcherVersion, currentVersion());
+    // A live runner from an older launcher must be replaced, not reused.
+    await writeFile(pidFile, `${JSON.stringify({ ...started, launcherVersion: "0.0.0-stale" })}\n`, { mode: 0o600 });
+    await startHostRunner(dataDir, apiToken, address.port, engineDir, packageDir);
+    const restarted = JSON.parse(await readFile(pidFile, "utf8")) as {
+      instanceId: string;
+      launcherVersion?: string;
+    };
+    assert.notEqual(restarted.instanceId, started.instanceId);
+    assert.equal(restarted.launcherVersion, currentVersion());
     assert.equal(await getHostRunnerProcessStatus(dataDir), "running");
     await stopHostRunner(dataDir);
     assert.equal(await getHostRunnerProcessStatus(dataDir), "stopped");

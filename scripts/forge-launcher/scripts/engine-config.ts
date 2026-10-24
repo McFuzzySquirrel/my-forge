@@ -21,6 +21,11 @@ export interface PersistedEngineConfig {
   autoCommit?: boolean;
   /** Stream harness CLI activity into docs/forge.log; absent means the engine default (off). */
   logHarnessActivity?: boolean;
+  /**
+   * Explicit executor choice. Absent means the temporary host-runner default.
+   * `hostExecution` is retained for older Console/launcher versions.
+   */
+  executor?: EngineExecutor;
   /** Run selected local harness CLIs on the host with full OS permissions. */
   hostExecution?: boolean;
   /** Execution mode for future run/resume commands. */
@@ -32,7 +37,8 @@ export interface PersistedEngineConfig {
 }
 
 export type ExecutionMode = "auto" | "manual";
-export type SelectionScope = "single" | "range" | "list";
+export type SelectionScope = "single" | "range" | "list" | "phase";
+export type EngineExecutor = "host" | "worker";
 
 export function assertEngineHarnessAvailable(harness: string): void {
   if (harness === "flowforge-kernel") {
@@ -46,7 +52,16 @@ export function normaliseExecutionMode(value: unknown): ExecutionMode {
 
 export function normaliseSelectionScope(value: unknown, selectedTaskIds: string[]): SelectionScope | null {
   if (selectedTaskIds.length === 0) return null;
-  return value === "single" || value === "range" || value === "list" ? value : "list";
+  return value === "single" || value === "range" || value === "list" || value === "phase" ? value : "list";
+}
+
+export function normaliseExecutor(value: unknown): EngineExecutor | undefined {
+  return value === "host" || value === "worker" ? value : undefined;
+}
+
+/** Host is the temporary default; only an explicit `worker` opts out. */
+export function engineConfigExecutor(config: PersistedEngineConfig | null): EngineExecutor {
+  return normaliseExecutor(config?.executor) === "worker" ? "worker" : "host";
 }
 
 export function normaliseSelectedTaskIds(value: unknown): string[] {

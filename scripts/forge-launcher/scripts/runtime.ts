@@ -25,12 +25,14 @@ import {
 } from "./runtime-harnesses.ts";
 import {
   ensureHostRunnerFiles,
+  getHostRunnerLauncherVersion,
   getHostRunnerProcessStatus,
   listEnabledHostRunnerRepositories,
   startHostRunner,
   stopHostRunner,
   updateHostRunnerCapability,
 } from "./runtime-host-runner.ts";
+import { currentVersion } from "./update-check.ts";
 
 const CREDENTIALS_FILE = "runtime.env";
 const APPLIED_REPOSITORIES_FILE = "runtime-applied-repositories.json";
@@ -422,6 +424,12 @@ export interface RuntimeAdminState {
   readonly harnessGrants: Readonly<Record<string, readonly string[]>>;
   readonly startOptions: { readonly hostTools: boolean; readonly postgresPort?: number } | null;
   readonly restartRequired: boolean;
+  /** Launcher version running this command. */
+  readonly launcherVersion: string;
+  /** Launcher version that started the applied runtime, or null when unknown. */
+  readonly appliedLauncherVersion: string | null;
+  /** Version of the launcher that started the current host runner, or null when none is recorded. */
+  readonly hostRunnerLauncherVersion: string | null;
 }
 
 export type RuntimeAdminAction =
@@ -527,6 +535,8 @@ interface AppliedRuntimeState {
   readonly restartRequired?: boolean;
   readonly hostTools?: boolean;
   readonly postgresPort?: number;
+  /** Launcher version that started the applied runtime; absent before build tracking. */
+  readonly launcherVersion?: string;
 }
 
 async function readAppliedRuntimeState(dataDir: string): Promise<AppliedRuntimeState | null> {
@@ -547,7 +557,8 @@ async function readAppliedRuntimeState(dataDir: string): Promise<AppliedRuntimeS
     (parsed.restartRequired !== undefined && typeof parsed.restartRequired !== "boolean") ||
     (parsed.hostTools !== undefined && typeof parsed.hostTools !== "boolean") ||
     (parsed.postgresPort !== undefined &&
-      (typeof parsed.postgresPort !== "number" || !Number.isInteger(parsed.postgresPort) || parsed.postgresPort < 1 || parsed.postgresPort > 65535))) {
+      (typeof parsed.postgresPort !== "number" || !Number.isInteger(parsed.postgresPort) || parsed.postgresPort < 1 || parsed.postgresPort > 65535)) ||
+    (parsed.launcherVersion !== undefined && (typeof parsed.launcherVersion !== "string" || parsed.launcherVersion.length === 0))) {
     throw new Error(`Applied runtime repository state is invalid: ${file}`);
   }
   return parsed as AppliedRuntimeState;
@@ -563,7 +574,13 @@ async function recordAppliedRepositories(dataDir: string, options: RuntimeOption
   };
   const handle = await open(temporary, "wx", 0o600);
   try {
-    await handle.writeFile(`${JSON.stringify({ version: 1, repositories, restartRequired: false, ...startOptions }, null, 2)}\n`, "utf8");
+    await handle.writeFile(`${JSON.stringify({
+      version: 1,
+      repositories,
+      restartRequired: false,
+      launcherVersion: currentVersion(),
+      ...startOptions,
+    }, null, 2)}\n`, "utf8");
     await handle.sync();
   } catch (error) {
     await handle.close();
@@ -585,6 +602,7 @@ async function markRuntimeRestartRequired(dataDir: string): Promise<void> {
       version: 1,
       repositories,
       restartRequired: true,
+      ...(current?.launcherVersion !== undefined ? { launcherVersion: current.launcherVersion } : {}),
       ...(current?.hostTools !== undefined ? { hostTools: current.hostTools } : {}),
       ...(current?.postgresPort !== undefined ? { postgresPort: current.postgresPort } : {}),
     }, null, 2)}\n`, "utf8");
@@ -611,13 +629,26 @@ async function repositoryRestartRequired(
     JSON.stringify(sort(repositories)) !== JSON.stringify(sort(applied.repositories));
 }
 
+/**
+ * Whether the running runtime was applied by a different launcher build.
+ * A record written before build tracking has no version and counts as stale.
+ */
+export function runtimeBuildIsStale(
+  applied: { readonly launcherVersion?: string } | null,
+  launcherVersion: string,
+): boolean {
+  return applied !== null && applied.launcherVersion !== launcherVersion;
+}
+
 export async function getRuntimeAdminState(dataDir = getRuntimeDataDir()): Promise<RuntimeAdminState> {
   const project = getRuntimeProject();
-  const [repositories, harnessGrants, hostRunnerEnabledRepositoryIds, hostRunnerStatus] = await Promise.all([
+  const launcherVersion = currentVersion();
+  const [repositories, harnessGrants, hostRunnerEnabledRepositoryIds, hostRunnerStatus, hostRunnerLauncherVersion] = await Promise.all([
     listRegisteredRepositories(dataDir),
     listHarnessGrants(dataDir),
     listEnabledHostRunnerRepositories(dataDir),
     getHostRunnerProcessStatus(dataDir),
+    getHostRunnerLauncherVersion(dataDir),
   ]);
   let credentialsPresent = false;
   try {
@@ -640,6 +671,9 @@ export async function getRuntimeAdminState(dataDir = getRuntimeDataDir()): Promi
       harnessGrants,
       startOptions: null,
       restartRequired: false,
+      launcherVersion,
+      appliedLauncherVersion: null,
+      hostRunnerLauncherVersion: hostRunnerLauncherVersion ?? null,
     };
   }
 
@@ -650,6 +684,8 @@ export async function getRuntimeAdminState(dataDir = getRuntimeDataDir()): Promi
   const running = containers.some((container) => container.state === "running");
   const diagnostics = await runtimeDiagnostics(containers, environment.values);
   const applied = await readAppliedRuntimeState(dataDir);
+  const appliedLauncherVersion = applied?.launcherVersion ?? null;
+  const buildRestartRequired = running && runtimeBuildIsStale(applied, launcherVersion);
   return {
     project,
     initialized: true,
@@ -667,7 +703,10 @@ export async function getRuntimeAdminState(dataDir = getRuntimeDataDir()): Promi
         hostTools: applied.hostTools,
         ...(applied.postgresPort !== undefined ? { postgresPort: applied.postgresPort } : {}),
       },
-    restartRequired: await repositoryRestartRequired(repositories, running, applied),
+    restartRequired: buildRestartRequired || await repositoryRestartRequired(repositories, running, applied),
+    launcherVersion,
+    appliedLauncherVersion,
+    hostRunnerLauncherVersion: hostRunnerLauncherVersion ?? null,
   };
 }
 
@@ -889,9 +928,19 @@ export async function runtimeCli(args: readonly string[]): Promise<number> {
   const containers = await listRuntimeContainers();
   const diagnostics = await runtimeDiagnostics(containers, environment.values);
   const hints = remediationHints(diagnostics.join("\n"));
+  const dataDir = getRuntimeDataDir();
+  const applied = await readAppliedRuntimeState(dataDir);
+  const installed = currentVersion();
+  const hostRunnerVersion = await getHostRunnerLauncherVersion(dataDir);
+  const build = runtimeBuildIsStale(applied, installed)
+    ? `Runtime build: applied ${applied?.launcherVersion ? `v${applied.launcherVersion}` : "before build tracking"}; `
+      + `installed v${installed}; run "forge-launcher runtime restart" to apply.`
+    : `Runtime build: v${installed}.`;
   process.stdout.write(
     `${output || "No runtime containers are present."}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}` +
-    `\nNative host runner: ${await getHostRunnerProcessStatus(getRuntimeDataDir())}` +
+    `\n${build}` +
+    `\nNative host runner: ${await getHostRunnerProcessStatus(dataDir)}` +
+    `${hostRunnerVersion ? ` (started by v${hostRunnerVersion})` : ""}` +
     `${hints.map((hint) => `\nHint: ${hint}`).join("")}\n`,
   );
   return 0;
@@ -1129,7 +1178,13 @@ export async function executeRuntimeAdminAction(
     return { message: "Local runtime backup restored; the execution service is ready.", restartRequired: false };
   }
   if (action.action === "start" || action.action === "restart") {
-    if (action.action === "restart") {
+    // A new launcher build cannot apply to a runtime that is already running:
+    // the worker container and host runner keep the code they loaded. Recreate
+    // the runtime on `start` when the applied build differs, so installing a
+    // launcher update is not silently ignored.
+    const applied = await readAppliedRuntimeState(dataDir);
+    const buildChanged = action.action === "start" && runtimeBuildIsStale(applied, currentVersion());
+    if (action.action === "restart" || buildChanged) {
       await stopHostRunner(dataDir);
       await compose("down", options, environment);
     }

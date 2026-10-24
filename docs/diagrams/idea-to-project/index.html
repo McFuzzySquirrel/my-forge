@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MyForge · Idea to Completed Project</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --paper: #fbfaf6;
+    --ink: #141a1f;
+    --muted: #5a6570;
+    --line: #d8d3c7;
+    --card: #ffffff;
+    --accent: #0f6b5c;
+    --accent-soft: #dff0ea;
+    --warm: #a45b16;
+    --warm-soft: #f7e8d6;
+    --code: #3d4752;
+    --shadow: 0 1px 2px rgba(20, 26, 31, .06), 0 10px 30px rgba(20, 26, 31, .05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #0f1418;
+      --ink: #e8ecef;
+      --muted: #9aa7b2;
+      --line: #2b343c;
+      --card: #161d23;
+      --accent: #67c9b4;
+      --accent-soft: #14332d;
+      --warm: #e0a366;
+      --warm-soft: #332517;
+      --code: #b9c4ce;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 14px 36px rgba(0, 0, 0, .25);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 56px 28px 80px; }
+  header .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--accent);
+  }
+  .eyebrow::before { content: ""; width: 22px; height: 2px; background: var(--accent); }
+  h1 {
+    margin: 14px 0 10px;
+    font-size: clamp(34px, 5vw, 54px);
+    line-height: 1.04;
+    letter-spacing: -.025em;
+    font-weight: 720;
+  }
+  .deck { max-width: 720px; margin: 0; color: var(--muted); font-size: 18px; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px;
+    font: 500 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .chip {
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 11px;
+    color: var(--muted); background: var(--card);
+  }
+  .chip strong { color: var(--ink); font-weight: 600; }
+
+  .strip {
+    margin: 46px 0 12px; padding: 20px;
+    border: 1px solid var(--line); border-radius: 16px; background: var(--card);
+    box-shadow: var(--shadow);
+  }
+  .strip ol {
+    list-style: none; margin: 0; padding: 0;
+    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0;
+    counter-reset: step;
+  }
+  .strip li {
+    position: relative; padding: 34px 10px 6px; text-align: center;
+    font-size: 13px; font-weight: 600; color: var(--ink);
+  }
+  .strip li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    width: 24px; height: 24px; border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--accent-soft); color: var(--accent);
+    font: 700 11px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .strip li::after {
+    content: ""; position: absolute; top: 12px; left: calc(50% + 18px); right: calc(-50% + 18px);
+    height: 1px; background: var(--line);
+  }
+  .strip li:last-child::after { display: none; }
+  @media (max-width: 720px) {
+    .strip ol { grid-template-columns: repeat(2, 1fr); row-gap: 14px; }
+    .strip li::after { display: none; }
+  }
+
+  section { margin-top: 54px; }
+  .section-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+  h2 { margin: 0; font-size: 13px; letter-spacing: .13em; text-transform: uppercase; color: var(--accent); font-weight: 700; }
+  .section-head p { margin: 0; color: var(--muted); font-size: 14px; }
+  .rule { height: 1px; background: var(--line); margin: 14px 0 18px; }
+
+  .cards { display: grid; gap: 14px; }
+  @media (min-width: 780px) { .cards.two { grid-template-columns: 1fr 1fr; } }
+  a.card {
+    display: block; padding: 22px 22px 20px; text-decoration: none; color: inherit;
+    background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+    box-shadow: var(--shadow); position: relative;
+    transition: transform .15s ease, border-color .15s ease;
+  }
+  a.card:hover, a.card:focus-visible { transform: translateY(-2px); border-color: var(--accent); }
+  a.card:focus-visible { outline: 3px solid var(--accent-soft); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { a.card { transition: none; } a.card:hover { transform: none; } }
+  .card-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .num {
+    font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--accent); background: var(--accent-soft);
+    border-radius: 7px; padding: 6px 8px;
+  }
+  .kind {
+    font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .09em; text-transform: uppercase; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 8px;
+  }
+  .aud {
+    margin-left: auto;
+    font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    letter-spacing: .06em; text-transform: uppercase;
+    color: var(--warm); background: var(--warm-soft); border-radius: 999px; padding: 6px 9px;
+  }
+  .aud.deep { color: var(--accent); background: var(--accent-soft); }
+  h3 { margin: 0 0 6px; font-size: 19px; letter-spacing: -.01em; }
+  a.card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  .read-if {
+    margin-top: 14px; padding-top: 13px; border-top: 1px dashed var(--line);
+    font-size: 13px; color: var(--muted);
+  }
+  .read-if b { color: var(--ink); font-weight: 600; }
+  .arrow { position: absolute; right: 20px; bottom: 18px; color: var(--accent); font-size: 18px; }
+
+  .note {
+    margin-top: 18px; padding: 16px 18px; border-left: 3px solid var(--accent);
+    background: var(--accent-soft); border-radius: 0 12px 12px 0;
+    font-size: 14px; color: var(--ink);
+  }
+  .note b { font-weight: 650; }
+  footer {
+    margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--line);
+    color: var(--muted); font-size: 13px; display: grid; gap: 6px;
+  }
+  footer a { color: var(--accent); }
+  code {
+    font: 500 .92em/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color: var(--code); background: color-mix(in srgb, var(--line) 45%, transparent);
+    padding: 1px 5px; border-radius: 5px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">MyForge · process atlas</span>
+    <h1>From an idea to a completed project</h1>
+    <p class="deck">
+      Ten diagrams, read in order, covering every process in the MyForge pipeline:
+      how an idea becomes reviewed requirements, a specialist team, an executable
+      manifest, a durable run, and finally merged code with durable evidence.
+    </p>
+    <div class="meta">
+      <span class="chip">Codebase <strong>v3.160</strong></span>
+      <span class="chip">Pinned <strong>0e8c179</strong></span>
+      <span class="chip">Updated <strong>24 Oct 2026</strong></span>
+      <span class="chip">Each page is a <strong>standalone interactive diagram</strong></span>
+    </div>
+  </header>
+
+  <nav class="strip" aria-label="Pipeline at a glance">
+    <ol>
+      <li>Idea</li>
+      <li>Requirements</li>
+      <li>Team &amp; manifest</li>
+      <li>Submit</li>
+      <li>Execute</li>
+      <li>Merge &amp; complete</li>
+    </ol>
+  </nav>
+
+  <section aria-labelledby="start">
+    <div class="section-head">
+      <h2 id="start">Start here</h2>
+      <p>Get the shape of the system before diving into a stage.</p>
+    </div>
+    <div class="rule"></div>
+    <div class="cards two">
+      <a class="card" href="01-end-to-end-journey.html">
+        <div class="card-top"><span class="num">01</span><span class="kind">workflow</span><span class="aud">Operator view</span></div>
+        <h3>The whole journey</h3>
+        <p>One map from <code>docs/IDEA.md</code> to merged code. Human decisions and Forge automation in two lanes, with every review gate marked.</p>
+        <div class="read-if"><b>Read this if</b> you are new to MyForge or need the one-slide version.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+      <a class="card" href="02-system-landscape.html">
+        <div class="card-top"><span class="num">02</span><span class="kind">architecture</span><span class="aud">Operator view</span></div>
+        <h3>The system landscape</h3>
+        <p>Console, launcher, adapter, loopback service, Dapr, PostgreSQL, evidence store, host runner, worker container, harness CLIs, and the target repository — with trust boundaries.</p>
+        <div class="read-if"><b>Read this if</b> you need to know what runs where, and who owns durable state.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+    </div>
+  </section>
+
+  <section aria-labelledby="authoring">
+    <div class="section-head">
+      <h2 id="authoring">Requirements to a submitted run</h2>
+      <p>Requirements become an executable contract, then a frozen snapshot. Humans own the first gate; everything after it is derived.</p>
+    </div>
+    <div class="rule"></div>
+    <div class="cards">
+      <a class="card" href="03-requirements-authoring.html">
+        <div class="card-top"><span class="num">03</span><span class="kind">workflow</span><span class="aud">Operator view</span></div>
+        <h3>Requirements authoring</h3>
+        <p>Idea capture, optional grilling, PRD and feature documents, <code>validate-prd</code>, human review, and the fail-closed loops that send bad requirements back.</p>
+        <div class="read-if"><b>Read this if</b> you are writing requirements or wondering why authoring is never headless.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+      <a class="card" href="04-team-and-manifest.html">
+        <div class="card-top"><span class="num">04</span><span class="kind">workflow</span><span class="aud">Operator view</span></div>
+        <h3>Team, skills and manifest</h3>
+        <p>Generate the agent team, optionally assign models, generate project skills, then compile <code>docs/EXECUTION-MANIFEST.json</code>. Includes staleness, re-derivation, and changed-task resets.</p>
+        <div class="read-if"><b>Read this if</b> you edited a PRD and need to know what is now stale.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+      <a class="card" href="05-run-submission.html">
+        <div class="card-top"><span class="num">05</span><span class="kind">sequence</span><span class="aud">Operator view</span></div>
+        <h3>Run submission</h3>
+        <p>The exact round-trip from Console or CLI to the local service: snapshot contents, validation, accepted submission, Dapr scheduling, and status follow.</p>
+        <div class="read-if"><b>Read this if</b> a run was rejected, or you need to know what is frozen at submit time.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+    </div>
+  </section>
+
+  <section aria-labelledby="execution">
+    <div class="section-head">
+      <h2 id="execution">Execution and completion</h2>
+      <p>Where the work actually happens, and what has to be true before it counts.</p>
+    </div>
+    <div class="rule"></div>
+    <div class="cards">
+      <a class="card" href="06-task-attempt.html">
+        <div class="card-top"><span class="num">06</span><span class="kind">sequence</span><span class="aud">Go deeper</span></div>
+        <h3>Task attempt and quality gates</h3>
+        <p>Dapr dispatch, disposable workspace, host or worker harness, output/no-op/structured/validation gates, checkpoint, evidence, completion ledger, and fenced integration.</p>
+        <div class="read-if"><b>Read this if</b> a task failed, replayed, or you need the real acceptance path.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+      <a class="card" href="07-run-lifecycle.html">
+        <div class="card-top"><span class="num">07</span><span class="kind">lifecycle</span><span class="aud">Go deeper</span></div>
+        <h3>Run and task lifecycle</h3>
+        <p>Every run, task and attempt state the schema allows, plus pause, resume, stop, cancel, select-tasks, approval and replay transitions.</p>
+        <div class="read-if"><b>Read this if</b> you are operating a run, or a control did not do what you expected.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+      <a class="card" href="08-artifact-lineage.html">
+        <div class="card-top"><span class="num">08</span><span class="kind">dataflow</span><span class="aud">Go deeper</span></div>
+        <h3>Artifact and change lineage</h3>
+        <p>How requirement IDs become contracts, contracts become a manifest, and a manifest becomes evidence, a <code>forge/&lt;base&gt;</code> branch, and then the base branch.</p>
+        <div class="read-if"><b>Read this if</b> you need to trace where a document or byte ended up.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+    </div>
+  </section>
+
+  <section aria-labelledby="reference">
+    <div class="section-head">
+      <h2 id="reference">Appendix · reference</h2>
+      <p>For maintainers and operators who need the persisted shape and the clock.</p>
+    </div>
+    <div class="rule"></div>
+    <div class="cards two">
+      <a class="card" href="09-durable-state.html">
+        <div class="card-top"><span class="num">09</span><span class="kind">erd</span><span class="aud deep">Reference</span></div>
+        <h3>Durable state model</h3>
+        <p>Thirteen PostgreSQL tables: run state, controls, operation receipts, repository integration, and host-runner jobs — with real columns, keys, and relationships.</p>
+        <div class="read-if"><b>Read this if</b> you are debugging durability, ownership, or replay.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+      <a class="card" href="10-run-timing.html">
+        <div class="card-top"><span class="num">10</span><span class="kind">waterfall</span><span class="aud deep">Illustrative</span></div>
+        <h3>One run on a clock</h3>
+        <p>Submit, schedule, dispatch waves, harness and validation, retry, approval wait, integration, and merge on a shared time axis. Durations are illustrative, not measured.</p>
+        <div class="read-if"><b>Read this if</b> you want intuition for concurrency and where a run spends its time.</div>
+        <span class="arrow" aria-hidden="true">→</span>
+      </a>
+    </div>
+  </section>
+
+  <div class="note">
+    <b>How to read the diagrams.</b> Operator-view pages lead with the flow a person
+    needs; technical material is grouped in a labelled band or card. Reference pages
+    are deliberately denser. Every page supports dark and light themes, live motion,
+    deep links, and export.
+  </div>
+
+  <footer>
+    <span>Source of truth: <a href="../../forge-console.md">docs/forge-console.md</a>, <a href="../../local-execution.md">docs/local-execution.md</a>, <a href="../../forge-launcher.md">docs/forge-launcher.md</a>, and <code>tools/dapr-engine/</code> at revision <code>0e8c179</code>.</span>
+    <span>Generated with Archify. Diagram content is grounded in the cited repository sources; the timing page is explicitly illustrative.</span>
+  </footer>
+</div>
+</body>
+</html>

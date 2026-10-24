@@ -3,6 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 import {
+  engineConfigExecutor,
   loadEngineConfig,
   assertEngineHarnessAvailable,
   normaliseExecutionMode,
@@ -60,8 +61,8 @@ function engineRunArgs(repoRoot: string, executor?: Executor): string[] {
   // The Console states the executor for every run it starts. The saved value is
   // only a pre-selection (and a fallback for a client that predates the
   // selector); it must never override an explicit worker choice.
-  const resolved: Executor = executor ?? (cfg?.hostExecution === true ? "host" : "worker");
-  if (resolved === "host") args.push("--host-execution");
+  const resolved: Executor = executor ?? engineConfigExecutor(cfg);
+  args.push(resolved === "host" ? "--host-execution" : "--worker-execution");
   // The numeric settings are numbers in engine-config.json but strings in argv;
   // passing one through raw makes the job runner's argv scanning throw on
   // `startsWith`, so a Console-started run with a configured concurrency, task

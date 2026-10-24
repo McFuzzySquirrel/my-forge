@@ -46,6 +46,7 @@ Before completing the change:
 | [`docs/forge-console-screenshots.md`](forge-console-screenshots.md) | Visual tour and current UI captures. | Significant UI layout or interaction changes make screenshots stale. |
 | [`docs/prompt-playbook.md`](prompt-playbook.md) | Interactive launcher prompts and expected answers. | Prompt wording, order, defaults, or onboarding behavior changes. |
 | [`docs/running-with-local-models.md`](running-with-local-models.md) | Local-model setup and operation. | Local model providers, configuration, or supported execution paths change. |
+| [`docs/diagrams/idea-to-project/index.html`](diagrams/idea-to-project/index.html) | Ordered process atlas: idea to completed project, with requirement authoring, team/manifest derivation, submission, task attempts, lifecycle, lineage, durable state, and illustrative timing. | A pipeline stage, review gate, command, state, table, or execution boundary shown in a diagram changes. Regenerate the affected diagram and update its sources. |
 
 ### Requirements and authoring
 
@@ -69,6 +70,7 @@ requirements. Legacy layouts and migration rules are documented in
 | [`docs/local-execution.md`](local-execution.md) | Current overview of the local Dapr-backed service-run path, completion evidence, live Console activity, worker execution, and optional host runner. | Service-run responsibilities, runtime topology, execution modes, evidence, observability, or authority boundaries change. |
 | [`docs/local-execution-deep-dive.md`](local-execution-deep-dive.md) | Code-grounded lifecycle and implementation guide for current local execution, validation parity, completion replay, evidence, and Console activity. | Submission, orchestration, runner dispatch, workspace handoff, validation, evidence, recovery, persistence, or implementation seams change. |
 | [`docs/git-bundle-evidence.md`](git-bundle-evidence.md) | Operator explanation of checkpoint Git bundles: what they contain, how integration and reconstruction use them, when to download them, and how to inspect them safely. | Checkpoint capture, completion evidence, Git-bundle transport, reconstruction, or evidence-download behavior changes. |
+| [`docs/long-running-projects.md`](long-running-projects.md) | Long-project operating model: pre-Dapr comparison, limits, recovery, phase-by-phase runs, source-branch merge policy, and P8 boundaries. | Execution limits, phase selection, long-run recovery, host/worker default, or hosted-profile boundaries change. |
 | [`docs/workforce-compiler-deep-dive.md`](workforce-compiler-deep-dive.md) | Workforce compiler and kernel handoff details. | Workforce compilation or handoff behavior changes. |
 | [`docs/testing-guide.md`](testing-guide.md) | Repository testing and validation guidance. | Supported test commands, package setup, or verification practice changes. |
 | `templates/skills/forge-execution-adapter/SKILL.md` | Bootstrapped manifest compiler usage and contract. | Compilation inputs, options, output manifest, or validation behavior change. |
@@ -107,7 +109,6 @@ be treated as hand-maintained source documentation in this repository:
 - `docs/forge.log`
 - `docs/AUTHORING-EVENTS.jsonl`
 - `docs/engine-config.json`
-- `docs/artifacts/` execution briefs and local artifact output
 
 Old `docs/WORKFLOW-STATE.json`, `docs/engine-control.json`, `docs/engine.pid`,
 `docs/PROGRESS.md`, and `docs/engine-run.log` files are read-only history where

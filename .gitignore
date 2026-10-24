@@ -11,3 +11,6 @@ scripts/forge-launcher/resources/tools/
 .env
 .dg/graph.db
 .dg/server.db
+
+# Archify scratch candidates and delivery evidence
+.archify/

@@ -22,6 +22,8 @@ export interface ScriptedInvocation {
   readonly agentPath: string;
   readonly budgetMs: number;
   readonly instructions: string;
+  /** Whether the attempt opted into streaming harness output. */
+  readonly logHarnessActivity: boolean;
   /** Variable names visible to an isolated child process (values are never recorded). */
   readonly childEnvironment: readonly string[];
   readonly childHome?: string;
@@ -58,6 +60,7 @@ export class ScriptedHarness implements HarnessAdapter {
       agentPath: request.agent.path,
       budgetMs: request.budget.timeoutMs,
       instructions: request.instructions,
+      logHarnessActivity: request.logHarnessActivity === true,
       childEnvironment: observed.names,
       ...(observed.home ? { childHome: observed.home } : {}),
     });

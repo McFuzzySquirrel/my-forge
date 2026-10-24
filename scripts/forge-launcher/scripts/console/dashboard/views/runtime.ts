@@ -94,7 +94,7 @@ function renderStatus(): HTMLElement {
     el("div", { className: "row gap" }, [
       statusBadge(state.status),
       el("span", { className: "dim" }, `Compose project: ${state.project}`),
-      state.restartRequired ? statusBadge("restart-required") : el("span", { className: "dim" }, "Repository mounts are current."),
+      state.restartRequired ? statusBadge("restart-required") : el("span", { className: "dim" }, "Runtime is current."),
     ]),
   ];
   if (!state.initialized) {
@@ -122,8 +122,19 @@ function renderStatus(): HTMLElement {
     content.push(el("pre", { className: "runtime-diagnostic" }, diagnostic));
   }
   if (state.restartRequired) {
+    const buildStale = state.appliedLauncherVersion !== state.launcherVersion;
     content.push(el("p", { className: "dim" },
-      "Repository registration changed since the runtime was last started. Use the separate, confirmed Restart action below to apply it."));
+      buildStale
+        ? state.appliedLauncherVersion === null
+          ? `The runtime was started by an older launcher build; this command is v${state.launcherVersion}. Use the separate, confirmed Restart action below to load the installed build.`
+          : `The runtime was started by launcher v${state.appliedLauncherVersion}; this command is v${state.launcherVersion}. Use the separate, confirmed Restart action below to load the installed build.`
+        : "Repository registration changed since the runtime was last started. Use the separate, confirmed Restart action below to apply it."));
+  }
+  if (state.hostRunnerStatus === "running" && state.hostRunnerLauncherVersion !== state.launcherVersion) {
+    content.push(el("p", { className: "dim" },
+      state.hostRunnerLauncherVersion === null
+        ? `The host runner was started by an older launcher build; this command is v${state.launcherVersion}. Starting the runtime now replaces it automatically.`
+        : `The host runner was started by launcher v${state.hostRunnerLauncherVersion}; this command is v${state.launcherVersion}. Starting the runtime now replaces it automatically.`));
   }
   return el("section", { className: "panel" }, content);
 }

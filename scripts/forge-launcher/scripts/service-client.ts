@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { tsImport } from "tsx/esm/api";
+import { parsePhaseIds, resolvePhaseTaskIds } from "./phase-selection.ts";
 import { detectRepoRoot } from "./paths.ts";
 import { resolveResources } from "./resources.ts";
 import { getRuntimeDataDir, readRuntimeApiAccess } from "./runtime.ts";
@@ -338,6 +339,7 @@ export interface RepositoryRunInput {
   readonly branch?: string;
   readonly settings: Readonly<Record<string, number | boolean>>;
   readonly requestedTaskIds: readonly string[];
+  readonly requestedPhaseIds?: readonly string[];
   readonly submissionKey?: string;
 }
 
@@ -354,6 +356,10 @@ export async function submitRepositoryRun(
   } catch {
     throw new Error(`${manifestPath} is missing or invalid; run "forge-launcher compile-manifest" first.`);
   }
+  const phaseTaskIds = input.requestedPhaseIds?.length
+    ? resolvePhaseTaskIds(manifest, input.requestedPhaseIds)
+    : [];
+  const requestedTaskIds = [...new Set([...phaseTaskIds, ...input.requestedTaskIds])];
   const modules = await loadExecutionModules();
   const { agents } = modules.discoverForgeRepo(input.repoRoot, manifest.harnessRoot as string | undefined);
   const branch = prepareForgeBranch(input.repoRoot, input.branch);
@@ -365,7 +371,7 @@ export async function submitRepositoryRun(
     targetRef: branch.targetRef,
     harness: input.harness,
     settings: input.settings,
-    requestedTaskIds: input.requestedTaskIds,
+    requestedTaskIds,
     ...(input.submissionKey ? { submissionKey: input.submissionKey } : {}),
   }, modules.computeManifestDigest);
   const result = await client.submit(submission);
@@ -379,9 +385,9 @@ export async function submitRepositoryRun(
 
 const SERVICE_USAGE = `Usage:
   forge-launcher service submit [--repo <path>] [--harness <h>] [--branch <base>] [--tasks <id,id>]
-                                [--concurrency <n>] [--max-retries <n>] [--retry-delay-ms <ms>]
+                                [--phase <id,id>] [--concurrency <n>] [--max-retries <n>] [--retry-delay-ms <ms>]
                                 [--task-timeout-ms <ms>] [--log-harness-activity|--no-log-harness-activity]
-                                [--allow-noop] [--host-execution] [--key <submission-key>] [--follow]
+                                [--host-execution|--worker-execution] [--key <submission-key>] [--follow]
   forge-launcher service runs [--repo <path>] [--json]
   forge-launcher service status <run-id> [--json]
   forge-launcher service events <run-id> [--after <n>] [--follow] [--json]
@@ -390,8 +396,9 @@ const SERVICE_USAGE = `Usage:
 
 Submits runs to the local execution service ("forge-launcher runtime start").
 The repository must be registered with "forge-launcher runtime repo add".
---host-execution runs the local harness CLI with the user's full OS permissions, outside a task sandbox.
-Enable it only for trusted tasks; it requires the launcher-managed host runner and never falls back.
+Local host execution is the default for now: the launcher-managed host runner runs the CLI installed
+on this machine with your full OS permissions, outside a task sandbox. Use --worker-execution for the
+pinned worker container. Host execution never falls back to the worker.
 Runs integrate into forge/<base>, never the checked-out branch; "merge"
 fast-forwards the checked-out branch to the run's forge branch.
 The worker runs the stub (default here), copilot, claude, and opencode harnesses;
@@ -423,9 +430,11 @@ export async function serviceCli(
     case "submit": {
       const { flags, positional } = parseFlags(rest, {
         "--repo": "value", "--harness": "value", "--branch": "value", "--tasks": "value",
+        "--phase": "value", "--phases": "value",
         "--concurrency": "value", "--max-retries": "value", "--retry-delay-ms": "value",
         "--task-timeout-ms": "value", "--log-harness-activity": "flag", "--no-log-harness-activity": "flag",
-        "--allow-noop": "flag", "--host-execution": "flag", "--key": "value", "--follow": "flag",
+        "--allow-noop": "flag", "--host-execution": "flag", "--worker-execution": "flag",
+        "--key": "value", "--follow": "flag",
       });
       if (positional.length) throw new Error(`Unexpected argument: ${positional[0]}`);
       const repoRoot = detectRepoRoot(path.resolve(flags.get("--repo") ?? process.cwd()));
@@ -440,7 +449,10 @@ export async function serviceCli(
       if (flags.has("--log-harness-activity")) settings.logHarnessActivity = true;
       if (flags.has("--no-log-harness-activity")) settings.logHarnessActivity = false;
       if (flags.has("--allow-noop")) settings.allowNoop = true;
-      if (flags.has("--host-execution")) settings.hostExecution = true;
+      if (flags.has("--host-execution") && flags.has("--worker-execution")) {
+        throw new Error("Choose either --host-execution or --worker-execution, not both.");
+      }
+      settings.hostExecution = !flags.has("--worker-execution");
       const result = await submitRepositoryRun(client, {
         repoRoot,
         repositoryId,
@@ -448,6 +460,7 @@ export async function serviceCli(
         ...(flags.has("--branch") ? { branch: flags.get("--branch")! } : {}),
         settings,
         requestedTaskIds: (flags.get("--tasks") ?? "").split(",").map((id) => id.trim()).filter(Boolean),
+        requestedPhaseIds: parsePhaseIds(flags.get("--phases") ?? flags.get("--phase")),
         ...(flags.has("--key") ? { submissionKey: flags.get("--key")! } : {}),
       }, write);
       write(`${result.reused ? "Reused" : "Submitted"} run ${result.runId} -> ${result.forgeBranch} (${result.status}).\n`);

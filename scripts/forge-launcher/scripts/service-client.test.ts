@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { buildRunSubmission, prepareForgeBranch, ServiceApiError, ServiceClient, serviceCli } from "./service-client.ts";
+import { buildRunSubmission, prepareForgeBranch, ServiceApiError, ServiceClient, serviceCli, submitRepositoryRun } from "./service-client.ts";
 
 const RUN_ID = `run_${"a".repeat(32)}`;
 
@@ -46,6 +46,40 @@ test("submissions freeze agent descriptors into the digested snapshot", () => {
   const generated = buildRunSubmission({ ...{ manifest: { phases: [] }, agents: [], repositoryId: "demo", targetRef: "refs/heads/forge/main", harness: "stub", settings: {}, requestedTaskIds: [] } }, () => "d");
   assert.match(String(generated.submissionKey), /^cli-[0-9a-f-]{36}$/);
   assert.deepEqual(generated.selection, { mode: "auto", requestedTaskIds: [] });
+});
+
+test("phase selection is resolved to task ids before submission", async (t) => {
+  const repo = await repository(t);
+  await mkdir(path.join(repo, "docs"), { recursive: true });
+  await mkdir(path.join(repo, ".agents", "agents"), { recursive: true });
+  await mkdir(path.join(repo, "docs", "features"), { recursive: true });
+  await writeFile(path.join(repo, "docs", "PRD.md"), "# Demo\n");
+  await writeFile(path.join(repo, "docs", "features", "one.md"), "# One\n");
+  await writeFile(path.join(repo, "docs", "EXECUTION-MANIFEST.json"), JSON.stringify({
+    version: "1.0",
+    phases: [
+      { id: "phase-1", tasks: [{ id: "T1" }, { id: "T2" }] },
+      { id: "phase-2", tasks: [{ id: "T3" }] },
+    ],
+  }));
+  let submitted: Record<string, unknown> | undefined;
+  const client = {
+    submit: async (submission: Record<string, unknown>) => {
+      submitted = submission;
+      return { runId: RUN_ID, status: "queued", reused: false };
+    },
+  } as unknown as ServiceClient;
+  const result = await submitRepositoryRun(client, {
+    repoRoot: repo,
+    repositoryId: "demo",
+    harness: "stub",
+    settings: { hostExecution: true },
+    requestedTaskIds: [],
+    requestedPhaseIds: ["phase-2"],
+  }, () => undefined);
+  assert.equal(result.runId, RUN_ID);
+  assert.deepEqual((submitted?.selection as { requestedTaskIds: string[] }).requestedTaskIds, ["T3"]);
+  assert.deepEqual((submitted?.configuration as { settings: unknown }).settings, { hostExecution: true });
 });
 
 test("forge branches start at HEAD, fast-forward when behind, and are kept when diverged", async (t) => {

@@ -20,7 +20,7 @@ const TABLET: Viewport = { width: 720, height: 1100 };
 const MOBILE_L: Viewport = { width: 390, height: 900 };
 const MOBILE_S: Viewport = { width: 320, height: 900 };
 
-const ROUTES = ["home", "overview", "board", "tasks", "logs", "documents", "artifacts", "timeline", "projects", "new", "host-runner"] as const;
+const ROUTES = ["home", "overview", "board", "tasks", "logs", "documents", "timeline", "projects", "new", "host-runner"] as const;
 const VIEWPORTS: Array<[label: string, viewport: Viewport]> = [
   ["1440", WIDE],
   ["1024", MEDIUM],
@@ -145,12 +145,6 @@ function detailTargets(): CaptureTarget[] {
       route: "documents",
       viewport: WIDE,
       prepare: async (page) => { await openDocument(page, "docs/features/auth.md"); },
-    },
-    {
-      name: "artifacts-detail-1440",
-      route: "artifacts",
-      viewport: WIDE,
-      prepare: async (page) => { await clickByText(page, ".doc-item", "solution-001"); },
     },
     {
       name: "help-1440",
@@ -279,7 +273,6 @@ export async function captureGifFrames(browser: Browser, baseUrl: string, frames
     { route: "tasks" },
     { route: "logs" },
     { route: "host-runner" },
-    { route: "artifacts" },
   ];
 
   let index = 0;

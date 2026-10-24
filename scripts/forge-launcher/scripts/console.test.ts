@@ -324,16 +324,11 @@ test("serves the user guide at /guide.md", async () => {
   });
 });
 
-test("serves logs and artifacts", async () => {
+test("serves logs", async () => {
   await withServer(async (server) => {
     const logs = await getJson(`${server.url}/api/logs?lines=1`) as { lines: string[]; truncated: boolean };
     assert.deepEqual(logs.lines, ["line two"]);
     assert.equal(logs.truncated, true);
-
-    const artifacts = await getJson(`${server.url}/api/artifacts`) as { artifacts: Array<{ artifactId: string; type: string }>; types: string[] };
-    assert.equal(artifacts.artifacts.length, 1);
-    assert.equal(artifacts.artifacts[0]!.artifactId, "solution-001");
-    assert.deepEqual(artifacts.types, ["solution.architecture"]);
   });
 });
 
@@ -585,10 +580,19 @@ test("project list, add, and select round-trip through the registry", async () =
   });
 });
 
-test("artifact content path traversal is rejected", async () => {
+test("document content path traversal is rejected", async () => {
   await withServer(async (server) => {
-    const res = await getJson(`${server.url}/api/artifact/content?path=..%2F..%2Fetc%2Fpasswd`);
+    const res = await getJson(`${server.url}/api/docs/content?path=..%2F..%2Fetc%2Fpasswd`);
     assert.equal(res, null);
+  });
+});
+
+test("the retired artifacts API is not served", async () => {
+  await withServer(async (server) => {
+    for (const path of ["/api/artifacts", "/api/artifacts/solution-001", "/api/artifact/content?path=x"]) {
+      const res = await signedFetch(`${server.url}${path}`);
+      assert.equal(res.status, 404, `${path} should no longer be routed`);
+    }
   });
 });
 
@@ -724,10 +728,26 @@ test("engine-config toggles harness activity logging and flows into service-run 
   }, { repoRoot: true, registered: true });
 });
 
-test("host execution requires confirmation and is passed only to explicitly configured runs", async () => {
+test("host execution is the default and worker execution is an explicit opt-out", async () => {
   await withServer(async (server, repo, spawned) => {
     const token = server.token;
+    assert.equal((await getJson(`${server.url}/api/summary`) as { hostExecution: boolean }).hostExecution, true);
+
+    const run = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
+    assert.equal((run.body as { ok: boolean }).ok, true);
+    assert.ok(spawned.calls.at(-1)!.args.includes("--host-execution"));
+
+    const disabled = await postJson(`${server.url}/api/engine-config`, { hostExecution: false }, { "X-Forge-Token": token });
+    assert.equal((disabled.body as { ok: boolean }).ok, true);
     assert.equal((await getJson(`${server.url}/api/summary`) as { hostExecution: boolean }).hostExecution, false);
+    const config = JSON.parse(readFileSync(join(repo, "docs", "engine-config.json"), "utf8"));
+    assert.equal(config.executor, "worker");
+    assert.equal(config.hostExecution, false);
+
+    const workerRun = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
+    assert.equal((workerRun.body as { ok: boolean }).ok, true);
+    assert.ok(spawned.calls.at(-1)!.args.includes("--worker-execution"));
+    assert.ok(!spawned.calls.at(-1)!.args.includes("--host-execution"));
 
     const rejected = await postJson(`${server.url}/api/engine-config`, { hostExecution: true }, { "X-Forge-Token": token });
     assert.equal(rejected.status, 400);
@@ -740,19 +760,7 @@ test("host execution requires confirmation and is passed only to explicitly conf
     );
     assert.equal((enabled.body as { ok: boolean }).ok, true);
     assert.equal((await getJson(`${server.url}/api/summary`) as { hostExecution: boolean }).hostExecution, true);
-    assert.equal(JSON.parse(readFileSync(join(repo, "docs", "engine-config.json"), "utf8")).hostExecution, true);
-
-    const run = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
-    assert.equal((run.body as { ok: boolean }).ok, true);
-    assert.ok(spawned.calls.at(-1)!.args.includes("--host-execution"));
-
-    await postJson(`${server.url}/api/engine-config`, { concurrency: 3 }, { "X-Forge-Token": token });
-    assert.equal(JSON.parse(readFileSync(join(repo, "docs", "engine-config.json"), "utf8")).hostExecution, true);
-    const disabled = await postJson(`${server.url}/api/engine-config`, { hostExecution: false }, { "X-Forge-Token": token });
-    assert.equal((disabled.body as { ok: boolean }).ok, true);
-    const runWithoutHost = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
-    assert.equal((runWithoutHost.body as { ok: boolean }).ok, true);
-    assert.ok(!spawned.calls.at(-1)!.args.includes("--host-execution"));
+    assert.equal(JSON.parse(readFileSync(join(repo, "docs", "engine-config.json"), "utf8")).executor, "host");
   }, { repoRoot: true, registered: true });
 });
 

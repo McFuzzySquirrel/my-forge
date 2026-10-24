@@ -170,6 +170,42 @@ test("without an active run a new run is submitted with service settings", async
   assert.match(output.join(""), /Submitted service run run-new -> forge\/main/);
 });
 
+test("phase selection is passed to the service submission", async () => {
+  const repo = readyRepo();
+  const service = fakeService([]);
+  const output: string[] = [];
+  const code = await serviceEngineRun([
+    "--repo", repo, "--harness", "stub", "--phase", "phase-2",
+  ], dependencies(service, output));
+  assert.equal(code, 0);
+  assert.equal(service.submitted.length, 1);
+  const input = service.submitted[0] as Record<string, unknown>;
+  assert.deepEqual(input.requestedPhaseIds, ["phase-2"]);
+  assert.deepEqual(input.requestedTaskIds, []);
+  assert.deepEqual(input.settings, { hostExecution: true });
+});
+
+test("a legacy hostExecution false setting without an executor uses the host default", async () => {
+  const repo = readyRepo();
+  fs.writeFileSync(path.join(repo, "docs", "engine-config.json"), JSON.stringify({ hostExecution: false }));
+  const service = fakeService([]);
+  const output: string[] = [];
+  const code = await serviceEngineRun(["--repo", repo, "--harness", "stub"], dependencies(service, output));
+  assert.equal(code, 0);
+  const input = service.submitted[0] as Record<string, unknown>;
+  assert.deepEqual(input.settings, { hostExecution: true });
+});
+
+test("worker execution is an explicit opt-out", async () => {
+  const repo = readyRepo();
+  const service = fakeService([]);
+  const output: string[] = [];
+  const code = await serviceEngineRun(["--repo", repo, "--harness", "stub", "--worker-execution"], dependencies(service, output));
+  assert.equal(code, 0);
+  const input = service.submitted[0] as Record<string, unknown>;
+  assert.deepEqual(input.settings, { hostExecution: false });
+});
+
 test("invalid service options are rejected before contacting the service", async () => {
   const repo = readyRepo();
   const service = fakeService([]);

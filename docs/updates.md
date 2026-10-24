@@ -4,6 +4,69 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.160
+
+### Idea-to-project process atlas
+
+- Added an ordered ten-diagram process atlas at
+  [`docs/diagrams/idea-to-project/index.html`](diagrams/idea-to-project/index.html).
+  It covers the end-to-end journey, system landscape, requirements authoring,
+  team/skills/manifest derivation, run submission, task attempts and quality
+  gates, run lifecycle, artifact lineage, the durable PostgreSQL state model, and
+  illustrative run timing.
+- Each diagram is a standalone Archify page with dark/light themes, live motion,
+  deep links, and export. Repository-backed facts cite pinned sources; the
+  timing page is explicitly illustrative.
+- Registered the atlas in the documentation map so pipeline or execution
+  changes trigger a diagram refresh.
+
+---
+
+## October 2026 - v3.159
+
+### Runtime freshness, host activity clarity, and Artifacts retirement
+
+- `runtime start` now replaces a runtime and host runner started by a different
+  `forge-launcher` version, so installing an update takes effect without a
+  separate restart. `runtime status` reports the installed and applied versions
+  and marks the runtime for restart when they differ. Added
+  [ADR-091](adr/091-runtime-build-freshness.md).
+- The Service runs **Activity** action is explicit about host execution: when
+  logging was off at submission it says so, and when it is on it links to the
+  **Runtime log** filtered to `task=<id>`. The Runtime log tab gains a line
+  filter with the same deep link.
+- Removed the Console **Artifacts** view. It read the retired scheduler's
+  repository-local `docs/artifacts/` directory; current runs publish durable
+  work, validation and git-bundle evidence through the service and the
+  **Evidence** view. Legacy repository artifact files are still read for task
+  validation gaps where present.
+- Updated the Console guides, screenshot tour, Help view, and screenshots
+  tooling for the removed view.
+
+---
+
+## October 2026 - v3.158
+
+### Phase-gated runs and the temporary host default
+
+- Added `--phase <id,id>` / `--phases` to `run` and `service submit`, plus
+  Console **Select phase**, **Run phase**, and **Run next phase** actions. A
+  phase run includes prerequisite phases and replays already integrated tasks
+  from the completion ledger. The selected phase ends the run; later phases are
+  not started automatically.
+- Added a `phase` selection scope to saved run configuration.
+- Native host execution is now the temporary default for local runs. Use
+  `--worker-execution`, select **Worker container**, or save an explicit
+  `executor: "worker"` setting to opt out. Host execution still requires the
+  registered repository, host-runner capability and a running host runner, and
+  never falls back to the worker.
+- Added `docs/long-running-projects.md` covering the pre-Dapr comparison,
+  long-project limits, phase-by-phase operation, source-branch merge policy,
+  backup/restore, and P8 boundaries.
+- Added [ADR-090](adr/090-phase-runs-and-host-default.md).
+
+---
+
 ## October 2026 - v3.157
 
 ### Git bundle evidence guide

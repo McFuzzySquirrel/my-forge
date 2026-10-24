@@ -30,8 +30,10 @@ import type {
   ModelInventory,
 } from "./types.ts";
 import {
+  engineConfigExecutor,
   loadEngineConfig,
   normaliseExecutionMode,
+  normaliseExecutor,
   normaliseSelectedTaskIds,
   normaliseSelectionScope,
   saveEngineConfig,
@@ -138,7 +140,7 @@ export function setLogHarnessActivity(p: RepoPaths, enabled: boolean): { ok: boo
 
 export function setHostExecution(p: RepoPaths, enabled: boolean): { ok: boolean; message: string } {
   const existing = loadEngineConfig(p.repoRoot);
-  const cfg = nextEngineConfig(p, existing, { hostExecution: enabled });
+  const cfg = nextEngineConfig(p, existing, { hostExecution: enabled, executor: enabled ? "host" : "worker" });
   saveEngineConfig(p.repoRoot, cfg);
   return {
     ok: true,
@@ -228,7 +230,8 @@ function nextEngineConfig(
     vizPort: existing?.vizPort ?? "",
     autoCommit: existing?.autoCommit,
     logHarnessActivity: existing?.logHarnessActivity,
-    hostExecution: existing?.hostExecution === true,
+    executor: normaliseExecutor(existing?.executor) ?? "host",
+    hostExecution: (normaliseExecutor(existing?.executor) ?? "host") === "host",
     executionMode: normaliseExecutionMode(existing?.executionMode),
     selectionScope: normaliseSelectionScope(existing?.selectionScope, normaliseSelectedTaskIds(existing?.selectedTaskIds)) ?? undefined,
     selectedTaskIds: normaliseSelectedTaskIds(existing?.selectedTaskIds),
@@ -347,7 +350,7 @@ export function summary(p: RepoPaths, serviceRun: ServiceRunSnapshot | null = nu
     defaultTimeoutMs,
     autoCommit: engineCfg?.autoCommit !== false,
     logHarnessActivity: engineCfg?.logHarnessActivity === true,
-    hostExecution: engineCfg?.hostExecution === true,
+    hostExecution: engineConfigExecutor(engineCfg) === "host",
     concurrency: Math.max(0, Number(engineCfg?.concurrency) || 0),
     executionMode: selection.executionMode,
     selectionScope: selection.selectionScope,
@@ -547,7 +550,12 @@ export function logs(p: RepoPaths, lines = 400): LogsResponse {
   return logLines(path, lines);
 }
 
-// ─── Artifacts ───────────────────────────────────────────────────────────────
+// ─── Legacy repository artifact index ────────────────────────────────────────
+//
+// Current service runs publish work/validation/bundle evidence through the
+// completion ledger; the Console reads that through the Evidence view. This
+// index remains only to surface validation limitations recorded by the retired
+// scheduler in older repositories. Do not add new writers.
 
 export function artifacts(p: RepoPaths): ArtifactIndex {
   const dir = p.artifactsDir;
@@ -583,16 +591,6 @@ export function artifacts(p: RepoPaths): ArtifactIndex {
   }
   out.sort((x, y) => y.createdAt.localeCompare(x.createdAt));
   return { artifacts: out, types: [...types].sort() };
-}
-
-export function artifactById(p: RepoPaths, id: string): unknown | null {
-  const dir = p.artifactsDir;
-  if (!fs.existsSync(dir)) return null;
-  for (const subdir of fs.readdirSync(dir)) {
-    const file = path.join(dir, subdir, `${id}.json`);
-    if (fs.existsSync(file)) return readJson(file);
-  }
-  return null;
 }
 
 // ─── Documents ───────────────────────────────────────────────────────────────
@@ -1040,12 +1038,4 @@ export function readDocContent(p: RepoPaths, relPath: string): FileContent | nul
 
 function HARNESS_DIRS(repoRoot: string): string[] {
   return [".agents", ".opencode", ".claude", ".github"].map((r) => path.join(repoRoot, r));
-}
-
-export function readArtifactContent(p: RepoPaths, relPath: string): FileContent | null {
-  const abs = resolveWithin(p.artifactsDir, relPath);
-  if (!abs) return null;
-  const content = readText(abs);
-  if (content === null) return null;
-  return { path: relPath, content };
 }

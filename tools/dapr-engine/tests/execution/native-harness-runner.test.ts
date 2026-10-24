@@ -129,6 +129,23 @@ describe("NativeHarnessRunner", () => {
     assert.equal(await readFile(join(target, "result.txt"), "utf8"), "completed\n");
   });
 
+  it("forwards opt-in harness activity logging to the host harness", async () => {
+    const root = await mkdtemp(join(tmpdir(), "myforge-native-runner-"));
+    roots.push(root);
+    const repository = await makeRepository(root);
+    const harness = new ScriptedHarness(() => ({ files: { "result.txt": "completed\n" } }));
+    const runner = new NativeHarnessRunner({
+      workspacesRoot: join(root, "workspaces"),
+      repositoryRoot: (id) => id === "repo_test" ? repository.path : undefined,
+      harnesses: new Map([[harness.name, harness]]),
+    });
+
+    await runner.run({ ...request("repo_test", repository.baseRevision), logHarnessActivity: true });
+    await runner.run(request("repo_test", repository.baseRevision));
+    assert.equal(harness.invocations[0]?.logHarnessActivity, true);
+    assert.equal(harness.invocations[1]?.logHarnessActivity, false);
+  });
+
   it("rewrites the manifest agent path into the disposable clone", async () => {
     const root = await mkdtemp(join(tmpdir(), "myforge-native-runner-"));
     roots.push(root);

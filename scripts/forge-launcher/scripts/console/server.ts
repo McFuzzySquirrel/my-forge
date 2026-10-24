@@ -732,8 +732,6 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             if (!p) return sendJson(res, 200, { lines: [], truncated: false });
             return sendJson(res, 200, repo.logs(p, count));
           }
-          case "/api/artifacts":
-            return p ? sendJson(res, 200, repo.artifacts(p)) : sendJson(res, 200, { artifacts: [], types: [] });
           case "/api/docs":
             return p ? sendJson(res, 200, repo.docsIndex(p)) : sendJson(res, 200, { entries: [] });
           case "/api/team":
@@ -800,18 +798,6 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           return sendJson(res, result.status, result.body);
         }
 
-        if (urlPath.startsWith("/api/artifacts/")) {
-          if (!p) return sendJson(res, 404, null);
-          const id = decodeURIComponent(urlPath.slice("/api/artifacts/".length));
-          return sendJson(res, 200, repo.artifactById(p, id));
-        }
-        if (urlPath === "/api/artifact/content") {
-          if (!p) return sendJson(res, 404, null);
-          const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");
-          const rel = q.get("path") ?? "";
-          const content = repo.readArtifactContent(p, rel);
-          return content ? sendJson(res, 200, content) : sendJson(res, 404, null);
-        }
         if (urlPath === "/api/docs/content" || urlPath === "/api/team/content") {
           if (!p) return sendJson(res, 404, null);
           const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");

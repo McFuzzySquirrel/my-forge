@@ -122,7 +122,7 @@ export interface Summary {
   autoCommit: boolean;
   /** Stream harness CLI activity into docs/forge.log (engine-config; default off). */
   logHarnessActivity: boolean;
-  /** Execute local harness CLIs on the host with full OS permissions. */
+  /** Execute local harness CLIs on the host with full OS permissions (host is the temporary default). */
   hostExecution: boolean;
   /** Max agents to run in parallel (engine-config; 0 means engine default). */
   concurrency: number;
@@ -237,25 +237,6 @@ export interface TaskRow {
    * view must not offer its approval action.
    */
   unmetPrerequisites: string[];
-}
-
-export interface ArtifactMeta {
-  artifactId: string;
-  type: string;
-  category: string;
-  taskId: string;
-  producedBy: string;
-  status: string;
-  summary: string;
-  confidence?: number;
-  createdAt: string;
-  filesChanged: string[];
-  inputs: string[];
-}
-
-export interface ArtifactIndex {
-  artifacts: ArtifactMeta[];
-  types: string[];
 }
 
 export interface EvidenceArtifactRef {
@@ -439,7 +420,7 @@ export type ControlAction = "run" | "resume" | "pause" | "stop" | "replay" | "dr
 export type AuthoringSessionTarget = "idea" | "prd" | "feature-prd";
 
 export type ExecutionMode = "auto" | "manual";
-export type SelectionScope = "single" | "range" | "list";
+export type SelectionScope = "single" | "range" | "list" | "phase";
 
 export type BackgroundJobType =
   | "create-project"
@@ -637,6 +618,9 @@ export interface RuntimeAdminState {
   harnessGrants: Record<string, string[]>;
   startOptions: { hostTools: boolean; postgresPort?: number } | null;
   restartRequired: boolean;
+  launcherVersion: string;
+  appliedLauncherVersion: string | null;
+  hostRunnerLauncherVersion: string | null;
 }
 
 export type RuntimeAdminAction =

@@ -17,7 +17,7 @@ export function executorFor(summary: Summary | null): Executor {
     choice = null;
     choiceRepo = repoRoot;
   }
-  return choice ?? (summary?.hostExecution === true ? "host" : "worker");
+  return choice ?? (summary?.hostExecution === false ? "worker" : "host");
 }
 
 export function setExecutorChoice(executor: Executor): void {

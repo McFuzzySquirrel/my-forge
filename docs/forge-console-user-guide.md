@@ -147,6 +147,9 @@ Once the build starts, switch between the views to follow the work:
   - Failed tasks stay listed at the lower left with a link into Tasks.
   - The mode and filters are remembered per project.
 - **Tasks**: a sortable, filterable task table with a detail drawer for each task.
+  Use **Select phase**, **Run phase**, or **Run next phase** to operate one phase
+  at a time; prerequisite phases are included and completed tasks replay at no
+  model cost.
 - **Logs**: the repository activity log, the local runtime host-runner log, and
   the live service run-event stream. **Activity log** follows `docs/forge.log`
   for authoring, team, skills, manifest and service-command output; **Runtime
@@ -215,14 +218,15 @@ provider/model table and storage rules. The last successful start's host-tools
 setting and PostgreSQL port prefill later restarts. Operations show progress
 and return actionable errors.
 
-Host execution is off by default. In Overview **Controls**, choose **This
-computer** under **Executor for the next run** only for trusted tasks and confirm
-the warning. The choice applies to that run; **Save as default for this project**
-persists it for later runs. The local CLI uses its existing installation and
-authentication, but runs with your user account's full filesystem, process, and
-network permissions outside a task sandbox. It can read the host CLI auth store,
-runtime credentials, runner capabilities, and other account files. It does not
-use worker harness grants or enforce one-provider isolation. See
+Host execution is the temporary default. **This computer** is preselected under
+**Executor for the next run**. Confirm the warning only for trusted tasks; choose
+**Worker container** or pass `--worker-execution` to opt out. **Save as default
+for this project** persists an explicit `executor` setting for later runs. The
+local CLI uses its existing installation and authentication, but runs with your
+user account's full filesystem, process, and network permissions outside a task
+sandbox. It can read the host CLI auth store, runtime credentials, runner
+capabilities, and other account files. It does not use worker harness grants or
+enforce one-provider isolation. See
 [Harness credentials and execution boundaries](harness-credentials.md#host-execution-warning).
 The host option is disabled, with the reason shown, until the project is
 registered, its runner capability is enabled, and the host runner is running.
@@ -231,9 +235,9 @@ harness-credential grants; there is no automatic fallback between modes.
 
 The executor binds when a run is submitted. Changing the selector while a run is
 active applies to the next run; Overview names the active run's executor. The
-**Service runs** view shows the executor for every run. CLI submission commands
-remain explicit-only (`--host-execution`), so a saved Console preference never
-changes what a script runs.
+**Service runs** view shows the executor for every run. CLI runs use
+`--host-execution`/`--worker-execution` or the saved `executor` setting, so a
+saved Console preference is visible rather than silently changing a script.
 
 ### Manage the host runner
 
@@ -264,11 +268,11 @@ The Overview controls panel offers the same actions you would otherwise issue fr
 For a repository registered with the local runtime, the **Execution
 deployment** panel reads **Local execution service**. In that case these
 controls go to the service's newest run instead of the local engine process,
-and builds run in the runtime's worker by default, with harness credentials
-granted through `forge-launcher runtime harness grant`. The **Executor for the
-next run** selector chooses the worker container or this computer for the next
-run (see [Manage local execution](#manage-local-execution)). A run selected for
-host execution uses the local CLI with full OS permissions. See
+and builds run on this computer by default, using the local CLI with full OS
+permissions. The **Executor for the next run** selector chooses this computer or
+the worker container (the worker uses credentials granted through
+`forge-launcher runtime harness grant`) for the next run. See
+[Manage local execution](#manage-local-execution) and
 [Service runs](forge-console.md#service-runs).
 
 - **Pause**: stop after the current task completes.

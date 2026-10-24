@@ -3,10 +3,10 @@
 MyForge gives a harness CLI only the provider credentials it needs to run a
 task. The boundary depends on the executor:
 
-- **Worker container** (default): the harness runs in the local runtime with
-  per-task UID isolation and an explicit credential grant.
-- **This computer** (host execution): the harness runs as your logged-in OS
+- **This computer** (temporary default): the harness runs as your logged-in OS
   user with your normal CLI authentication. It is **not sandboxed**.
+- **Worker container** (explicit): the harness runs in the local runtime with
+  per-task UID isolation and an explicit credential grant.
 
 This page explains what each mode can read, how to grant credentials, and how
 to limit the damage if one is exposed.

@@ -10,6 +10,10 @@ date: '2026-10-23'
 
 # ADR-081: Native local harness execution without task sandbox
 
+> **Temporary default update:** [ADR-090](090-phase-runs-and-host-default.md)
+> makes the native host runner the temporary local default. Worker execution
+> remains available as an explicit choice.
+
 ## Context
 
 The default worker-container runner uses harness CLIs and operator-granted

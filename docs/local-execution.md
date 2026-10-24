@@ -7,9 +7,9 @@
 This is the system-level overview of the path from a compiled execution
 manifest to verified repository changes. The launcher submits and observes
 runs, Dapr owns durable orchestration, and a harness runner performs each task
-attempt. The default runner invokes a harness in the worker container; an
-explicit host-execution selection delegates that attempt to the local host
-runner.
+attempt. Native host execution is the temporary default: it delegates each
+attempt to the local host runner and the CLI installed on the operator's
+machine. The worker container is an explicit opt-in.
 
 For command syntax and runtime administration, see the
 [launcher guide](forge-launcher.md). For required behavior, see the
@@ -29,8 +29,8 @@ flowchart LR
     E --> F["Dapr Workflow"]
     F --> G["Verified task activity"]
     G --> H{"Runner selected?"}
-    H -->|default| I["Harness in worker container"]
-    H -->|explicit host mode| J["PostgreSQL runner queue"]
+    H -->|default host mode| J["PostgreSQL runner queue"]
+    H -->|explicit worker mode| I["Harness in worker container"]
     J --> K["Launcher-managed host runner"]
     K --> L["Local harness CLI"]
     I --> M["Result admission"]
@@ -53,8 +53,8 @@ The principal responsibilities are:
 | Dapr execution service | Authenticates requests, validates and stores submissions, registers workflows and activities, and exposes run state and controls. |
 | Dapr Workflow | Owns durable run/task scheduling, retries, waits, and control-event handling. |
 | `ExecutionHost` | Executes task activities, supervises attempts, verifies outcomes, publishes checkpoints, and integrates accepted changes. |
-| Worker harness runner | Invokes the selected harness in the worker container; this is the default mode. |
-| Native host runner | Polls the service for jobs and invokes a locally installed harness only when host mode is explicitly selected. |
+| Worker harness runner | Invokes the selected harness in the worker container; explicit opt-in mode. |
+| Native host runner | Polls the service for jobs and invokes the locally installed harness; temporary default mode. |
 | Completion ledger | Records integrated tasks and their artifact refs so later runs can replay completed work. |
 | Forge Console | Projects authoring, live service-run state, and durable evidence; it is an operator client, not an execution authority. |
 
@@ -97,29 +97,29 @@ merge operation to fast-forward the checked-out branch when appropriate.
 
 ## Worker mode and host mode
 
-| | Worker mode (default) | Native host mode (explicit) |
+| | Native host mode (temporary default) | Worker mode (explicit) |
 |---|---|---|
-| Harness process | Runs in the local runtime's worker container. | Runs on the machine that manages the runtime. |
-| Selection | Used when host execution is not requested. | Opted into for a run; the service also requires a capability for that repository. |
-| Provider authentication | Uses credentials granted to the runtime for the selected harness. | Uses that local CLI's normal host authentication. |
-| Workspace handoff | The worker activity operates on its managed workspace. | The host runner clones the registered repository at the accepted base revision, runs in a disposable attempt workspace, and returns a bounded binary Git diff. |
-| Validation | Runs in the worker after installing missing project dependencies; one evidence record is published. | Runs beside the harness in the disposable clone before the delta is returned; the service trusts that evidence. |
-| Permissions | Constrained by the worker container's runtime configuration. | The harness and its child tools run with the operator's normal OS permissions; there is no task sandbox. |
+| Harness process | Runs on the machine that manages the runtime. | Runs in the local runtime's worker container. |
+| Selection | Used when no explicit worker setting is present; the service also requires a capability for that repository. | `--worker-execution`, the Console **Worker container** choice, or `executor: "worker"` in engine config. |
+| Provider authentication | Uses that local CLI's normal host authentication. | Uses credentials granted to the runtime for the selected harness. |
+| Workspace handoff | The host runner clones the registered repository at the accepted base revision, runs in a disposable attempt workspace, and returns a bounded binary Git diff. | The worker activity operates on its managed workspace. |
+| Validation | Runs beside the harness in the disposable clone before the delta is returned; the service trusts that evidence. | Runs in the worker after installing missing project dependencies; one evidence record is published. |
+| Permissions | The harness and its child tools run with the operator's normal OS permissions; there is no task sandbox. | Constrained by the worker container's runtime configuration. |
 
 The runner choice changes where the harness process runs; it does not transfer
 workflow ownership. Dapr remains responsible for scheduling, timeouts,
 validation, checkpoint publication, cancellation, and repository integration.
 Host mode never silently falls back to the worker harness.
 
-Selection is per run and explicit. `run --host-execution`,
-`service submit --host-execution`, and the Console's **Executor for the next
-run** selector request the host runner; omitting them requests the worker. The
-`hostExecution` value saved in `docs/engine-config.json` only preselects the
-Console selector, and CLI submission commands never read it, so a saved
-preference cannot change what a script runs. The Console checks project
-registration, runner capability, and runner readiness before submitting an
-explicit host request; the service remains authoritative and still rejects an
-unavailable host runner with `harness-unavailable`.
+Selection is per run and explicit, but the temporary local default is native
+host execution. `--worker-execution` and the Console's **Worker container**
+choice opt into the worker; an explicit `executor: "worker"` in
+`docs/engine-config.json` is also honored. An absent executor setting means
+host. The Console checks project registration, runner capability, and runner
+readiness before submitting a host request; the service remains authoritative
+and still rejects an unavailable host runner with `harness-unavailable`. Host
+mode never silently falls back to the worker. See
+[Long-running projects](long-running-projects.md) for phase-gated operation.
 
 The host-runner capability authorizes Dapr-to-runner requests for one
 registered repository. It is distinct from provider credentials, the service

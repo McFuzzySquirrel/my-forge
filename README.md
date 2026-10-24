@@ -8,7 +8,7 @@
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 
-**Latest: v3.157** — see [docs/updates.md](docs/updates.md) for release notes.
+**Latest: v3.158** — see [docs/updates.md](docs/updates.md) for release notes.
 
 MyForge is a PRD-first workflow for turning product requirements into working software. It combines structured planning, agent-based implementation, and execution orchestration in one path so a project can move from concept to build without losing the review checkpoints that matter.
 
@@ -24,9 +24,10 @@ converted before building. See [Canonical Features](docs/canonical-features.md).
 - Supports guided, interactive authoring and unattended service-backed builds.
 - Includes a local web console for authoring, live run monitoring, durable task
   evidence, and complete local runtime administration.
-- Supports two Dapr-backed harness execution modes: the default worker container
-  uses runtime-provided CLIs and granted credentials; explicit native-host
-  execution uses your locally installed CLI and its normal authentication.
+- Supports two Dapr-backed harness execution modes: native host execution is
+  the temporary default and uses your locally installed CLI and normal
+  authentication; the worker container uses runtime-provided CLIs and granted
+  credentials. Both remain explicit per-run choices.
 - Native-host execution is unsandboxed, runs with the logged-in user's full OS
   permissions, and never silently falls back to worker-container execution.
 - Keeps completion evidence, validation results, and Git bundles across runs so
@@ -42,11 +43,12 @@ checkpoints, completion evidence and Git integration.
 
 A task's harness can run in two explicit locations:
 
-- **Worker container (default):** the pinned CLI runs inside the Forge worker
-  with credentials granted through `forge-launcher runtime harness grant`.
-- **Native host runner (opt-in):** a launcher-managed process invokes your
-  locally installed, locally authenticated CLI with your full OS permissions.
-  It is not sandboxed and never silently falls back to the worker.
+- **Native host runner (temporary default):** a launcher-managed process invokes
+  your locally installed, locally authenticated CLI with your full OS
+  permissions. It is not sandboxed and never silently falls back to the worker.
+- **Worker container:** the pinned CLI runs inside the Forge worker with
+  credentials granted through `forge-launcher runtime harness grant`. Select it
+  in the Console or pass `--worker-execution` to opt out for a run.
 
 The Forge Console reads service-backed run status and lifecycle events live,
 and reads durable work/validation/bundle evidence from the service. Authoring,
@@ -81,10 +83,10 @@ the full screenshot walkthrough, including current responsive captures.
 
 - Node.js 18+
 - Git
-- A compatible harness CLI for interactive authoring. Dapr-backed runs use
-  runtime-provided CLIs in the default worker-container mode; optional
-  native-host mode requires the selected CLI to be installed and authenticated
-  locally.
+- A compatible harness CLI for interactive authoring. Native host execution is
+  the temporary default and requires that CLI to be installed and authenticated
+  locally; the explicit worker-container mode uses runtime-provided CLIs and
+  runtime-granted credentials.
 - **Rootless Podman** with a Compose provider for the local Dapr execution
   service. Podman runs the worker container, PostgreSQL, Dapr, and the runtime
   data volumes. Even native-host runs require the local service runtime.
@@ -191,8 +193,8 @@ release notes, see [docs/updates.md](docs/updates.md).
 
 1. Capture your idea and review the PRD and feature contracts.
 2. Generate the agent team, project skills, and execution manifest.
-3. Run the build through the local Dapr execution service, using the worker
-   container by default or the explicit host runner when selected.
+3. Run the build through the local Dapr execution service, using the native host
+   runner (the temporary default) or the explicit worker container.
 4. Review live run status, logs, and durable evidence in the Console or with
    `forge-launcher service`.
 
@@ -204,7 +206,8 @@ release notes, see [docs/updates.md](docs/updates.md).
   manifest consumed by the service.
 - Dapr execution service — durable orchestration, task controls, validation,
   checkpointing, completion replay, and Git integration.
-- Worker container and native host runner — the two explicit harness locations.
+- Native host runner and worker container — the two explicit harness locations;
+  host execution is the temporary default.
 - Runtime evidence store — completion records plus content-addressed work,
   validation, and [Git-bundle](docs/git-bundle-evidence.md) artifacts.
 - Forge Console — a local web UI for authoring, live service-run monitoring,
@@ -213,6 +216,7 @@ release notes, see [docs/updates.md](docs/updates.md).
 ## Documentation
 
 - [Local execution architecture](docs/local-execution.md)
+- [Long-running projects and phase-by-phase operation](docs/long-running-projects.md)
 - [Local execution deep dive](docs/local-execution-deep-dive.md)
 - [Task contracts](docs/task-contracts.md)
 - [Forge Launcher reference](docs/forge-launcher.md)

@@ -122,7 +122,7 @@ export interface Summary {
   autoCommit: boolean;
   /** Stream harness CLI activity into docs/forge.log (engine-config; default off). */
   logHarnessActivity: boolean;
-  /** Execute local harness CLIs on the host with full OS permissions. */
+  /** Execute local harness CLIs on the host with full OS permissions (host is the temporary default). */
   hostExecution: boolean;
   /** Max agents to run in parallel (engine-config; 0 means engine default). */
   concurrency: number;
@@ -439,7 +439,7 @@ export type ControlAction = "run" | "resume" | "pause" | "stop" | "replay" | "dr
 export type AuthoringSessionTarget = "idea" | "prd" | "feature-prd";
 
 export type ExecutionMode = "auto" | "manual";
-export type SelectionScope = "single" | "range" | "list";
+export type SelectionScope = "single" | "range" | "list" | "phase";
 
 export type BackgroundJobType =
   | "create-project"

@@ -4,6 +4,28 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.158
+
+### Phase-gated runs and the temporary host default
+
+- Added `--phase <id,id>` / `--phases` to `run` and `service submit`, plus
+  Console **Select phase**, **Run phase**, and **Run next phase** actions. A
+  phase run includes prerequisite phases and replays already integrated tasks
+  from the completion ledger. The selected phase ends the run; later phases are
+  not started automatically.
+- Added a `phase` selection scope to saved run configuration.
+- Native host execution is now the temporary default for local runs. Use
+  `--worker-execution`, select **Worker container**, or save an explicit
+  `executor: "worker"` setting to opt out. Host execution still requires the
+  registered repository, host-runner capability and a running host runner, and
+  never falls back to the worker.
+- Added `docs/long-running-projects.md` covering the pre-Dapr comparison,
+  long-project limits, phase-by-phase operation, source-branch merge policy,
+  backup/restore, and P8 boundaries.
+- Added [ADR-090](adr/090-phase-runs-and-host-default.md).
+
+---
+
 ## October 2026 - v3.157
 
 ### Git bundle evidence guide

@@ -379,7 +379,7 @@ button shows the exact command to run manually.
 | **Home** | create a new project or open an existing one (landing), including live status labels for detached work. |
 | **Overview** | latest Dapr run status, progress + counts, blockers, the pipeline next-step card with a **Manual build** checkbox, background-job status, run controls, an **auto-commit** toggle, a **Log harness activity** toggle, and a **Launch \<harness\> CLI** button. Also the **Re-derive team & skills** panel when authoring is stale, and manifest reconciliation with a confirmed **Reset changed tasks for review**. |
 | **Board** | the PixiJS Forge Board in **Kanban** or **Gantt** mode, with status filters and a **Table** view of the same data. |
-| **Tasks** | every task in a filterable/sortable table with a detail drawer, editable per-task timeout, explicit/range selection controls for manual mode, and a **Launch \<harness\> CLI** button. |
+| **Tasks** | every task in a filterable/sortable table with a detail drawer, editable per-task timeout, task/range/phase selection for manual mode, **Run phase** and **Run next phase** actions, and a **Launch \<harness\> CLI** button. See [Long-running projects](long-running-projects.md#phase-by-phase-execution). |
 | **Logs** | activity log (`docs/forge.log`), runtime host-runner log, and live service run events. |
 | **Plan & Team** | authoring settings and stage cards — always actionable, each stating why it is stale — plus the project documents (IDEA, PRD, features, progress, model plan) as a table that opens a document in a wide popup, and agents and skills in collapsible card sections. Requirement and task blocks render as tables. |
 | **Artifacts** | repository-local structured outputs (`docs/artifacts/`), browsable by type/task with previews. |
@@ -421,19 +421,20 @@ The **Executor for the next run** selector sits in the Overview **Controls**
 panel, above **Run** and **Resume**; it is available before the first build too,
 so the initial **Start build** uses the same choice:
 
-- **Worker container** (default) runs the harness CLIs pinned in the worker
-  image with runtime-granted credentials.
-- **This computer** delegates the attempt to the launcher-managed host runner,
-  which uses the CLI installed on the operator's machine and its normal login.
-  The harness and its child processes have the operator's full OS permissions;
-  there is no task sandbox.
+- **This computer** (temporary default) delegates the attempt to the
+  launcher-managed host runner, which uses the CLI installed on the operator's
+  machine and its normal login. The harness and its child processes have the
+  operator's full OS permissions; there is no task sandbox.
+- **Worker container** runs the harness CLIs pinned in the worker image with
+  runtime-granted credentials.
 
 The choice applies to the next **Run** or **Resume**; it does not rewrite the
-project default. **Save as default for this project** stores it in
-`docs/engine-config.json`, and the selector preselects that saved value. A
-per-run choice is sent with the run request, so selecting the worker once does
-not disturb a saved host default, and selecting host once does not persist it to
-later runs.
+project default. **Save as default for this project** stores an explicit
+`executor` in `docs/engine-config.json`, and the selector preselects that saved
+value. A per-run choice is sent with the run request, so selecting the worker
+once does not disturb a saved host default, and selecting host once does not
+persist it to later runs. Projects without an explicit `executor` use the host
+runner under the temporary default.
 
 The host option is disabled when readiness cannot be verified, with the reason
 shown inline: the project must be registered with the runtime, its host-runner
@@ -445,9 +446,9 @@ back to the worker.
 
 The executor binds at submission. Selecting a different executor while a run is
 active affects the next run; Overview names the active run's executor, and the
-**Service runs** view shows it for every run. CLI submission commands are
-explicit-only (`--host-execution`), so a saved Console preference cannot change
-what a script runs.
+**Service runs** view shows it for every run. CLI runs use the explicit
+`--host-execution`/`--worker-execution` choice or the saved `executor` setting;
+they never silently fall back to the other mode.
 
 ### Service runs
 
@@ -597,7 +598,7 @@ run should behave (the per-run executor is the exception):
   **Resume selected**.
 
 Manual selections are stored in `docs/engine-config.json` with the run mode, the
-selection scope (`single`, `range`, or `list`), and the selected task IDs. The
+selection scope (`single`, `range`, `list`, or `phase`), and the selected task IDs. The
 engine expands dependencies automatically when a selected task needs them, so
 targeted runs still obey the DAG and phase ordering.
 

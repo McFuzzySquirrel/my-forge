@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadEngineConfig } from "./engine-config.ts";
+import { engineConfigExecutor, loadEngineConfig } from "./engine-config.ts";
+import { parsePhaseIds } from "./phase-selection.ts";
 import { authoringReadiness } from "./authoring-state.ts";
 import { runCommand } from "./format.ts";
 import { detectRepoRoot } from "./paths.ts";
@@ -91,11 +92,12 @@ const IGNORED_FLAGS: Readonly<Record<string, string>> = {
 const VALUE_FLAGS = new Set([
   "--repo", "--harness", "--concurrency", "--task-timeout-ms", "--granularity", "--max-retries",
   "--retry-delay-ms", "--heartbeat-ms", "--viz-port", "--commit-message-template", "--execution-mode",
-  "--selection-scope", "--selected-tasks",
+  "--selection-scope", "--selected-tasks", "--phase", "--phases",
 ]);
 const BOOLEAN_FLAGS = new Set([
   "--yes", "--dry-run", "--viz", "--no-open", "--allow-noop", "--run-validation", "--log-harness-activity",
-  "--no-log-harness-activity", "--auto-commit", "--no-auto-commit", "--host-execution", "--stop", "--pause",
+  "--no-log-harness-activity", "--auto-commit", "--no-auto-commit", "--host-execution", "--worker-execution",
+  "--stop", "--pause",
 ]);
 
 function parseEngineRunArgs(args: readonly string[]): Map<string, string> {
@@ -199,15 +201,19 @@ export async function serviceEngineRun(
   if (granularity && granularity !== "fine" && granularity !== "coarse") {
     throw new Error(`Invalid --granularity '${granularity}'. Choose 'fine' or 'coarse'.`);
   }
-  const executionMode = flags.get("--execution-mode") ?? "auto";
+  const requestedPhaseIds = parsePhaseIds(flags.get("--phases") ?? flags.get("--phase"));
+  const executionMode = flags.get("--execution-mode") ?? (requestedPhaseIds.length ? "manual" : "auto");
   if (executionMode !== "auto" && executionMode !== "manual") {
     throw new Error(`Invalid --execution-mode '${executionMode}'. Choose 'auto' or 'manual'.`);
+  }
+  if (requestedPhaseIds.length > 0 && executionMode !== "manual") {
+    throw new Error("--phase requires manual execution; omit --execution-mode or set it to manual.");
   }
   const requestedTaskIds = executionMode === "manual"
     ? (flags.get("--selected-tasks") ?? "").split(",").map((id) => id.trim()).filter(Boolean)
     : [];
-  if (executionMode === "manual" && requestedTaskIds.length === 0) {
-    throw new Error("Manual execution needs --selected-tasks <id,id,...>.");
+  if (executionMode === "manual" && requestedTaskIds.length === 0 && requestedPhaseIds.length === 0) {
+    throw new Error("Manual execution needs --selected-tasks <id,id,...> or --phase <id,id,...>.");
   }
   const settings: Record<string, number | boolean> = {};
   const engineConfig = loadEngineConfig(repoRoot);
@@ -232,7 +238,13 @@ export async function serviceEngineRun(
       : engineConfig?.logHarnessActivity === true;
   if (logHarnessActivity) settings.logHarnessActivity = true;
   if (flags.has("--allow-noop") || process.env.FORGE_ENGINE_ALLOW_NOOP === "1") settings.allowNoop = true;
-  if (flags.has("--host-execution")) settings.hostExecution = true;
+  if (flags.has("--host-execution") && flags.has("--worker-execution")) {
+    throw new Error("Choose either --host-execution or --worker-execution, not both.");
+  }
+  const workerExecution = flags.has("--worker-execution");
+  settings.hostExecution = workerExecution
+    ? false
+    : flags.has("--host-execution") || engineConfigExecutor(engineConfig) === "host";
 
   const executionModeLabel = settings.hostExecution === true ? "native host (full OS permissions)" : "worker";
   write(`forge-run: repo=${repoRoot} deployment=local service repository=${repositoryId} harness=${harness} execution=${executionModeLabel}\n`);
@@ -248,7 +260,7 @@ export async function serviceEngineRun(
     }
   }
   if (!client) {
-    write(`  [dry-run] would resume the active service run or submit a new one with ${JSON.stringify({ harness, settings, requestedTaskIds })}.\n`);
+    write(`  [dry-run] would resume the active service run or submit a new one with ${JSON.stringify({ harness, settings, requestedTaskIds, requestedPhaseIds })}.\n`);
     return 0;
   }
 
@@ -272,7 +284,7 @@ export async function serviceEngineRun(
     }
   } else {
     const submitted = await (dependencies.submit ?? submitRepositoryRun)(client, {
-      repoRoot, repositoryId, harness, settings, requestedTaskIds,
+      repoRoot, repositoryId, harness, settings, requestedTaskIds, requestedPhaseIds,
     }, write);
     runId = submitted.runId;
     forgeBranch = submitted.forgeBranch;

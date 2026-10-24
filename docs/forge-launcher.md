@@ -134,9 +134,10 @@ npx forge-launcher@beta bootstrap [TARGET_DIR] ... [--init-git]
                               [--runner <copilot|opencode|claude|inherit>]
 npx forge-launcher@beta run [--repo <path>] [--harness <h>] [--concurrency <n>]
                               [--task-timeout-ms <ms>] [--yes] [--dry-run]
-                              [--allow-noop] [--run-validation] [--host-execution]
+                              [--allow-noop] [--run-validation] [--host-execution|--worker-execution]
                               [--log-harness-activity|--no-log-harness-activity]
                               [--auto-commit|--no-auto-commit] [--commit-message-template <tmpl>]
+                              [--execution-mode auto|manual] [--selected-tasks <id,id>] [--phase <id,id>]
 npx forge-launcher@beta resume [--repo <path>] [--non-interactive] [--dry-run]
 npx forge-launcher@beta console [--repo <path>] [--port <n>] [--no-open]
 npx forge-launcher@beta runtime start [--host-tools] [--postgres-port <n>]
@@ -149,8 +150,8 @@ npx forge-launcher@beta runtime restore --from <backup-directory> --confirm [--a
 npx forge-launcher@beta runtime repo add <path> [--id <id>] | list | remove <id>
 npx forge-launcher@beta runtime runner <enable|rotate|revoke> <repository-id>
 npx forge-launcher@beta service submit [--repo <path>] [--harness <h>] [--branch <base>]
-                              [--tasks <id,id>] [--concurrency <n>] [--max-retries <n>]
-                              [--retry-delay-ms <ms>] [--allow-noop] [--host-execution]
+                              [--tasks <id,id>] [--phase <id,id>] [--concurrency <n>] [--max-retries <n>]
+                              [--retry-delay-ms <ms>] [--allow-noop] [--host-execution|--worker-execution]
                               [--key <key>] [--follow]
 npx forge-launcher@beta service runs [--repo <path>] [--json]
 npx forge-launcher@beta service status <run-id> [--json]
@@ -207,15 +208,16 @@ add` enables a capability for that repository; `runtime runner enable|rotate|rev
 stopped. The per-repository capability authorizes Dapr-to-runner requests only;
 it is separate from provider credentials and runtime tokens.
 
-Runs use the worker by default. `run --host-execution` or
-`service submit --host-execution` explicitly selects the locally installed CLI
-and its normal local authentication. Host execution is **not sandboxed**: the
-CLI and its child tools run as the logged-in user with access to that account's
-files, processes, and network, not only the registered project. Use it only for
+Host execution is the temporary default. `run` and `service submit` use the
+launcher-managed host runner unless `--worker-execution` is passed or the saved
+`executor` is `"worker"`. Host execution is **not sandboxed**: the CLI and its
+child tools run as the logged-in user with access to that account's files,
+processes, and network, not only the registered project. Use it only for
 trusted tasks. A missing or unavailable host runner fails closed; the launcher
-never falls back silently to the worker CLI. The Console's Overview has the
-equivalent per-run choice; its saved project default only preselects that
-selector, and the CLI never reads it.
+never falls back silently to the worker CLI. The Console's Overview exposes the
+equivalent per-run choice, and **Save as default** writes an explicit `executor`
+value. An old `hostExecution: false` value without an explicit `executor` is
+treated as host under the temporary default.
 
 The Console's **Runtime** view provides local controls for runtime lifecycle,
 reset, backup/restore, token rotation, repository registration, and harness
@@ -435,8 +437,9 @@ local service:
   `docs/forge.log`. When the run completes, it fast-forwards the
   checked-out branch to `forge/<branch>`.
 - `--concurrency`, `--max-retries`, `--retry-delay-ms`, `--allow-noop`,
-  `--granularity`, and task selection apply to new runs. An active run keeps
-  its settings and harness.
+  `--granularity`, `--phase` and task selection apply to new runs. An active run
+  keeps its settings and harness. A phase run includes its prerequisite phases;
+  already integrated tasks replay from the completion ledger.
 - `run --stop`/`--pause` send service controls.
 - Flags with no service meaning (timeouts, heartbeats, `--viz`, commit
   options) are reported as ignored.
@@ -1530,6 +1533,8 @@ air-gapped machine (`podman save`/`podman load`) is not yet supported.
 |---|---|
 | Service runs with `copilot`, `claude`, or `opencode` and no credential grant | Rejected at submission (`harness-unavailable`). Run `runtime harness grant <harness> <VARIABLE>`. |
 | `run --task-timeout-ms` for registered repositories | Applied as the fallback for tasks that do not have a manifest `timeoutMs`; per-task manifest values win. Changes apply to new runs because the run snapshot is immutable. |
+| `run --phase <id>` | Runs all tasks in the selected phase plus manifest prerequisites. Completed prerequisites replay from the completion ledger. The last task commit is the phase code tip; use `service merge` to advance the checked-out branch. |
+| `--worker-execution` | Explicitly selects the pinned worker container for this run. An explicit `executor: "worker"` in engine config opts out for future runs. |
 | `run --log-harness-activity` for registered repositories | Captures each attempt's activity. Worker output is available from the Service runs **Activity** action; host output appears in the Runtime log. |
 | `run --heartbeat-ms`, `--viz`, `--viz-port`, `--run-validation`, `--auto-commit`, `--commit-message-template` for registered repositories | Ignored with a note. The service applies its own budgets, validation, and per-task commits, and the Console **Service runs** view replaces the board. |
 | `FORGE_DEPLOYMENT=hosted` | Not available until shared access is qualified (P8). |

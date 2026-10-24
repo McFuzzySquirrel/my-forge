@@ -30,8 +30,10 @@ import type {
   ModelInventory,
 } from "./types.ts";
 import {
+  engineConfigExecutor,
   loadEngineConfig,
   normaliseExecutionMode,
+  normaliseExecutor,
   normaliseSelectedTaskIds,
   normaliseSelectionScope,
   saveEngineConfig,
@@ -138,7 +140,7 @@ export function setLogHarnessActivity(p: RepoPaths, enabled: boolean): { ok: boo
 
 export function setHostExecution(p: RepoPaths, enabled: boolean): { ok: boolean; message: string } {
   const existing = loadEngineConfig(p.repoRoot);
-  const cfg = nextEngineConfig(p, existing, { hostExecution: enabled });
+  const cfg = nextEngineConfig(p, existing, { hostExecution: enabled, executor: enabled ? "host" : "worker" });
   saveEngineConfig(p.repoRoot, cfg);
   return {
     ok: true,
@@ -228,7 +230,8 @@ function nextEngineConfig(
     vizPort: existing?.vizPort ?? "",
     autoCommit: existing?.autoCommit,
     logHarnessActivity: existing?.logHarnessActivity,
-    hostExecution: existing?.hostExecution === true,
+    executor: normaliseExecutor(existing?.executor) ?? "host",
+    hostExecution: (normaliseExecutor(existing?.executor) ?? "host") === "host",
     executionMode: normaliseExecutionMode(existing?.executionMode),
     selectionScope: normaliseSelectionScope(existing?.selectionScope, normaliseSelectedTaskIds(existing?.selectedTaskIds)) ?? undefined,
     selectedTaskIds: normaliseSelectedTaskIds(existing?.selectedTaskIds),
@@ -347,7 +350,7 @@ export function summary(p: RepoPaths, serviceRun: ServiceRunSnapshot | null = nu
     defaultTimeoutMs,
     autoCommit: engineCfg?.autoCommit !== false,
     logHarnessActivity: engineCfg?.logHarnessActivity === true,
-    hostExecution: engineCfg?.hostExecution === true,
+    hostExecution: engineConfigExecutor(engineCfg) === "host",
     concurrency: Math.max(0, Number(engineCfg?.concurrency) || 0),
     executionMode: selection.executionMode,
     selectionScope: selection.selectionScope,

@@ -32,11 +32,11 @@ Usage:
                             [--retry-delay-ms <ms>] [--heartbeat-ms <ms>] [--yes] [--dry-run]
                             [--viz [--viz-port <n>]] [--no-open]
                             [--allow-noop] [--run-validation]
-                            [--host-execution]
+                            [--host-execution|--worker-execution]
                             [--log-harness-activity|--no-log-harness-activity]
                             [--auto-commit|--no-auto-commit] [--commit-message-template <tmpl>]
-                            [--execution-mode <auto|manual>] [--selection-scope <single|range|list>]
-                            [--selected-tasks <id,id,...>] [--stop] [--pause]
+                            [--execution-mode <auto|manual>] [--selection-scope <single|range|list|phase>]
+                            [--selected-tasks <id,id,...>] [--phase <id,id,...>] [--stop] [--pause]
   forge-launcher resume [--repo <path>] [--non-interactive] [--dry-run]
   forge-launcher draft-prd [--repo <path>]      # reports the interactive PRD handoff (ADR-060)
   forge-launcher draft-existing-prd [--repo <path>] # reports the interactive PRD handoff
@@ -83,9 +83,10 @@ Deployment:
   manifest timeout and --log-harness-activity to the selected runner's activity
   log. They ignore --heartbeat-ms, --viz, --run-validation, and auto-commit
   options because the service owns those behaviors.
-  --host-execution runs the local harness CLI with your full OS permissions, outside a task
-  sandbox. Enable only for trusted tasks; the launcher-managed host runner is required and
-  there is no fallback to the worker.
+  Local host execution is the default: the launcher-managed host runner runs the CLI installed
+  on this machine with your full OS permissions, outside a task sandbox, and never falls back.
+  --worker-execution selects the pinned worker container instead. Confirm host-runner readiness
+  on the Console Host runner page.
 
 run control:
   --stop              Stop the active local service run after the current task.

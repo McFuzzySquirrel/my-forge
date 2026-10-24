@@ -25,6 +25,7 @@ let selectionScope: SelectionScope | null = null;
 let refreshGeneration = 0;
 let rangeStartControl: HTMLSelectElement | null = null;
 let rangeEndControl: HTMLSelectElement | null = null;
+let phaseControl: HTMLSelectElement | null = null;
 
 export function unmountTasks(): void {
   for (const u of unsub) u();
@@ -41,6 +42,7 @@ export function unmountTasks(): void {
   selectionScope = null;
   rangeStartControl = null;
   rangeEndControl = null;
+  phaseControl = null;
   refreshGeneration += 1;
 }
 
@@ -119,6 +121,11 @@ export async function renderTasks(container: HTMLElement): Promise<void> {
   const rangeEnd = el("select", { className: "replay-select" });
   rangeStartControl = rangeStart as HTMLSelectElement;
   rangeEndControl = rangeEnd as HTMLSelectElement;
+  const phaseSelect = el("select", { className: "replay-select", "aria-label": "Phase" });
+  phaseControl = phaseSelect as HTMLSelectElement;
+  const selectPhase = el("button", { className: "btn btn-sm" }, "Select phase");
+  const runPhase = el("button", { className: "btn btn-sm" }, "Run phase");
+  const runNextPhase = el("button", { className: "btn btn-sm" }, "Run next phase");
   const addRange = el("button", { className: "btn btn-sm" }, "Add range");
   const saveSelection = el("button", { className: "btn btn-sm" }, "Save selection");
   const clearSelection = el("button", { className: "btn btn-sm" }, "Clear");
@@ -146,6 +153,15 @@ export async function renderTasks(container: HTMLElement): Promise<void> {
         runSelection,
         resumeSelection,
       ]),
+      el("div", { className: "row gap wrap", style: "margin:0 0 8px" }, [
+        el("span", { className: "dim small" }, "Phase selection"),
+        phaseSelect,
+        selectPhase,
+        runPhase,
+        runNextPhase,
+      ]),
+      el("p", { className: "dim small", style: "margin:0 0 8px" },
+        "A phase run includes prerequisite phases; already integrated tasks replay at no model cost."),
       el("div", { className: "row gap", style: "margin:0 0 4px" }, [
         el("span", { className: "dim small" }, "Set every task's timeout:"),
         allTimeoutInput,
@@ -156,6 +172,25 @@ export async function renderTasks(container: HTMLElement): Promise<void> {
       tableHost,
     ]),
   );
+
+  selectPhase.addEventListener("click", () => {
+    if (phaseControl) selectPhaseTasks(phaseControl.value);
+  });
+  runPhase.addEventListener("click", () => {
+    if (!phaseControl) return;
+    selectPhaseTasks(phaseControl.value);
+    void runSelectionAction("run");
+  });
+  runNextPhase.addEventListener("click", () => {
+    const next = nextIncompletePhase();
+    if (!next) {
+      toast("All phases are complete.");
+      return;
+    }
+    if (phaseControl) phaseControl.value = next.id;
+    selectPhaseTasks(next.id);
+    void runSelectionAction("run");
+  });
 
   addRange.addEventListener("click", () => {
     const ordered = allTasks.map((task) => task.id);
@@ -190,6 +225,7 @@ export async function renderTasks(container: HTMLElement): Promise<void> {
   }
   if (request !== refreshGeneration || myGen !== gen) return;
   syncRangeOptions();
+  syncPhaseOptions();
   if (myGen !== gen) return;
   renderTable();
 }
@@ -220,6 +256,7 @@ async function refresh(): Promise<void> {
     // keep the existing rows on failure
   }
   syncRangeOptions();
+  syncPhaseOptions();
   renderTable();
 }
 
@@ -340,6 +377,40 @@ function checkboxCell(taskId: string): HTMLElement {
     renderTable();
   });
   return input;
+}
+
+function syncPhaseOptions(): void {
+  if (!phaseControl) return;
+  const previous = phaseControl.value;
+  const phases = new Map<string, string>();
+  for (const task of allTasks) {
+    if (!phases.has(task.phaseId)) phases.set(task.phaseId, task.phaseTitle || task.phaseId);
+  }
+  phaseControl.replaceChildren(...[...phases.entries()].map(([id, title]) =>
+    el("option", { value: id }, `${id} — ${title}`)));
+  if (phases.has(previous)) phaseControl.value = previous;
+}
+
+function selectPhaseTasks(phaseId: string): void {
+  if (!phaseId) return;
+  const tasks = allTasks.filter((task) => task.phaseId === phaseId);
+  if (tasks.length === 0) {
+    toast("That phase has no tasks.");
+    return;
+  }
+  selectedIds = new Set(tasks.map((task) => task.id));
+  selectionScope = "phase";
+  renderTable();
+}
+
+function nextIncompletePhase(): { readonly id: string } | null {
+  const phases = new Map<string, boolean>();
+  for (const task of allTasks) {
+    const pending = task.status !== "complete" && task.status !== "skipped";
+    phases.set(task.phaseId, (phases.get(task.phaseId) ?? false) || pending);
+  }
+  for (const [id, pending] of phases) if (pending) return { id };
+  return null;
 }
 
 function inferSelectionScope(): SelectionScope | null {

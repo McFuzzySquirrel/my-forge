@@ -461,6 +461,11 @@ up from the service's record.
 - **Pause**, **Resume**, **Stop**, and **Cancel** are offered as the run state
   allows. **Approve** appears on a task that is `waiting-for-approval` and
   **Replay** on a failed task.
+- Each task row shows its attempt and offers **Activity** when harness activity
+  was enabled for the run. Worker activity is read from the bounded per-attempt
+  runtime log; host activity is in **Runtime log**.
+- The run header shows the submitted default task timeout and activity setting.
+  These are frozen at submission, so changes apply to the next run.
 - Each control goes to the service API, and the toast shows the service's
   acknowledgement (for example `accepted`) or its rejection.
 - The Console server calls the service with the installation token from

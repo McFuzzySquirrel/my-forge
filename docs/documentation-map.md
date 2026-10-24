@@ -74,7 +74,7 @@ requirements. Legacy layouts and migration rules are documented in
 | [`docs/contracts/dapr-execution-v1.md`](contracts/dapr-execution-v1.md) | Versioned application-owned run, control, receipt, artifact, checkpoint, and fencing contract for the Dapr replacement. | Contract fields, state transitions, package ownership, or conformance expectations change. |
 | `tools/dapr-engine/contract/v1/`, `tools/dapr-engine/tests/conformance/` | Dapr-independent contract v1 primitives and the runnable §5 conformance fixtures with their in-memory reference model. | Contract cases, rejection codes, state transitions, or digest rules change. |
 | `tools/runtime-qualification/` | Dev-only live qualification harness for P6 (failure, backup/restore, and upgrade/rollback suites against isolated rootless Podman runtimes, plus workflow-history capture for replay fixtures). | Scenarios, isolation settings, or qualification evidence requirements change. |
-| `tools/dapr-engine/execution/` | Canonical Dapr-independent task/harness execution utilities staged into the retired workflow-engine skill directory by the launcher. | Utility APIs, adapters, or bootstrap packaging changes. |
+| `tools/dapr-engine/execution/` | Canonical Dapr-independent task/harness execution utilities used by the service worker and host runner. | Utility APIs, adapters, or bootstrap packaging changes. |
 
 ### Architecture decisions and research
 

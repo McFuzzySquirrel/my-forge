@@ -169,7 +169,9 @@ recompile the manifest explicitly; the Console will not silently switch roots.
   browsable by type and task.
 - **Evidence**: durable work, validation and git-bundle artifacts recorded by
   integrated service tasks. Works for both worker-container and host-runner
-  executions because both write the same completion ledger.
+  executions because both write the same completion ledger. See
+  [Git bundle evidence](git-bundle-evidence.md) for what the downloadable bundle
+  contains and when to use it.
 - **Timeline**: a chronological record of important events and failures from
   the service lifecycle (and any repository authoring audit records).
 - **Service runs**: runs held by the local execution service for the open

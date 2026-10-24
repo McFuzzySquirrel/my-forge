@@ -277,7 +277,9 @@ lifecycle events feed **Run events** and **Timeline**; `docs/forge.log` feeds
 **Evidence** view reads the completion/evidence API and is independent of
 repository-local `docs/artifacts/`. Service task rows expose **Activity** for
 opt-in worker harness output; the API reads the bounded per-attempt log. Host
-activity remains in **Runtime log**.
+activity remains in **Runtime log**. The [Git bundle evidence](git-bundle-evidence.md)
+guide explains the checkpoint bundle's role in integration, reconstruction and
+audit.
 
 Host-mode run summaries identify the executor. Run-level events remain the
 source for workflow progress; the runner job view is bounded operational

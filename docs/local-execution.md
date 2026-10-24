@@ -160,7 +160,8 @@ submissions when it starts.
   **Evidence** view for durable work/validation/bundle artifacts, and its
   **Host runner** view for runner readiness, capabilities, and bounded job
   summaries. **Activity log**, **Runtime log**, and **Run events** are separate
-  live sources.
+  live sources. See [Git bundle evidence](git-bundle-evidence.md) for what a
+  downloaded checkpoint bundle contains and when to use it.
 
 The [launcher guide](forge-launcher.md) documents commands and options. The
 [Console user guide](forge-console-user-guide.md) documents the operator

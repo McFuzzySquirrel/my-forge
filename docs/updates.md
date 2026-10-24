@@ -4,6 +4,19 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.157
+
+### Git bundle evidence guide
+
+- Added [Git bundle evidence](git-bundle-evidence.md), explaining what a
+  checkpoint Git bundle contains, how it is used for integration and exact
+  workspace reconstruction, when operators should download it, and how to
+  verify and inspect it safely.
+- Linked the guide from the Console, local-execution, and documentation-map
+  references.
+
+---
+
 ## October 2026 - v3.156
 
 ### Run timeouts and harness activity

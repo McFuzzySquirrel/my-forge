@@ -383,7 +383,7 @@ button shows the exact command to run manually.
 | **Logs** | activity log (`docs/forge.log`), runtime host-runner log, and live service run events. |
 | **Plan & Team** | authoring settings and stage cards — always actionable, each stating why it is stale — plus the project documents (IDEA, PRD, features, progress, model plan) as a table that opens a document in a wide popup, and agents and skills in collapsible card sections. Requirement and task blocks render as tables. |
 | **Artifacts** | repository-local structured outputs (`docs/artifacts/`), browsable by type/task with previews. |
-| **Evidence** | durable work, validation and git-bundle artifacts from integrated service tasks (worker or host runner). |
+| **Evidence** | durable work, validation and git-bundle artifacts from integrated service tasks (worker or host runner). The **Git bundle** action downloads the checkpoint for offline inspection or recovery; see [Git bundle evidence](git-bundle-evidence.md). |
 | **Timeline** | chronological service lifecycle events, failures highlighted. |
 | **Service runs** | runs submitted to the local execution service (`forge-launcher service submit`) for the open repository: status, executor (worker or host runner), submitted timeout/activity settings, tasks with per-attempt **Activity**, sequenced events, and acknowledged controls. Host-executed runs link to their runner jobs. See [Service runs](#service-runs). |
 | **Host runner** | runner readiness, project-scoped capability controls, and bounded active/recent job summaries with repository filtering. See [Host runner operations](#host-runner-operations). |
@@ -475,6 +475,20 @@ up from the service's record.
   `POST /api/service/control`).
 - When the repository is not registered (`forge-launcher runtime repo add`) or
   the runtime is not running, the view says so.
+
+### Evidence and Git bundles
+
+The **Evidence** view lists integrated completion records for the open
+repository. Selecting a record shows its commit, base revision, output files and
+validation commands, plus the work, validation and Git-bundle artifacts.
+
+The **Git bundle** action downloads the content-addressed checkpoint as
+`<artifactId>.bundle`. This is a standard Git bundle containing the task's
+result commit and object graph; it is not a full runtime backup. Use it to
+inspect the exact task state, reconstruct a checkpoint, investigate an
+integration/rebase failure, or audit a completed task. See
+[Git bundle evidence](git-bundle-evidence.md) for commands, limits and safety
+guidance.
 
 ### Runtime administration
 

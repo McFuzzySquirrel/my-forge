@@ -24,5 +24,8 @@
     "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
     "typescript": "^5.7.0"
+  },
+  "allowScripts": {
+    "protobufjs@7.6.6": true
   }
 }

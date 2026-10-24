@@ -550,6 +550,10 @@ bootstrap it again.
 
 - If the page does not open, check the terminal output for the local URL and try opening it manually.
 - If a build does not advance, confirm the current stage in Overview and look for blockers in the Logs view.
+- Before reinstalling or updating the launcher, stop the local runtime and start
+  it again afterward. The runtime containers bind-mount the installed engine and
+  deploy resources; replacing those files under a live container leaves Dapr
+  without `/components`, and submissions fail with a generic request error.
 - If a task keeps failing, bump its timeout and replay it.
 - If **Run selected** is disabled, switch to **Tasks**, select one or more
   tasks, and click **Save selection**.

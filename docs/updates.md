@@ -21,6 +21,10 @@ Detailed release and change notes for MyForge.
   log. Service runs no longer look like an empty legacy engine log.
 - Added regression coverage for completion replay and the runtime log source,
   plus [ADR-086](adr/086-replay-integrated-task-completions.md).
+- **Upgrade note:** stop the local runtime before reinstalling or updating the
+  launcher, then start it afterward. The runtime containers bind-mount the
+  installed engine and deploy resources; replacing them under a live container
+  leaves Dapr without `/components`, and new runs fail to schedule.
 
 ---
 

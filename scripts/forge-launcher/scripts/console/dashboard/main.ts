@@ -94,8 +94,8 @@ function connectEvents(): void {
     store.emitAudit(data);
   });
   es.addEventListener("log", (event: Event) => {
-    const data = JSON.parse((event as MessageEvent).data as string) as { line: string };
-    store.emitLog(data.line);
+    const data = JSON.parse((event as MessageEvent).data as string) as { line: string; source?: string };
+    store.emitLog(data.line, data.source === "runtime" ? "runtime" : "engine");
   });
   es.addEventListener("authoring", (event: Event) => {
     const data = JSON.parse((event as MessageEvent).data as string) as Record<string, unknown>;

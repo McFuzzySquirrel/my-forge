@@ -348,6 +348,26 @@ test("serves logs and artifacts", async () => {
   });
 });
 
+test("serves the host-runner runtime log without a repository-scoped engine log", async () => {
+  const runtimeDir = mkdtempSync(join(tmpdir(), "forge-runtime-"));
+  const previousRuntimeDir = process.env.MYFORGE_RUNTIME_DIR;
+  process.env.MYFORGE_RUNTIME_DIR = runtimeDir;
+  writeFileSync(join(runtimeDir, "host-runner.log"), "runtime line one\nruntime line two\n", "utf8");
+  try {
+    await withServer(async (server) => {
+      const logs = await getJson(`${server.url}/api/logs?lines=10&source=runtime`) as { lines: string[]; truncated: boolean };
+      assert.deepEqual(logs.lines, ["runtime line one", "runtime line two"]);
+      assert.equal(logs.truncated, false);
+      const rejected = await getJson(`${server.url}/api/logs?source=unknown`) as { message: string };
+      assert.match(rejected.message, /Unknown log source/);
+    });
+  } finally {
+    if (previousRuntimeDir === undefined) delete process.env.MYFORGE_RUNTIME_DIR;
+    else process.env.MYFORGE_RUNTIME_DIR = previousRuntimeDir;
+    rmSync(runtimeDir, { recursive: true, force: true });
+  }
+});
+
 test("streams a snapshot and audit/log events over SSE", async () => {
   await withServer(async (server, repo) => {
     const events = collectSse(`${server.url}/api/events`);

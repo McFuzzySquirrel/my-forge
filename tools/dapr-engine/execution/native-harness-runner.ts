@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
@@ -74,6 +75,33 @@ function boundedValidationOutput(value: string): string {
  * the only place with the harness's installed dependencies and browser
  * binaries; the service's task workspace is a clean clone and cannot run them.
  */
+async function installHostDependencies(
+  workspacePath: string,
+  environment: Readonly<Record<string, string>>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }> {
+  const hasProject = existsSync(join(workspacePath, "package.json"))
+    && existsSync(join(workspacePath, "package-lock.json"))
+    && !existsSync(join(workspacePath, "node_modules"));
+  if (!hasProject) return { ok: true };
+  const result = await runCommand("npm", ["ci", "--no-audit", "--no-fund"], {
+    cwd: workspacePath,
+    timeoutMs,
+    maxBufferBytes: 10 * 1024 * 1024,
+    env: { ...environment },
+    inheritEnvironment: false,
+    reapProcessGroupOnExit: true,
+    ...(signal ? { signal } : {}),
+  });
+  if (result.status === 0) return { ok: true };
+  const detail = boundedValidationOutput(redactSecretValues(result.stderr || result.stdout, environment)).trim().slice(-8_000);
+  return {
+    ok: false,
+    reason: `dependency install failed (exit ${String(result.status)}): npm ci${detail ? `\n${detail}` : ""}`,
+  };
+}
+
 async function runHostValidation(
   task: HarnessRunnerRequestV1["task"],
   workspacePath: string,
@@ -82,6 +110,10 @@ async function runHostValidation(
   signal?: AbortSignal,
 ): Promise<HarnessRunnerValidationV1 | undefined> {
   if (task.validationCommands.length === 0) return undefined;
+  const dependencies = await installHostDependencies(workspacePath, environment, timeoutMs, signal);
+  if (!dependencies.ok) {
+    return { ok: false, reason: dependencies.reason, results: [] };
+  }
   const results: HarnessRunnerValidationCommandV1[] = [];
   for (const command of task.validationCommands) {
     const result = await runCommand(command, [], {

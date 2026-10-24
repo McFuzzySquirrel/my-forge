@@ -27,6 +27,7 @@ import {
 import { superviseExecution, type ExecutionOwnershipStore } from "../execution/process-lifecycle.ts";
 import type { HarnessRunner } from "../execution/runner-contract.ts";
 import type { TaskAdmissionResult } from "../execution/task-admission.ts";
+import type { TaskCompletionStore } from "../execution/task-completions.ts";
 import { TASK_EXECUTION_DIR } from "../execution/task-execution.ts";
 import type { AgentDescriptor, HarnessAdapter, ManifestTask, ProcessIdentityV1 } from "../execution/types.ts";
 import { captureWorkspaceCheckpoint, type WorkspaceCheckpointPublisher } from "../execution/workspace-reconstruction.ts";
@@ -154,6 +155,8 @@ export interface ExecutionHostDependenciesV1 {
   readonly executions: ExecutionOwnershipStore;
   readonly integration: ExecutionHostIntegrationAuthority;
   readonly checkpoints: ExecutionHostCheckpointStore;
+  /** Durable index of integrated tasks; lets a later run replay, not re-run, them. */
+  readonly completions?: TaskCompletionStore;
   readonly status: {
     getTaskStatus(runId: string, taskId: string): Promise<TaskStatusResponseV1 | undefined>;
     listEvents(runId: string, afterSequence?: number, limit?: number): Promise<RunLifecycleEventPageV1>;
@@ -320,6 +323,69 @@ export class ExecutionHost {
     const key = operationKey(input);
     const journaled = await this.readJournal(input.operationId);
     if (journaled?.outcome) return journaled.outcome;
+    if (await this.runCancelled(input.runId)) return RUN_CANCELLED;
+
+    // A later run may include a prerequisite that is already integrated at its
+    // base revision. Replay that completion and hydrate its work artifact for
+    // the remaining tasks instead of paying for the harness again.
+    const target = this.targetRoot(run);
+    const head = await this.git(target, ["rev-parse", "--verify", `${run.targetRef}^{commit}`]);
+    const completed = this.dependencies.completions
+      ? await this.dependencies.completions.resolve({
+          repositoryId: run.repositoryId,
+          taskId: input.taskId,
+          repositoryRoot: target,
+          head,
+        })
+      : undefined;
+    const replayable = completed !== undefined
+      && completed.validationCommands.length === task.validationCommands.length
+      && completed.validationCommands.every((command, index) => command === task.validationCommands[index])
+      && task.expectedOutputs.every((file) => completed.outputFiles.includes(file));
+    if (completed && replayable && this.dependencies.completions) {
+      const predecessorTaskIds = run.prerequisites.get(input.taskId) ?? [];
+      const artifactStore = new ArtifactStore({
+        artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts"),
+      });
+      const hydrateOptions = {
+        repositoryId: run.repositoryId,
+        repositoryRoot: target,
+        head,
+        resolveArtifact: (ref: ArtifactRefV1) => this.dependencies.checkpoints.resolveArtifact(ref),
+      };
+      await this.dependencies.completions.hydrate(artifactStore, {
+        ...hydrateOptions,
+        taskIds: predecessorTaskIds,
+      });
+      await this.dependencies.completions.hydrate(artifactStore, {
+        ...hydrateOptions,
+        taskIds: [input.taskId],
+      });
+      const evidence = createTaskCompletionEvidence({
+        runId: input.runId,
+        taskId: input.taskId,
+        manifestDigest: input.manifestDigest,
+        logicalAttempt: input.logicalAttempt,
+        operationId: input.operationId,
+        outputFiles: completed.outputFiles,
+        handoffDigest: completed.handoffDigest,
+        artifactRefs: [
+          ...(completed.workArtifact ? [completed.workArtifact] : []),
+          completed.validationArtifact,
+          completed.bundleArtifact,
+        ],
+        validationCommands: completed.validationCommands,
+        harnessEvidence: [`replayed integrated completion ${completed.commitSha}`],
+      });
+      const bounded = boundTaskExecutionOutcome({ status: "complete", evidence });
+      this.audit({
+        event: "attempt.replayed-completion",
+        ...key,
+        commitSha: completed.commitSha,
+        checkpointDigest: completed.checkpointDigest,
+      });
+      return bounded;
+    }
 
     const claimed = await this.dependencies.receipts.claim(key);
     if (!claimed.ok) throw new Error(`Could not claim operation receipt: ${claimed.code}`);
@@ -940,6 +1006,31 @@ export class ExecutionHost {
     }
     const published = await this.transition(key, receipt, "effect-published", result.effectDigest);
     await this.transition(key, published, "accepted");
+    try {
+      await this.dependencies.completions?.record({
+        schemaVersion: 1,
+        repositoryId: run.repositoryId,
+        targetRef: run.targetRef,
+        taskId: key.taskId,
+        runId: key.runId,
+        commitSha: result.commitSha,
+        baseRevision: effect.baseRevision,
+        checkpointDigest: effect.checkpointDigest,
+        ...(effect.workArtifactRefs[0] ? { workArtifact: effect.workArtifactRefs[0] } : {}),
+        validationArtifact: effect.validationRef,
+        bundleArtifact: effect.bundleRef,
+        outputFiles: effect.outputFiles,
+        validationCommands: effect.validationCommands,
+        handoffDigest: effect.handoffDigest,
+        completedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.audit({
+        event: "completion.record-failed",
+        ...key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     await this.writeJournal(key.operationId, { outcome: complete });
     this.audit({
       event: "attempt.integrated",

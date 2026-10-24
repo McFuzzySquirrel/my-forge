@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { ControlRequestV1 } from "../../contract/v1/index.ts";
 import { TaskApprovalCoordinator } from "../../orchestration/approval-control.ts";
@@ -23,6 +24,7 @@ import {
   TARGET_REF,
   type ExecutionFixture,
 } from "../support/execution-fixture.ts";
+import { FileTaskCompletionStore } from "../../execution/task-completions.ts";
 import { ScriptedHarness } from "../support/scripted-harness.ts";
 
 const connectionString = process.env.POSTGRES_TEST_URL;
@@ -33,6 +35,102 @@ test("execution host executes, verifies, integrates, retries, and resumes approv
   const fixture = await createExecutionFixture(connectionString!, { label: "host" });
   try {
     await exercise(fixture);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("a later run replays an integrated predecessor and hydrates its work artifact", {
+  skip: !connectionString && "POSTGRES_TEST_URL is not set",
+}, async () => {
+  const fixture = await createExecutionFixture(connectionString!, { label: "replay" });
+  const completions = new FileTaskCompletionStore(join(fixture.scratchRoot, "completions"));
+  const submission = acceptedSubmission({
+    repositoryId: fixture.repositoryId,
+    phases: [{
+      id: "phase-1",
+      tasks: [
+        {
+          ...manifestTask({ id: "T-1", ownerAgent: "alpha", expectedOutputs: ["one.txt"], validationCommands: ["grep -qx one one.txt"] }),
+          produces: "work.t-1",
+        },
+        {
+          ...manifestTask({ id: "T-2", ownerAgent: "alpha", dependencies: ["T-1"], expectedOutputs: ["two.txt"], validationCommands: ["grep -qx two two.txt"] }),
+          inputs: ["work.t-1"],
+        },
+      ],
+    }],
+  });
+  const hostFor = (runId: string, harness: ScriptedHarness): ExecutionHost => {
+    const run: ExecutionHostRunV1 = executionHostRunFromSubmission(runId, submission, {
+      agentFor: (task) => agent(task.ownerAgent ?? "unowned"),
+      harness,
+    });
+    return new ExecutionHost({
+      runs: (id) => id === runId ? run : undefined,
+      receipts: fixture.receipts,
+      executions: fixture.executions,
+      integration: fixture.integration,
+      checkpoints: fixture.checkpoints,
+      completions,
+      status: fixture.status,
+      controls: fixture.controls,
+      repositoryRoot: (id) => id === fixture.repositoryId ? fixture.target : undefined,
+      scratchRoot: fixture.scratchRoot,
+      workerId: "host-replay-test",
+      budgetMs: 60_000,
+      heartbeatIntervalMs: 200,
+      heartbeatTtlMs: 5_000,
+      audit: () => undefined,
+    });
+  };
+  const input = (runId: string, taskId: string): ExecuteTaskActivityInputV1 => ({
+    runId,
+    taskId,
+    manifestDigest: submission.manifestDigest,
+    logicalAttempt: 1,
+    operationId: taskOperationId(runId, taskId, 1),
+    allowNoop: false,
+  });
+  try {
+    const firstRun = `run_${randomUUID().replaceAll("-", "")}`;
+    const firstHarness = new ScriptedHarness((request) => ({
+      files: { [request.task.id === "T-1" ? "one.txt" : "two.txt"]: request.task.id === "T-1" ? "one\n" : "two\n" },
+    }));
+    await fixture.status.createRun({
+      schemaVersion: 1,
+      runId: firstRun,
+      repositoryId: fixture.repositoryId,
+      targetRef: TARGET_REF,
+      manifestDigest: submission.manifestDigest,
+      taskIds: [...submission.selection.effectiveTaskIds],
+    });
+    assert.equal((await hostFor(firstRun, firstHarness).executeTask(input(firstRun, "T-1"))).status, "complete");
+    assert.equal(firstHarness.invocations.filter((invocation) => invocation.taskId === "T-1").length, 1);
+    await fixture.integration.releaseRun(firstRun);
+
+    const secondRun = `run_${randomUUID().replaceAll("-", "")}`;
+    const secondHarness = new ScriptedHarness((request) => ({
+      files: { [request.task.id === "T-1" ? "one.txt" : "two.txt"]: request.task.id === "T-1" ? "one\n" : "two\n" },
+    }));
+    await fixture.status.createRun({
+      schemaVersion: 1,
+      runId: secondRun,
+      repositoryId: fixture.repositoryId,
+      targetRef: TARGET_REF,
+      manifestDigest: submission.manifestDigest,
+      taskIds: [...submission.selection.effectiveTaskIds],
+    });
+    const secondHost = hostFor(secondRun, secondHarness);
+    const replayed = await secondHost.executeTask(input(secondRun, "T-1"));
+    assert.equal(replayed.status, "complete", JSON.stringify(replayed));
+    assert.equal(secondHarness.invocations.length, 0);
+    const dependent = await secondHost.executeTask(input(secondRun, "T-2"));
+    assert.equal(dependent.status, "complete", JSON.stringify(dependent));
+    assert.equal(secondHarness.invocations.length, 1);
+    assert.equal(secondHarness.invocations[0]?.taskId, "T-2");
+    assert.match(secondHarness.invocations[0]?.instructions ?? "", /work\.t-1/);
+    assert.match(secondHarness.invocations[0]?.instructions ?? "", /Completed T-1\./);
   } finally {
     await fixture.cleanup();
   }

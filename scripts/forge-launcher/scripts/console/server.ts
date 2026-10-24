@@ -40,6 +40,7 @@ import {
   executeRuntimeAdminAction,
   getHostRunnerReadiness,
   getRuntimeAdminState,
+  getRuntimeDataDir,
   parseRuntimeAdminAction,
   type RuntimeAdminAction,
   type RuntimeAdminResult,
@@ -407,6 +408,8 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
   let currentRepo: string | null = options.repoRoot ?? null;
   const auditReader = new IncrementalLineReader({ partialLinePolicy: "hold" });
   const logReader = new IncrementalLineReader({ partialLinePolicy: "emit" });
+  const runtimeReader = new IncrementalLineReader({ partialLinePolicy: "emit" });
+  const runtimeLogPath = path.join(getRuntimeDataDir(), "host-runner.log");
   const authoringReader = new IncrementalLineReader({ partialLinePolicy: "hold" });
 
   const currentPaths = () => (currentRepo ? repoPaths(currentRepo) : null);
@@ -494,6 +497,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
 
   // ── Audit/log tailing (single poller, follows the current repo) ────────────
   resetOffsets();
+  runtimeReader.reset(runtimeLogPath, true);
 
   const poller = setInterval(() => {
     try {
@@ -515,7 +519,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         }
         try {
           for (const line of logReader.read(p.logPath).lines) {
-            broadcast("log", { line });
+            broadcast("log", { source: "engine", line });
           }
           for (const line of authoringReader.read(p.logPath).lines) {
             if (line.startsWith(FORGE_EVENT_PREFIX)) {
@@ -529,6 +533,13 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           }
         } catch (error) {
           onLog(`  console: failed to read engine log: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        try {
+          for (const line of runtimeReader.read(runtimeLogPath).lines) {
+            broadcast("log", { source: "runtime", line });
+          }
+        } catch (error) {
+          onLog(`  console: failed to read runtime log: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
       if (jobsChanged) broadcast("snapshot", snapshotEvent());
@@ -605,10 +616,14 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           case "/api/authoring-events":
             return p ? sendJson(res, 200, repo.authoringEvents(p)) : sendJson(res, 200, []);
           case "/api/logs": {
-            if (!p) return sendJson(res, 200, { lines: [], truncated: false });
             const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");
             const lines = Number(q.get("lines") ?? "400");
-            return sendJson(res, 200, repo.logs(p, Number.isInteger(lines) && lines > 0 ? lines : 400));
+            const count = Number.isInteger(lines) && lines > 0 ? lines : 400;
+            const source = q.get("source") ?? "engine";
+            if (source === "runtime") return sendJson(res, 200, repo.logLines(runtimeLogPath, count));
+            if (source !== "engine") return sendJson(res, 400, { message: "Unknown log source." });
+            if (!p) return sendJson(res, 200, { lines: [], truncated: false });
+            return sendJson(res, 200, repo.logs(p, count));
           }
           case "/api/artifacts":
             return p ? sendJson(res, 200, repo.artifacts(p)) : sendJson(res, 200, { artifacts: [], types: [] });

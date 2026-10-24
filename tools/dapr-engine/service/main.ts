@@ -24,6 +24,7 @@ import {
 import { createRecordRunLifecycleEventActivity } from "../orchestration/status-activity.ts";
 import { RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME } from "../orchestration/workflow.ts";
 import { FileArtifactCheckpointStore } from "../storage/files/artifact-checkpoint-store.ts";
+import { FileTaskCompletionStore } from "../execution/task-completions.ts";
 import {
   PostgresControlRecordStore,
   PostgresExecutionOwnershipStore,
@@ -162,6 +163,7 @@ async function proveWorkflowAdmission(): Promise<void> {
 }
 
 const checkpoints = new FileArtifactCheckpointStore(join(DATA_DIR, "artifacts"));
+const completions = new FileTaskCompletionStore(join(DATA_DIR, "completions"));
 const integration = new PostgresRepositoryIntegrationAuthority(database, repositoryRoot, checkpoints);
 
 function createWorkflowHost(): ExecutionHost {
@@ -172,6 +174,7 @@ function createWorkflowHost(): ExecutionHost {
     executions,
     integration,
     checkpoints,
+    completions,
     status,
     controls,
     repositoryRoot,

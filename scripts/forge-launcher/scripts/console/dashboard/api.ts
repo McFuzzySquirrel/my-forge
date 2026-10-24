@@ -105,8 +105,8 @@ export const api = {
   audit(): Promise<AuditEvent[]> {
     return request<AuditEvent[]>("/api/audit");
   },
-  logs(lines = 400): Promise<LogsResponse> {
-    return request<LogsResponse>(`/api/logs?lines=${lines}`);
+  logs(lines = 400, source: "engine" | "runtime" = "engine"): Promise<LogsResponse> {
+    return request<LogsResponse>(`/api/logs?lines=${lines}&source=${encodeURIComponent(source)}`);
   },
   artifacts(): Promise<ArtifactIndex> {
     return request<ArtifactIndex>("/api/artifacts");

@@ -1,7 +1,7 @@
-// ─── Logs: engine log + audit, live-appended from SSE ───────────────────────
+// ─── Logs: engine/runtime logs + audit, live-appended from SSE ───────────────
 
 import { api } from "../api.js";
-import { store } from "../state.js";
+import { store, type LogSource } from "../state.js";
 import { el, fmtTime } from "../render/dom.js";
 import type { AuditEvent } from "../types.js";
 
@@ -21,35 +21,53 @@ export function renderLogs(container: HTMLElement): void {
   container.textContent = "";
 
   const engineTab = el("button", { className: "tab active", type: "button", "aria-selected": "true" }, "Engine log");
+  const runtimeTab = el("button", { className: "tab", type: "button", "aria-selected": "false" }, "Runtime log");
   const auditTab = el("button", { className: "tab", type: "button", "aria-selected": "false" }, "Audit");
   const enginePanel = el("div", { className: "tab-panel" });
+  const runtimePanel = el("div", { className: "tab-panel", style: "display:none" });
   const auditPanel = el("div", { className: "tab-panel", style: "display:none" });
 
-  const show = (engine: boolean): void => {
-    engineTab.className = engine ? "tab active" : "tab";
-    auditTab.className = engine ? "tab" : "tab active";
-    engineTab.setAttribute("aria-selected", String(engine));
-    auditTab.setAttribute("aria-selected", String(!engine));
-    enginePanel.style.display = engine ? "" : "none";
-    auditPanel.style.display = engine ? "none" : "";
+  const show = (view: "engine" | "runtime" | "audit"): void => {
+    const active = (tab: HTMLElement, on: boolean) => {
+      tab.className = on ? "tab active" : "tab";
+      tab.setAttribute("aria-selected", String(on));
+    };
+    active(engineTab, view === "engine");
+    active(runtimeTab, view === "runtime");
+    active(auditTab, view === "audit");
+    enginePanel.style.display = view === "engine" ? "" : "none";
+    runtimePanel.style.display = view === "runtime" ? "" : "none";
+    auditPanel.style.display = view === "audit" ? "" : "none";
   };
-  engineTab.addEventListener("click", () => show(true));
-  auditTab.addEventListener("click", () => show(false));
+  engineTab.addEventListener("click", () => show("engine"));
+  runtimeTab.addEventListener("click", () => show("runtime"));
+  auditTab.addEventListener("click", () => show("audit"));
 
   container.appendChild(
     el("div", { className: "panel" }, [
-      el("div", { className: "tabs" }, [engineTab, auditTab]),
+      el("div", { className: "tabs" }, [engineTab, runtimeTab, auditTab]),
       enginePanel,
+      runtimePanel,
       auditPanel,
     ]),
   );
 
-  renderEngineLog(enginePanel);
+  renderLogSource(
+    enginePanel,
+    "engine",
+    "No engine log yet. Service and host-runner activity appears in the Runtime log tab.",
+  );
+  renderLogSource(
+    runtimePanel,
+    "runtime",
+    "No runtime log yet. Start a service run or a host-runner job to populate this view.",
+  );
   renderAudit(auditPanel);
 }
 
-function renderEngineLog(panel: HTMLElement): void {
+function renderLogSource(panel: HTMLElement, source: LogSource, emptyText: string): void {
   const pre = el("pre", { className: "log-view" });
+  const empty = el("p", { className: "dim log-empty" }, emptyText);
   let follow = true;
   let unread = 0;
   const followToggle = el("input", { type: "checkbox", checked: true }) as HTMLInputElement;
@@ -66,9 +84,15 @@ function renderEngineLog(panel: HTMLElement): void {
     el("label", { className: "checkbox-row" }, [followToggle, " Follow new lines"]),
     unreadLabel,
   ]));
+  if (source === "runtime") {
+    panel.appendChild(el("p", { className: "dim small log-source-note" },
+      "Native host-runner log on this machine (all registered repositories)."));
+  }
+  panel.appendChild(empty);
   panel.appendChild(pre);
 
   const appendLine = (line: string): void => {
+    empty.remove();
     pre.appendChild(el("div", { className: "log-line" }, line));
     while (pre.childElementCount > MAX_LINES) {
       pre.removeChild(pre.firstElementChild!);
@@ -81,14 +105,16 @@ function renderEngineLog(panel: HTMLElement): void {
   };
 
   const myGeneration = logsGeneration;
-  void api.logs(400).then((res) => {
+  void api.logs(400, source).then((res) => {
     if (myGeneration !== logsGeneration) return;
     for (const line of res.lines) appendLine(line);
   }).catch(() => {
     if (myGeneration === logsGeneration) unreadLabel.textContent = "Unable to load log; reconnecting…";
   });
 
-  unsub.push(store.onLog(appendLine));
+  unsub.push(store.onLog((line, eventSource) => {
+    if (myGeneration === logsGeneration && eventSource === source) appendLine(line);
+  }));
 }
 
 function renderAudit(panel: HTMLElement): void {

@@ -32,6 +32,8 @@ host clone, after the harness and before the workspace delta is captured:
 
 - use the harness environment, including the operator's `HOME`, `PATH`, and
   browser caches;
+- install Node dependencies with `npm ci` when the clone has `package.json`
+  and `package-lock.json` but no `node_modules`;
 - bound stdout/stderr and redact credential-shaped values before returning
   them;
 - return the command results with the workspace delta as optional

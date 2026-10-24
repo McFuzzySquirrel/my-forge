@@ -1,7 +1,7 @@
 import spawn from "cross-spawn";
 import { execFile, spawn as spawnProcess, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, relative, resolve as resolvePath } from "node:path";
+import { dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
 import readCmdShim from "read-cmd-shim";
 import which from "which";
 import type { ProcessCleanup } from "../../contract/v1/execution-ownership.ts";
@@ -420,7 +420,7 @@ export function stripProviderPrefix(model: string): string {
 
 /**
  * True when the request's agent can be selected natively by a harness whose
- * agent directory is `<root>/agents/`: the agent has a name, its file lives
+ * agent directory is `<root>/agents/`: the agent has a name, its file exists
  * under that directory relative to repoRoot, and FORGE_ENGINE_NATIVE_AGENT is
  * not "0" (which forces the inline-persona fallback for every harness).
  */
@@ -431,6 +431,7 @@ export function canSelectAgentNatively(
   const { agent, repoRoot } = request;
   if (process.env["FORGE_ENGINE_NATIVE_AGENT"] === "0") return false;
   if (!agent.name) return false;
-  const parts = relative(repoRoot, agent.path).split(/[\\/]/);
-  return parts[0] === root && parts[1] === "agents" && parts.length > 2;
+  const agentPath = isAbsolute(agent.path) ? agent.path : resolvePath(repoRoot, agent.path);
+  const parts = relative(repoRoot, agentPath).split(/[\\/]/);
+  return parts[0] === root && parts[1] === "agents" && parts.length > 2 && existsSync(agentPath);
 }

@@ -147,7 +147,11 @@ Once the build starts, switch between the views to follow the work:
   - Failed tasks stay listed at the lower left with a link into Tasks.
   - The mode and filters are remembered per project.
 - **Tasks**: a sortable, filterable task table with a detail drawer for each task.
-- **Logs**: the engine and authoring log tail plus the live audit event stream.
+- **Logs**: the repository engine log, the local runtime host-runner log, and
+  the live audit event stream. Service and host-runner activity appears under
+  **Runtime log**; the **Engine log** tab follows `docs/engine-run.log` for
+  legacy engine runs. Each tab has an empty state explaining which source is
+  missing.
 - **Plan & Team**: the project documents as a table (kind, title, path, status)
   and the generated agent/skill files. Selecting a document opens it in a wide
   popup with an **Open externally** button; `forge-requirement` and `forge-task`
@@ -193,16 +197,32 @@ rotation, and credential revocation. A backup can be created before a reset or
 upgrade. Restore checks the archive and Git refs; selecting **Allow Git drift**
 requires a second acknowledgement because run history can become inconsistent.
 Harness credential grants are entered into a password field, stored locally,
-and cleared from the form; the page lists variable names only. The last
-successful start's host-tools setting and PostgreSQL port prefill later
-restarts. Operations show progress and return actionable errors.
+and cleared from the form; the page lists variable names only. An
+`OPENCODE_AUTH_JSON` value must contain exactly one provider entry. See
+[Harness credentials and execution boundaries](harness-credentials.md) for the
+provider/model table and storage rules. The last successful start's host-tools
+setting and PostgreSQL port prefill later restarts. Operations show progress
+and return actionable errors.
 
-Host execution is off by default. In Overview **Controls**, enable **Run
-harness CLI on this host** only for trusted tasks and confirm the warning. The
-local CLI uses its existing installation and authentication, but runs with your
-user account's full filesystem, process, and network permissions outside a task
-sandbox. This is independent of project runner authorization and worker
+Host execution is off by default. In Overview **Controls**, choose **This
+computer** under **Executor for the next run** only for trusted tasks and confirm
+the warning. The choice applies to that run; **Save as default for this project**
+persists it for later runs. The local CLI uses its existing installation and
+authentication, but runs with your user account's full filesystem, process, and
+network permissions outside a task sandbox. It can read the host CLI auth store,
+runtime credentials, runner capabilities, and other account files. It does not
+use worker harness grants or enforce one-provider isolation. See
+[Harness credentials and execution boundaries](harness-credentials.md#host-execution-warning).
+The host option is disabled, with the reason shown, until the project is
+registered, its runner capability is enabled, and the host runner is running.
+This is independent of project runner authorization and worker
 harness-credential grants; there is no automatic fallback between modes.
+
+The executor binds when a run is submitted. Changing the selector while a run is
+active applies to the next run; Overview names the active run's executor. The
+**Service runs** view shows the executor for every run. CLI submission commands
+remain explicit-only (`--host-execution`), so a saved Console preference never
+changes what a script runs.
 
 ### Manage the host runner
 
@@ -234,9 +254,10 @@ For a repository registered with the local runtime, the **Execution
 deployment** panel reads **Local execution service**. In that case these
 controls go to the service's newest run instead of the local engine process,
 and builds run in the runtime's worker by default, with harness credentials
-granted through `forge-launcher runtime harness grant`. A run explicitly
-configured for host execution instead uses the local CLI with full OS
-permissions. See
+granted through `forge-launcher runtime harness grant`. The **Executor for the
+next run** selector chooses the worker container or this computer for the next
+run (see [Manage local execution](#manage-local-execution)). A run selected for
+host execution uses the local CLI with full OS permissions. See
 [Service runs](forge-console.md#service-runs).
 
 - **Pause**: stop after the current task completes.
@@ -250,7 +271,7 @@ permissions. See
   workflow, or **manual** to run only the saved task selection from the Tasks
   view. Manual mode requires at least one selected task.
 - **Auto-commit after each task**: toggles one-commit-per-task git history (on by default).
-- **Log harness activity**: streams harness CLI stdout/stderr into `docs/engine-run.log`, where the Logs view shows it live while the run is active. Off by default; the saved choice is applied to subsequently started runs and restored after a reload. Activity logs can contain sensitive repository content and increase log volume, and command invocation logging is always on regardless. Turning it off stops activity capture for later runs without disabling command logging.
+- **Log harness activity**: streams harness CLI stdout/stderr into `docs/engine-run.log` for legacy engine runs, where the **Engine log** tab shows it live. Service and host-runner runs write to the runtime host-runner log instead; use the **Runtime log** tab. Off by default; the saved choice is applied to subsequently started runs and restored after a reload. Activity logs can contain sensitive repository content and increase log volume, and command invocation logging is always on regardless. Turning it off stops activity capture for later runs without disabling command logging.
 - **Concurrency preference**: stores the engine concurrency value in `docs/engine-config.json`. Enter a positive integer (e.g. `3`) and click **Set**; enter `0` to return to the engine default. The value is shown in later Run/Resume summaries. Above `1` the engine runs up to that many ready tasks at once, each in its own git worktree under `.forge-sandboxes/`, so each task's reported files and commit stay its own. Two things to know before setting it above `1`: **the working tree must be clean** (the run stops and lists any uncommitted path otherwise, so commit or stash first). Each task selects its own project through the spawn working directory, with the child's `PWD` set to match, since OpenCode v2 resolves the project from `process.env.PWD ?? process.cwd()` and no longer accepts `--dir` (see [ADR-058](adr/058-opencode-v2-project-resolution.md) and [ADR-059](adr/059-pwd-aligned-spawn-environment.md)). See [ADR-056](adr/056-parallel-execution-task-sandboxes.md).
 - **Reset changed tasks for review**: after feature reconciliation, resets completed or skipped tasks whose contracts changed back to pending. Review the changed task IDs before using this action.
 - **Launch \<harness\> CLI**: opens the project's harness CLI (opencode/copilot/claude) in a new terminal from the project folder, so you can watch the live run and take over manually. Also available on the Tasks header.
@@ -529,6 +550,10 @@ bootstrap it again.
 
 - If the page does not open, check the terminal output for the local URL and try opening it manually.
 - If a build does not advance, confirm the current stage in Overview and look for blockers in the Logs view.
+- Before reinstalling or updating the launcher, stop the local runtime and start
+  it again afterward. The runtime containers bind-mount the installed engine and
+  deploy resources; replacing those files under a live container leaves Dapr
+  without `/components`, and submissions fail with a generic request error.
 - If a task keeps failing, bump its timeout and replay it.
 - If **Run selected** is disabled, switch to **Tasks**, select one or more
   tasks, and click **Save selection**.

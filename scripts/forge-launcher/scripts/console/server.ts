@@ -35,10 +35,12 @@ import { removeProjects, sameProjectPath } from "./remove-projects.ts";
 import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
 import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, latestServiceRun, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
 import { defaultHostRunnerJobsDeps, listHostRunnerJobs, type HostRunnerJobsDeps } from "./host-runner-jobs.ts";
-import type { ControlAction, CreateProjectRequest, ManifestTask, ServiceRunSnapshot } from "./types.ts";
+import type { ControlAction, CreateProjectRequest, Executor, ManifestTask, RunnerReadiness, ServiceRunSnapshot } from "./types.ts";
 import {
   executeRuntimeAdminAction,
+  getHostRunnerReadiness,
   getRuntimeAdminState,
+  getRuntimeDataDir,
   parseRuntimeAdminAction,
   type RuntimeAdminAction,
   type RuntimeAdminResult,
@@ -72,6 +74,8 @@ export interface ConsoleServerOptions {
   hostRunnerJobs?: HostRunnerJobsDeps;
   /** Runtime administration seam (defaults to the local Podman runtime). */
   runtimeAdmin?: RuntimeAdminDeps;
+  /** Host-runner readiness seam (defaults to the local runtime registry). */
+  runnerReadiness?: (repoRoot: string) => Promise<RunnerReadiness>;
 }
 
 export interface RuntimeAdminDeps {
@@ -128,6 +132,7 @@ function asServiceRunSnapshot(value: unknown): ServiceRunSnapshot | null {
     status: run.status,
     ...(typeof run.createdAt === "string" ? { createdAt: run.createdAt } : {}),
     ...(typeof run.updatedAt === "string" ? { updatedAt: run.updatedAt } : {}),
+    ...(typeof run.hostExecution === "boolean" ? { hostExecution: run.hostExecution } : {}),
     tasks,
   };
 }
@@ -403,6 +408,8 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
   let currentRepo: string | null = options.repoRoot ?? null;
   const auditReader = new IncrementalLineReader({ partialLinePolicy: "hold" });
   const logReader = new IncrementalLineReader({ partialLinePolicy: "emit" });
+  const runtimeReader = new IncrementalLineReader({ partialLinePolicy: "emit" });
+  const runtimeLogPath = path.join(getRuntimeDataDir(), "host-runner.log");
   const authoringReader = new IncrementalLineReader({ partialLinePolicy: "hold" });
 
   const currentPaths = () => (currentRepo ? repoPaths(currentRepo) : null);
@@ -418,6 +425,21 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
   const runtimeAdmin: RuntimeAdminDeps = options.runtimeAdmin ?? {
     state: () => getRuntimeAdminState(),
     execute: (action) => executeRuntimeAdminAction(action),
+  };
+  const runnerReadiness = options.runnerReadiness ??
+    ((repoRoot: string) => getHostRunnerReadiness(repoRoot));
+  // The Overview refreshes on audit and snapshot events, so cache the answer
+  // for a few seconds. The run preflight below still checks fresh state; the
+  // service re-checks anyway.
+  let readinessCache: { repoRoot: string; fetchedAt: number; value: RunnerReadiness } | null = null;
+  const cachedRunnerReadiness = async (repoRoot: string): Promise<RunnerReadiness> => {
+    const now = Date.now();
+    if (readinessCache?.repoRoot === repoRoot && now - readinessCache.fetchedAt < 3000) {
+      return readinessCache.value;
+    }
+    const value = await runnerReadiness(repoRoot);
+    readinessCache = { repoRoot, fetchedAt: now, value };
+    return value;
   };
   let serviceRunCache: {
     repoRoot: string;
@@ -475,6 +497,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
 
   // ── Audit/log tailing (single poller, follows the current repo) ────────────
   resetOffsets();
+  runtimeReader.reset(runtimeLogPath, true);
 
   const poller = setInterval(() => {
     try {
@@ -496,7 +519,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         }
         try {
           for (const line of logReader.read(p.logPath).lines) {
-            broadcast("log", { line });
+            broadcast("log", { source: "engine", line });
           }
           for (const line of authoringReader.read(p.logPath).lines) {
             if (line.startsWith(FORGE_EVENT_PREFIX)) {
@@ -510,6 +533,13 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           }
         } catch (error) {
           onLog(`  console: failed to read engine log: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        try {
+          for (const line of runtimeReader.read(runtimeLogPath).lines) {
+            broadcast("log", { source: "runtime", line });
+          }
+        } catch (error) {
+          onLog(`  console: failed to read runtime log: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
       if (jobsChanged) broadcast("snapshot", snapshotEvent());
@@ -574,6 +604,8 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         switch (urlPath) {
           case "/api/runtime":
             return sendJson(res, 200, await runtimeAdmin.state());
+          case "/api/runner-readiness":
+            return sendJson(res, 200, p ? await cachedRunnerReadiness(p.repoRoot) : null);
           case "/api/summary":
             repo.refreshJobs();
             return p ? sendJson(res, 200, repo.summary(p, await currentServiceRun(currentRepo))) : sendJson(res, 200, null);
@@ -584,10 +616,14 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           case "/api/authoring-events":
             return p ? sendJson(res, 200, repo.authoringEvents(p)) : sendJson(res, 200, []);
           case "/api/logs": {
-            if (!p) return sendJson(res, 200, { lines: [], truncated: false });
             const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");
             const lines = Number(q.get("lines") ?? "400");
-            return sendJson(res, 200, repo.logs(p, Number.isInteger(lines) && lines > 0 ? lines : 400));
+            const count = Number.isInteger(lines) && lines > 0 ? lines : 400;
+            const source = q.get("source") ?? "engine";
+            if (source === "runtime") return sendJson(res, 200, repo.logLines(runtimeLogPath, count));
+            if (source !== "engine") return sendJson(res, 400, { message: "Unknown log source." });
+            if (!p) return sendJson(res, 200, { lines: [], truncated: false });
+            return sendJson(res, 200, repo.logs(p, count));
           }
           case "/api/artifacts":
             return p ? sendJson(res, 200, repo.artifacts(p)) : sendJson(res, 200, { artifacts: [], types: [] });
@@ -717,6 +753,10 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         if (urlPath === "/api/control") {
           const action = body.action as ControlAction;
           const taskId = typeof body.taskId === "string" ? body.taskId : undefined;
+          if (body.executor !== undefined && body.executor !== "worker" && body.executor !== "host") {
+            return sendJson(res, 400, { ok: false, message: "executor must be 'worker' or 'host'." });
+          }
+          const executor = body.executor as Executor | undefined;
           // Only the re-derivation chain accepts a starting step; anything else
           // in `from` is ignored rather than rejected so an older client that
           // sends the field cannot break an unrelated action.
@@ -732,6 +772,21 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
                 code: "service-required",
                 message: `Register this repository with "forge-launcher runtime repo add ${currentRepo}", then restart the runtime. Legacy execution is retired.`,
               });
+            }
+            // An explicit host request is gated here so the operator learns
+            // about a stopped runner or missing capability before a submission
+            // is created. Clients that omit the field keep the older behaviour;
+            // the service still fails closed for them.
+            if (executor === "host") {
+              const readiness = await runnerReadiness(currentRepo).catch(() => null);
+              if (!readiness?.available) {
+                return sendJson(res, 409, {
+                  ok: false,
+                  code: "host-runner-unavailable",
+                  message: readiness?.blocker ??
+                    "Host execution is unavailable until the local runtime reports a ready host runner.",
+                });
+              }
             }
           }
           if (action === "feature-increment-continue" && !featureIncrementHandoffHasChange(currentRepo)) {
@@ -754,7 +809,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             const routed = await routeServiceControl(serviceRuns(), currentRepo, action, taskId);
             return sendJson(res, routed.status, routed.body);
           }
-          return sendJson(res, 200, controller.dispatch(action, taskId, from));
+          return sendJson(res, 200, controller.dispatch(action, taskId, from, executor));
         }
         if (urlPath === "/api/tasks/timeout") {
           const timeoutMs = Number(body.timeoutMs);

@@ -4,6 +4,126 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.154
+
+### Replay completed tasks and show runtime logs in the Console
+
+- Integrated tasks are recorded in a durable completion ledger. A later run
+  whose base contains the completion replays the task, hydrates its work
+  artifact for dependants, and does not invoke the harness or create another
+  commit. A stub host verification run can seed a completion without a model
+  call.
+- Host validation installs Node dependencies with `npm ci` when the clone has a
+  lockfile but no `node_modules`, so a verification run can validate a base
+  revision without a harness install step.
+- The Console Logs view has a **Runtime log** tab for the native host-runner log
+  and empty states that distinguish an absent engine log from an absent runtime
+  log. Service runs no longer look like an empty legacy engine log.
+- Added regression coverage for completion replay and the runtime log source,
+  plus [ADR-086](adr/086-replay-integrated-task-completions.md).
+- **Upgrade note:** stop the local runtime before reinstalling or updating the
+  launcher, then start it afterward. The runtime containers bind-mount the
+  installed engine and deploy resources; replacing them under a live container
+  leaves Dapr without `/components`, and new runs fail to schedule.
+
+---
+
+## October 2026 - v3.153
+
+### Honor configured models, native agents, and task timeouts in host execution
+
+- Host-runner execution now rewrites manifest agent paths into the disposable
+  clone before native agent selection. Agents under `.opencode/agents/`,
+  `.github/agents/`, or `.claude/agents/` are selected with `--agent` instead
+  of silently falling back to the harness's default agent.
+- Native agent selection also requires the agent file to exist in the cloned
+  base revision, so an uncommitted agent file falls back to the inline persona
+  rather than passing a missing `--agent` name.
+- The OpenCode, Claude Code, and Copilot adapters now use
+  `request.effectiveModel` first and fall back to the model configured through
+  their extra-flags environment variable. Previously the parsed default model
+  was never passed to the CLI.
+- A per-task or per-run timeout larger than the service's default attempt budget
+  now extends the supervised execution deadline and the post-execution
+  validation budget. The Console's task-timeout setting is no longer capped at
+  the service default.
+- Service-side Git inspection and delta application now trust the task-owned
+  workspace for the duration of each command. A host-runner result is no longer
+  discarded as `execution-error` with "detected dubious ownership" after the
+  model finishes, and no-op detection sees the task's working tree again.
+- Host execution now runs the manifest's validation commands beside the harness
+  and returns bounded, redacted evidence. The service accepts that evidence
+  instead of re-running the commands in its clean, dependency-free workspace,
+  so a task that creates a Node project can run typecheck, unit tests, and
+  browser tests where its dependencies and browsers are installed.
+- A harness that commits its work in the disposable clone is no longer rejected:
+  the delta captures a HEAD that descends from the accepted base, including
+  committed and uncommitted changes.
+- Added regression coverage for host-runner agent-path remapping, configured
+  default-model fallback, per-task supervision deadlines, committed workspace
+  deltas, and host validation evidence.
+
+---
+
+## October 2026 - v3.152
+
+### Harden harness credential handling and document the boundary
+
+- Worker validation commands now run in a separate empty home from the harness.
+  Repository validation commands can no longer read the private OpenCode
+  profile where `OPENCODE_AUTH_JSON` was imported. The resume path already used
+  a separate home; the normal admission path now matches it.
+- `forge-launcher runtime harness grant` validates `OPENCODE_AUTH_JSON` before
+  storing it: the value must be valid JSON containing exactly one provider
+  entry with an `integrationID`.
+- The launcher rejects a symlinked or foreign-owned `grants.json` and repairs a
+  too-permissive grants-file mode to `0600`, matching `runtime.env` handling.
+- Added [Harness credentials and execution boundaries](harness-credentials.md)
+  covering provider/model matching, the one-provider rule, worker versus host
+  execution, the credential reader table, operational hygiene, and incident
+  response. Updated the launcher, Console, ADR-075, ADR-077, and ADR-081
+  guidance to distinguish worker grants from unsandboxed host authentication.
+
+---
+
+## October 2026 - v3.151
+
+### Publish declared task artifacts during host execution
+
+- The Dapr execution host now binds a durable artifact publisher for every task.
+  A task that declares `produces` gets a complete `work` artifact synthesised
+  from its admitted handoff and output files, written to the run's artifact
+  store, and published to the checkpoint artifact store.
+- Completion evidence carries the published work-artifact reference alongside
+  validation and checkpoint evidence, including after approval resume and
+  rebase, so a dependent task's declared `inputs` can be projected.
+- Fixed host-executed runs failing every task at admission with
+  `Task '<id>' declares artifact output '<type>' but has no durable artifact
+  publisher`, even though the compiled manifest was valid.
+- Added unit coverage for publisher binding and a PostgreSQL integration test
+  for a three-task `produces` → `inputs` chain with parallel rebase.
+
+## October 2026 - v3.150
+
+### Choose the executor per run in the Console
+
+- Replaced the project-level host-execution checkbox with an **Executor for the
+  next run** selector beside **Run** and **Resume**. The choice applies to that
+  run and does not rewrite the project default.
+- **Save as default for this project** persists `hostExecution` in
+  `docs/engine-config.json`; the selector preselects it for later runs.
+- The host option is disabled with the missing prerequisite shown inline until
+  the project is registered, its runner capability is enabled, and the host
+  runner is running. An explicit host request that fails this check returns
+  `409 host-runner-unavailable` before a submission is created.
+- Overview names the executor bound to an active run and states that a change
+  applies to the next run; **Service runs** continues to show the executor for
+  every run.
+- CLI submission commands remain explicit-only: neither `engine-run` nor
+  `service submit` reads the saved Console preference, so a GUI default cannot
+  change what a script runs.
+- Recorded the decision in [ADR-082](adr/082-per-run-executor-selection-and-readiness-gating.md).
+
 ## October 2026 - v3.149
 
 ### Clarify worker and host harness execution

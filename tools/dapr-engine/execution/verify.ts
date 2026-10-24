@@ -147,7 +147,10 @@ export async function captureWorktree(repoRoot: string): Promise<WorktreeSnapsho
   // --untracked-files=all lists individual untracked files instead of collapsing
   // whole untracked directories, so adding one file inside an existing untracked
   // directory is still detected as a change.
-  const result = await runCommand("git", ["status", "--porcelain", "-z", "--untracked-files=all"], {
+  const result = await runCommand("git", [
+    "-c", `safe.directory=${repoRoot}`,
+    "status", "--porcelain", "-z", "--untracked-files=all",
+  ], {
     cwd: repoRoot,
     timeoutMs: 10_000,
     maxBufferBytes: 10 * 1024 * 1024,

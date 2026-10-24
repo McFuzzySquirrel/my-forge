@@ -9,7 +9,7 @@
 
 > MyForge turns an idea into a reviewed PRD, a specialist agent team, and an autonomous build.
 
-**Latest: v3.149** — see [docs/updates.md](docs/updates.md) for release notes.
+**Latest: v3.154** — see [docs/updates.md](docs/updates.md) for release notes.
 
 MyForge is a PRD-first workflow for turning product requirements into working software. It combines structured planning, agent-based implementation, and execution orchestration in one path so a project can move from concept to build without losing the review checkpoints that matter.
 
@@ -137,6 +137,7 @@ For the manual prompting flow and the CLI’s expected prompts, see [docs/prompt
 - [docs/forge-launcher.md](docs/forge-launcher.md)
 - [docs/forge-console.md](docs/forge-console.md)
 - [docs/forge-console-user-guide.md](docs/forge-console-user-guide.md)
+- [Harness credentials and execution boundaries](docs/harness-credentials.md)
 - [Dapr cutover and rollback](docs/forge-launcher.md#cut-over-from-the-legacy-engine)
 - [Legacy workflow-engine reference](docs/workflow-engine.md)
 - [Legacy workflow-engine deep dive](docs/workflow-engine-deep-dive.md)

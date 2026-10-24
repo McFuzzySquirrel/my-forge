@@ -6,6 +6,29 @@ import { parseTaskHandoff } from "./task-result.ts";
 
 export const TASK_EXECUTION_DIR = "docs/artifacts";
 
+const RESULT_REPORT_INSTRUCTIONS = [
+  "## Required Result Report",
+  "",
+  "End your final response with exactly one fenced block in this format:",
+  "",
+  "```forge-result",
+  "{",
+  '  "summary": "What changed and the validation you observed.",',
+  '  "decisions": ["..."],',
+  '  "interfaces": ["..."],',
+  '  "tests": ["..."],',
+  '  "unresolved": [],',
+  '  "warnings": [],',
+  '  "validationLimitations": []',
+  "}",
+  "```",
+  "",
+  "- `summary` and `unresolved` are required. Use `[]` for `unresolved` when nothing blocks the task.",
+  "- `decisions`, `interfaces`, `tests`, `warnings`, and `validationLimitations` are optional arrays of non-empty strings.",
+  "- The block must be valid JSON, no larger than 16,000 characters, and the last content in your response.",
+  "- Do not use any other fence label for this report.",
+].join("\n");
+
 export function taskFileId(taskId: string): string {
   if (/^[A-Z0-9][A-Z0-9_.-]{0,79}$/.test(taskId) && !taskId.endsWith(".") && !/^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\.|$)/.test(taskId)) return taskId;
   const readable = taskId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40);
@@ -72,10 +95,11 @@ export function executionPrompt(request: TaskAttemptRequest, persona = ""): stri
     "This is an engine-generated execution snapshot. Do not modify it or include it in deliverables or commits. Execute only this task; supporting documents do not authorize unrelated work.",
     persona ? `## Specialist Instructions\n\n${persona}` : "",
     `## Execution Instructions\n\n${request.instructions}`,
+    RESULT_REPORT_INSTRUCTIONS,
   ].filter(Boolean).join("\n\n") + "\n";
   const digest = createHash("sha256").update(content).digest("hex");
   const file = `${TASK_EXECUTION_DIR}/${taskFileId(request.task.id)}.md`;
   writeLatest(join(root, file), content);
   console.log(`[engine] Task ${request.task.id} attempt ${request.attempt.number}: execution file ${file} (sha256 ${digest})`);
-  return `Perform the task now. Read the execution file "${file}" relative to the project root before doing any work. Follow its task scope, mandatory requirements, acceptance criteria, constraints and validation commands. Read referenced documentation as needed. Do not modify the execution file or commit ${TASK_EXECUTION_DIR}/. Return the required result report and list the files you created or changed.`;
+  return `Perform the task now. Read the execution file "${file}" relative to the project root before doing any work. Follow its task scope, mandatory requirements, acceptance criteria, constraints and validation commands. Read referenced documentation as needed. Do not modify the execution file or commit ${TASK_EXECUTION_DIR}/. Return the required result report and list the files you created or changed. End with the required \`\`\`forge-result JSON block described in the execution file.`;
 }

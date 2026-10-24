@@ -78,6 +78,49 @@ async function writeGrants(dataDir: string, grants: Grants): Promise<void> {
   await rename(temporary, file);
 }
 
+async function ensureGrantsFile(dataDir: string): Promise<void> {
+  const file = grantsFile(dataDir);
+  let stat;
+  try {
+    stat = await lstat(file);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    await writeGrants(dataDir, {});
+    return;
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`Harness credential grants must be a regular file: ${file}`);
+  }
+  if (typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+    throw new Error(`Harness credential grants are not owned by the current user: ${file}`);
+  }
+  if (process.platform !== "win32" && (stat.mode & 0o077) !== 0) await chmod(file, 0o600);
+}
+
+/**
+ * The worker accepts exactly one OpenCode provider credential per attempt.
+ * Reject other exports here so an invalid grant fails at grant time rather
+ * than on every task attempt.
+ */
+export function validateOpenCodeAuthGrant(value: string): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("OPENCODE_AUTH_JSON must be valid JSON from 'opencode auth export'.");
+  }
+  if (!Array.isArray(parsed) || parsed.length !== 1) {
+    throw new Error("OPENCODE_AUTH_JSON must contain exactly one exported provider credential.");
+  }
+  const entry = parsed[0];
+  const integrationID = entry && typeof entry === "object" && "integrationID" in entry
+    ? (entry as { integrationID?: unknown }).integrationID
+    : undefined;
+  if (typeof integrationID !== "string" || integrationID.length === 0) {
+    throw new Error("OPENCODE_AUTH_JSON must contain one credential with a provider identifier.");
+  }
+}
+
 /**
  * Creates the private grants directory (and an empty grant file) the worker
  * mounts. Returns the directory for the compose environment.
@@ -91,12 +134,7 @@ export async function ensureHarnessGrants(dataDir: string): Promise<string> {
     throw new Error(`Harness grants are not owned by the current user: ${directory}`);
   }
   if (process.platform !== "win32" && (stat.mode & 0o077) !== 0) await chmod(directory, 0o700);
-  try {
-    await lstat(grantsFile(dataDir));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    await writeGrants(dataDir, {});
-  }
+  await ensureGrantsFile(dataDir);
   return directory;
 }
 
@@ -104,6 +142,7 @@ export async function grantHarnessCredential(dataDir: string, harness: string, v
   assertVariable(harness, variable);
   const trimmed = value.replace(/\r?\n$/, "");
   if (!trimmed || /[\0\r\n]/.test(trimmed)) throw new Error(`The value for ${variable} must be a single non-empty line.`);
+  if (harness === "opencode" && variable === "OPENCODE_AUTH_JSON") validateOpenCodeAuthGrant(trimmed);
   await ensureHarnessGrants(dataDir);
   const grants = await readGrants(dataDir);
   grants[harness] = { ...grants[harness], [variable]: trimmed };

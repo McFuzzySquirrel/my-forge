@@ -10,7 +10,8 @@ export interface Snapshot {
 
 type ChangeListener = () => void;
 type AuditListener = (event: AuditEvent) => void;
-type LogListener = (line: string) => void;
+export type LogSource = "engine" | "runtime";
+type LogListener = (line: string, source: LogSource) => void;
 type AuthoringListener = (event: Record<string, unknown>) => void;
 
 export interface ProjectDrafts {
@@ -80,8 +81,8 @@ export class AppStore {
     for (const fn of [...this.auditListeners]) fn(event);
   }
 
-  emitLog(line: string): void {
-    for (const fn of [...this.logListeners]) fn(line);
+  emitLog(line: string, source: LogSource): void {
+    for (const fn of [...this.logListeners]) fn(line, source);
   }
 
   emitAuthoring(event: Record<string, unknown>): void {

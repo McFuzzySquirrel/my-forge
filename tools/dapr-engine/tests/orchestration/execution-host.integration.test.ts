@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
 import { test } from "node:test";
 import type { ControlRequestV1 } from "../../contract/v1/index.ts";
 import { TaskApprovalCoordinator } from "../../orchestration/approval-control.ts";
@@ -23,6 +24,7 @@ import {
   TARGET_REF,
   type ExecutionFixture,
 } from "../support/execution-fixture.ts";
+import { FileTaskCompletionStore } from "../../execution/task-completions.ts";
 import { ScriptedHarness } from "../support/scripted-harness.ts";
 
 const connectionString = process.env.POSTGRES_TEST_URL;
@@ -38,6 +40,102 @@ test("execution host executes, verifies, integrates, retries, and resumes approv
   }
 });
 
+test("a later run replays an integrated predecessor and hydrates its work artifact", {
+  skip: !connectionString && "POSTGRES_TEST_URL is not set",
+}, async () => {
+  const fixture = await createExecutionFixture(connectionString!, { label: "replay" });
+  const completions = new FileTaskCompletionStore(join(fixture.scratchRoot, "completions"));
+  const submission = acceptedSubmission({
+    repositoryId: fixture.repositoryId,
+    phases: [{
+      id: "phase-1",
+      tasks: [
+        {
+          ...manifestTask({ id: "T-1", ownerAgent: "alpha", expectedOutputs: ["one.txt"], validationCommands: ["grep -qx one one.txt"] }),
+          produces: "work.t-1",
+        },
+        {
+          ...manifestTask({ id: "T-2", ownerAgent: "alpha", dependencies: ["T-1"], expectedOutputs: ["two.txt"], validationCommands: ["grep -qx two two.txt"] }),
+          inputs: ["work.t-1"],
+        },
+      ],
+    }],
+  });
+  const hostFor = (runId: string, harness: ScriptedHarness): ExecutionHost => {
+    const run: ExecutionHostRunV1 = executionHostRunFromSubmission(runId, submission, {
+      agentFor: (task) => agent(task.ownerAgent ?? "unowned"),
+      harness,
+    });
+    return new ExecutionHost({
+      runs: (id) => id === runId ? run : undefined,
+      receipts: fixture.receipts,
+      executions: fixture.executions,
+      integration: fixture.integration,
+      checkpoints: fixture.checkpoints,
+      completions,
+      status: fixture.status,
+      controls: fixture.controls,
+      repositoryRoot: (id) => id === fixture.repositoryId ? fixture.target : undefined,
+      scratchRoot: fixture.scratchRoot,
+      workerId: "host-replay-test",
+      budgetMs: 60_000,
+      heartbeatIntervalMs: 200,
+      heartbeatTtlMs: 5_000,
+      audit: () => undefined,
+    });
+  };
+  const input = (runId: string, taskId: string): ExecuteTaskActivityInputV1 => ({
+    runId,
+    taskId,
+    manifestDigest: submission.manifestDigest,
+    logicalAttempt: 1,
+    operationId: taskOperationId(runId, taskId, 1),
+    allowNoop: false,
+  });
+  try {
+    const firstRun = `run_${randomUUID().replaceAll("-", "")}`;
+    const firstHarness = new ScriptedHarness((request) => ({
+      files: { [request.task.id === "T-1" ? "one.txt" : "two.txt"]: request.task.id === "T-1" ? "one\n" : "two\n" },
+    }));
+    await fixture.status.createRun({
+      schemaVersion: 1,
+      runId: firstRun,
+      repositoryId: fixture.repositoryId,
+      targetRef: TARGET_REF,
+      manifestDigest: submission.manifestDigest,
+      taskIds: [...submission.selection.effectiveTaskIds],
+    });
+    assert.equal((await hostFor(firstRun, firstHarness).executeTask(input(firstRun, "T-1"))).status, "complete");
+    assert.equal(firstHarness.invocations.filter((invocation) => invocation.taskId === "T-1").length, 1);
+    await fixture.integration.releaseRun(firstRun);
+
+    const secondRun = `run_${randomUUID().replaceAll("-", "")}`;
+    const secondHarness = new ScriptedHarness((request) => ({
+      files: { [request.task.id === "T-1" ? "one.txt" : "two.txt"]: request.task.id === "T-1" ? "one\n" : "two\n" },
+    }));
+    await fixture.status.createRun({
+      schemaVersion: 1,
+      runId: secondRun,
+      repositoryId: fixture.repositoryId,
+      targetRef: TARGET_REF,
+      manifestDigest: submission.manifestDigest,
+      taskIds: [...submission.selection.effectiveTaskIds],
+    });
+    const secondHost = hostFor(secondRun, secondHarness);
+    const replayed = await secondHost.executeTask(input(secondRun, "T-1"));
+    assert.equal(replayed.status, "complete", JSON.stringify(replayed));
+    assert.equal(secondHarness.invocations.length, 0);
+    const dependent = await secondHost.executeTask(input(secondRun, "T-2"));
+    assert.equal(dependent.status, "complete", JSON.stringify(dependent));
+    assert.equal(secondHarness.invocations.length, 1);
+    assert.equal(secondHarness.invocations[0]?.taskId, "T-2");
+    assert.match(secondHarness.invocations[0]?.instructions ?? "", /work\.t-1/);
+    assert.match(secondHarness.invocations[0]?.instructions ?? "", /Completed T-1\./);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 async function exercise(fixture: ExecutionFixture): Promise<void> {
   const submission = acceptedSubmission({
     repositoryId: fixture.repositoryId,
@@ -48,13 +146,19 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
           "grep -qx one one.txt",
           // Repository commands never see worker secrets (P6-04): the real
           // process environment carries POSTGRES_TEST_URL, the grant GH_TOKEN.
-          'test -z "$POSTGRES_TEST_URL$DATABASE_URL$GH_TOKEN" && test "$HOME" != /root',
+          // They also get their own empty home, not the harness home where a
+          // provider credential may have been imported.
+          'test -z "$POSTGRES_TEST_URL$DATABASE_URL$GH_TOKEN" && test "$HOME" != /root && test ! -e "$HOME/harness-home-marker"',
         ] }),
         manifestTask({ id: "T-2", ownerAgent: "alpha", dependencies: ["T-1"], expectedOutputs: ["two.txt"], validationCommands: ["grep -qx one one.txt", "grep -qx two two.txt"] }),
         manifestTask({ id: "T-3", ownerAgent: "beta", expectedOutputs: ["three.txt"], validationCommands: ["grep -qx three three.txt"] }),
         manifestTask({ id: "T-4", ownerAgent: "gamma", expectedOutputs: ["four.txt"], validationCommands: ["grep -qx four four.txt"] }),
         manifestTask({ id: "T-5", ownerAgent: "delta", expectedOutputs: ["five.txt"], validationCommands: ["grep -qx five five.txt"], approvalRequired: true }),
         manifestTask({ id: "T-6", ownerAgent: "epsilon", expectedOutputs: ["six.txt"], validationCommands: ["grep -qx six six.txt"] }),
+        {
+          ...manifestTask({ id: "T-8", ownerAgent: "epsilon", expectedOutputs: ["eight.txt"], validationCommands: ["grep -qx eight eight.txt"] }),
+          timeoutMs: 120_000,
+        },
         {
           ...manifestTask({ id: "T-7", ownerAgent: "unowned", expectedOutputs: [], validationCommands: [] }),
           ownerAgent: undefined,
@@ -76,8 +180,12 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
   const harness = new ScriptedHarness((request) => {
     const id = request.task.id;
     if (id === "T-3" && request.attempt.number === 1) return { files: { "three.txt": "wrong\n" } };
-    const name = ({ "T-1": "one", "T-2": "two", "T-3": "three", "T-4": "four", "T-5": "five", "T-6": "six" } as Record<string, string>)[id]!;
-    return { files: { [`${name}.txt`]: `${name}\n` }, delayMs: id === "T-4" ? 50 : 0 };
+    const name = ({ "T-1": "one", "T-2": "two", "T-3": "three", "T-4": "four", "T-5": "five", "T-6": "six", "T-8": "eight" } as Record<string, string>)[id]!;
+    return {
+      files: { [`${name}.txt`]: `${name}\n` },
+      ...(id === "T-1" ? { homeFiles: { "harness-home-marker": "present\n" } } : {}),
+      delayMs: id === "T-4" ? 50 : 0,
+    };
   });
   const run: ExecutionHostRunV1 = executionHostRunFromSubmission(runId, submission, {
     agentFor: (task) => agent(task.ownerAgent ?? "unowned"),
@@ -275,6 +383,23 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
   assert.equal(head(), reviewHead);
   assert.equal(harness.invocations.length, invocationsBeforeReview);
 
+  // A per-task timeout larger than the service budget also extends the
+  // supervision deadline; otherwise the supervisor aborts at 60s.
+  const timeoutBefore = Date.now();
+  const timeoutTask = await host.executeTask(input("T-8"));
+  assert.equal(timeoutTask.status, "complete", JSON.stringify(timeoutTask));
+  const timeoutExecution = await fixture.executions.get({
+    runId,
+    taskId: "T-8",
+    logicalAttempt: 1,
+    operationId: taskOperationId(runId, "T-8", 1),
+  });
+  assert.ok(timeoutExecution);
+  assert.ok(
+    Date.parse(timeoutExecution.deadlineAt) - timeoutBefore >= 100_000,
+    "task timeout should extend the supervision deadline",
+  );
+
   // Every completed outcome carries validation and checkpoint evidence resolvable from the store.
   for (const outcome of [first, second, retried, p1, p2, resumed]) {
     assert.equal(outcome.status, "complete");
@@ -294,6 +419,111 @@ async function exercise(fixture: ExecutionFixture): Promise<void> {
   }
   assert.ok(!JSON.stringify(audit).includes("fixture-token-not-a-secret"));
 }
+
+test("execution host publishes declared work artifacts and projects them into dependent tasks", {
+  skip: !connectionString && "POSTGRES_TEST_URL is not set",
+}, async () => {
+  const fixture = await createExecutionFixture(connectionString!, { label: "host-artifacts" });
+  try {
+    const submission = acceptedSubmission({
+      repositoryId: fixture.repositoryId,
+      phases: [{
+        id: "phase-1",
+        tasks: [
+          {
+            ...manifestTask({ id: "A-1", ownerAgent: "alpha", expectedOutputs: ["a.txt"], validationCommands: ["grep -qx a a.txt"] }),
+            produces: "work.a-1",
+          },
+          {
+            ...manifestTask({ id: "A-2", ownerAgent: "alpha", dependencies: ["A-1"], expectedOutputs: ["b.txt"], validationCommands: ["grep -qx b b.txt"] }),
+            produces: "work.a-2",
+            inputs: ["work.a-1"],
+          },
+          {
+            ...manifestTask({ id: "A-3", ownerAgent: "alpha", dependencies: ["A-1"], expectedOutputs: ["c.txt"], validationCommands: ["grep -qx c c.txt"] }),
+            produces: "work.a-3",
+            inputs: ["work.a-1"],
+          },
+        ],
+      }],
+      settings: { maxRetries: 0 },
+    });
+    const runId = `run_${randomUUID().replaceAll("-", "")}`;
+    const harness = new ScriptedHarness((request) => {
+      if (request.task.id !== "A-1") {
+        assert.match(request.contextBlock, /Completed A-1\./);
+      }
+      const name = ({ "A-1": "a", "A-2": "b", "A-3": "c" } as Record<string, string>)[request.task.id]!;
+      return { files: { [`${name}.txt`]: `${name}\n` } };
+    });
+    const run = executionHostRunFromSubmission(runId, submission, {
+      agentFor: (task) => agent(task.ownerAgent!),
+      harness,
+    });
+    await fixture.status.createRun({
+      schemaVersion: 1,
+      runId,
+      repositoryId: fixture.repositoryId,
+      targetRef: TARGET_REF,
+      manifestDigest: submission.manifestDigest,
+      taskIds: [...submission.selection.effectiveTaskIds],
+    });
+    const host = new ExecutionHost({
+      runs: (id) => id === runId ? run : undefined,
+      receipts: fixture.receipts,
+      executions: fixture.executions,
+      integration: fixture.integration,
+      checkpoints: fixture.checkpoints,
+      status: fixture.status,
+      controls: fixture.controls,
+      repositoryRoot: (id) => id === fixture.repositoryId ? fixture.target : undefined,
+      scratchRoot: fixture.scratchRoot,
+      workerId: "host-artifacts-test",
+      budgetMs: 60_000,
+      heartbeatIntervalMs: 200,
+      heartbeatTtlMs: 5_000,
+      inheritedEnvironment: { PATH: process.env.PATH },
+    });
+    const input = (taskId: string): ExecuteTaskActivityInputV1 => ({
+      runId,
+      taskId,
+      manifestDigest: submission.manifestDigest,
+      logicalAttempt: 1,
+      operationId: taskOperationId(runId, taskId, 1),
+      allowNoop: false,
+    });
+
+    const first = await host.executeTask(input("A-1"));
+    assert.equal(first.status, "complete", JSON.stringify(first));
+    const firstEvidence = (first as Extract<TaskActivityOutcomeV1, { status: "complete" }>).evidence;
+    assert.equal(firstEvidence.artifactRefs.length, 3);
+    const workRef = firstEvidence.artifactRefs[0]!;
+    assert.equal(workRef.retentionClass, "checkpoint-evidence");
+    const resolved = await fixture.checkpoints.resolveArtifact(workRef);
+    assert.equal(resolved.ok, true);
+    if (resolved.ok) {
+      const artifact = JSON.parse(new TextDecoder().decode(resolved.bytes)) as Record<string, unknown>;
+      assert.equal(artifact.type, "work.a-1");
+      assert.equal(artifact.category, "work");
+      assert.equal(artifact.taskId, "A-1");
+      assert.equal(artifact.producedBy, "alpha");
+      assert.equal(artifact.summary, "Completed A-1.");
+    }
+
+    const [second, third] = await Promise.all([host.executeTask(input("A-2")), host.executeTask(input("A-3"))]);
+    assert.equal(second.status, "complete", JSON.stringify(second));
+    assert.equal(third.status, "complete", JSON.stringify(third));
+    const secondEvidence = (second as Extract<TaskActivityOutcomeV1, { status: "complete" }>).evidence;
+    const thirdEvidence = (third as Extract<TaskActivityOutcomeV1, { status: "complete" }>).evidence;
+    assert.equal(secondEvidence.artifactRefs.length, 3);
+    assert.equal(thirdEvidence.artifactRefs.length, 3);
+    assert.ok((await fixture.checkpoints.resolveArtifact(secondEvidence.artifactRefs[0]!)).ok);
+    assert.ok((await fixture.checkpoints.resolveArtifact(thirdEvidence.artifactRefs[0]!)).ok);
+    assert.equal(harness.invocations.length, 3);
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 test("execution host neither integrates nor starts attempts once the run is cancelling", {
   skip: !connectionString && "POSTGRES_TEST_URL is not set",

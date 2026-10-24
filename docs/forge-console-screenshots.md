@@ -27,11 +27,12 @@ dropdown for one-click return to a prior project.
 
 The dashboard puts project identity, the next pipeline action, and blockers
 first. PRD, team, and project-skill authoring have separate status and model
-summaries. The **Controls** panel holds run controls, per-task timeouts, the
-**Auto-commit** and **Log harness activity** toggles, concurrency, and the
-feature-increment form. Authoring retries are distinct from native execution
-controls; legacy projects do not need to regenerate a team just to resume a
-build. (The Overview capture is full-page so the Controls are visible.)
+summaries. The **Controls** panel holds run controls, the per-run **Executor**
+selector, per-task timeouts, the **Auto-commit** and **Log harness activity**
+toggles, concurrency, and the feature-increment form. Authoring retries are
+distinct from native execution controls; legacy projects do not need to
+regenerate a team just to resume a build. (The Overview capture is full-page so
+the Controls are visible.)
 
 ![Overview - run status + pipeline + controls](images/forge-console/current/overview-1024.png)
 

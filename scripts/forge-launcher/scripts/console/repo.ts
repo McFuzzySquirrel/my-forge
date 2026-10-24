@@ -289,6 +289,7 @@ function runSummary(run: ServiceRunSnapshot | null): RunSummary | null {
     counts,
     total: run.tasks.length,
     blockers: [],
+    hostExecution: typeof run.hostExecution === "boolean" ? run.hostExecution : null,
   };
 }
 
@@ -533,12 +534,16 @@ function updateAgentFrontmatter(file: string, primary?: string, fallback?: strin
 
 // ─── Logs ────────────────────────────────────────────────────────────────────
 
-export function logs(p: RepoPaths, lines = 400): LogsResponse {
-  const raw = readText(p.logPath);
+export function logLines(file: string, lines = 400): LogsResponse {
+  const raw = readText(file);
   if (raw === null) return { lines: [], truncated: false };
   const all = raw.replace(/\n$/, "").split("\n");
   const truncated = all.length > lines;
   return { lines: all.slice(-lines), truncated };
+}
+
+export function logs(p: RepoPaths, lines = 400): LogsResponse {
+  return logLines(p.logPath, lines);
 }
 
 // ─── Artifacts ───────────────────────────────────────────────────────────────

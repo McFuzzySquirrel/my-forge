@@ -11,6 +11,7 @@ import type {
   CreateProjectResult,
   DocsIndex,
   ExecutionMode,
+  Executor,
   ExecutionManifest,
   FileContent,
   LaunchCliResult,
@@ -20,6 +21,7 @@ import type {
   RederiveProgress,
   RederiveStepId,
   RemoveProjectsResult,
+  RunnerReadiness,
   SelectionScope,
   SelectResult,
   Summary,
@@ -103,8 +105,8 @@ export const api = {
   audit(): Promise<AuditEvent[]> {
     return request<AuditEvent[]>("/api/audit");
   },
-  logs(lines = 400): Promise<LogsResponse> {
-    return request<LogsResponse>(`/api/logs?lines=${lines}`);
+  logs(lines = 400, source: "engine" | "runtime" = "engine"): Promise<LogsResponse> {
+    return request<LogsResponse>(`/api/logs?lines=${lines}&source=${encodeURIComponent(source)}`);
   },
   artifacts(): Promise<ArtifactIndex> {
     return request<ArtifactIndex>("/api/artifacts");
@@ -206,8 +208,11 @@ export const api = {
   launchCli(): Promise<LaunchCliResult> {
     return post<LaunchCliResult>("/api/launch-cli", {});
   },
-  control(action: ControlAction, taskId?: string, from?: RederiveStepId): Promise<ControlResult> {
-    return post<ControlResult>("/api/control", { action, taskId, from });
+  control(action: ControlAction, taskId?: string, from?: RederiveStepId, executor?: Executor): Promise<ControlResult> {
+    return post<ControlResult>("/api/control", { action, taskId, from, executor });
+  },
+  runnerReadiness(): Promise<RunnerReadiness | null> {
+    return request<RunnerReadiness | null>("/api/runner-readiness");
   },
   /**
    * Regenerates the team, project skills, and manifest as one chain. `from`

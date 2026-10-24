@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { ArtifactRefV1 } from "../../contract/v1/index.ts";
 import { ArtifactStore } from "../../execution/artifacts.ts";
 import { executeVerifiedTaskActivity, admitTaskActivityResult } from "../../orchestration/activity-admission.ts";
 import { isTaskCompletionEvidence } from "../../orchestration/outcome.ts";
@@ -163,4 +164,119 @@ test("verified activity executes with compact predecessor context before returni
   if (outcome.status === "complete") {
     assert.equal(outcome.evidence.outputFiles.includes("src/output.ts"), true);
   }
+});
+
+test("verified activity publishes a declared work artifact into completion evidence", async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "myforge-verified-artifact-"));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  mkdirSync(join(repoRoot, "src"));
+  const artifactStore = new ArtifactStore({ artifactsPath: join(repoRoot, "docs", "artifacts") });
+  const task = fixtureTask();
+  task.produces = "work.task-1";
+  const agent: AgentDescriptor = {
+    name: "test-agent",
+    description: "Test agent",
+    path: "agents/test-agent.md",
+    expertise: [],
+    collaboration: [],
+    constraints: [],
+    rawBody: "",
+  };
+  const harness: HarnessAdapter = {
+    name: "stub",
+    supportsConcurrency: true,
+    capabilities: ["repository-tools"],
+    async invoke() {
+      writeFileSync(join(repoRoot, "src", "output.ts"), "export const output = true;\n");
+      return successfulResult();
+    },
+  };
+  const ref: ArtifactRefV1 = {
+    schemaVersion: 1,
+    artifactId: "art_published",
+    uri: `artifact://sha256/${"d".repeat(64)}`,
+    mediaType: "application/json",
+    sizeBytes: 10,
+    sha256: `sha256:${"d".repeat(64)}`,
+    retentionClass: "checkpoint-evidence",
+  };
+  let publishedAdmission: unknown;
+  const outcome = await executeVerifiedTaskActivity({
+    runId: "run-artifact",
+    taskId: task.id,
+    manifestDigest: DIGEST,
+    logicalAttempt: 1,
+    operationId: "55555555-5555-4555-8555-555555555555",
+    request: {
+      agent,
+      task,
+      repoRoot,
+      runId: "run-artifact",
+      attempt: 1,
+      timeoutMs: 5_000,
+    },
+    harness,
+    artifactStore,
+    predecessorTaskIds: [],
+    allowNoop: false,
+    publishArtifacts: async (admission) => {
+      publishedAdmission = admission;
+      return [ref];
+    },
+  });
+
+  assert.ok(publishedAdmission);
+  assert.equal(outcome.status, "complete");
+  if (outcome.status === "complete") {
+    assert.deepEqual(outcome.evidence.artifactRefs, [ref]);
+  }
+});
+
+test("verified activity rejects a declared artifact output without a publisher", async (t) => {
+  const repoRoot = mkdtempSync(join(tmpdir(), "myforge-missing-artifact-publisher-"));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  mkdirSync(join(repoRoot, "src"));
+  const artifactStore = new ArtifactStore({ artifactsPath: join(repoRoot, "docs", "artifacts") });
+  const task = fixtureTask();
+  task.produces = "work.task-1";
+  const agent: AgentDescriptor = {
+    name: "test-agent",
+    description: "Test agent",
+    path: "agents/test-agent.md",
+    expertise: [],
+    collaboration: [],
+    constraints: [],
+    rawBody: "",
+  };
+  const harness: HarnessAdapter = {
+    name: "stub",
+    supportsConcurrency: true,
+    capabilities: ["repository-tools"],
+    async invoke() {
+      throw new Error("The harness must not run when no artifact publisher is bound.");
+    },
+  };
+
+  await assert.rejects(
+    executeVerifiedTaskActivity({
+      runId: "run-missing-publisher",
+      taskId: task.id,
+      manifestDigest: DIGEST,
+      logicalAttempt: 1,
+      operationId: "66666666-6666-4666-8666-666666666666",
+      request: {
+        agent,
+        task,
+        repoRoot,
+        runId: "run-missing-publisher",
+        attempt: 1,
+        timeoutMs: 5_000,
+      },
+      harness,
+      artifactStore,
+      predecessorTaskIds: [],
+      allowNoop: false,
+    }),
+    /has no durable artifact publisher/,
+  );
 });

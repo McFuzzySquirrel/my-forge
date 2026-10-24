@@ -72,6 +72,23 @@ test("workspace diff round-trips modifications, deletions, untracked files, and 
   assert.equal((await captureWorkspaceDelta(target, baseRevision)).contentBase64, delta.contentBase64);
 });
 
+test("workspace delta capture includes a commit made on top of the accepted base", async (t) => {
+  const { baseRevision, source, target } = await createWorkspacePair(t);
+  await writeFile(join(source, "src", "index.ts"), "export const value = 3;\n");
+  await writeFile(join(source, "src", "committed.ts"), "export const committed = true;\n");
+  git(source, ["add", "-A"]);
+  git(source, ["commit", "--quiet", "-m", "harness commit"]);
+  await writeFile(join(source, "src", "dirty.ts"), "export const dirty = true;\n");
+
+  const delta = await captureWorkspaceDelta(source, baseRevision);
+  await applyWorkspaceDelta(target, delta);
+
+  assert.equal(await readFile(join(target, "src", "index.ts"), "utf8"), "export const value = 3;\n");
+  assert.equal(await readFile(join(target, "src", "committed.ts"), "utf8"), "export const committed = true;\n");
+  assert.equal(await readFile(join(target, "src", "dirty.ts"), "utf8"), "export const dirty = true;\n");
+  assert.equal(git(target, ["rev-parse", "HEAD"]), baseRevision);
+});
+
 test("workspace delta capture requires the accepted base and enforces its size limit", async (t) => {
   const { baseRevision, source } = await createWorkspacePair(t);
   await writeFile(join(source, "src", "index.ts"), "x".repeat(512));

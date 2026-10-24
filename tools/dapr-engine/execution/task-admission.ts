@@ -21,6 +21,12 @@ export interface TaskAdmissionOptions {
   /** Isolated environment for validation commands; see `runTaskValidation`. */
   readonly validationEnvironment?: Readonly<Record<string, string>>;
   readonly validationProcessIdentity?: ProcessIdentityV1;
+  /**
+   * Validation evidence already produced beside the harness. Host execution
+   * runs the commands where the harness installed its dependencies, so the
+   * clean service workspace must not try to repeat them.
+   */
+  readonly validation?: { readonly ok: boolean; readonly reason?: string };
 }
 
 export type TaskAdmissionResult =
@@ -193,7 +199,7 @@ export async function admitTaskResult(options: TaskAdmissionOptions): Promise<Ta
   gates.push(gate("handoff", "passed", undefined, [handoff.summary]));
   gates.push(gate("requirements", "passed", undefined, ["unresolved=[]"]));
 
-  const validation = await runTaskValidation(
+  const validation = options.validation ?? await runTaskValidation(
     options.task,
     options.repoRoot,
     options.timeoutMs,

@@ -319,6 +319,14 @@ running without required context. Projection is built by
 `ArtifactStore.projectPredecessors`; reference/integrity verification remains
 the responsibility of the artifact store that resolves those references.
 
+For a task with declared `produces`, the activity synthesises a complete `work`
+artifact from the admitted handoff and observed output files, writes it to the
+run's artifact store, publishes its canonical bytes to the checkpoint artifact
+store, and adds the returned reference to the completion evidence. A task that
+declares `produces` without a bound publisher fails admission before the harness
+runs. The execution host always binds the publisher, so normal host and worker
+activities publish declared artifacts; direct activity callers must supply one.
+
 Every successful activity returns `TaskCompletionEvidenceV1`, bound to the run,
 task, manifest digest, logical attempt, and operation ID. It carries a canonical
 completion digest, the structured handoff digest, output-file list, published

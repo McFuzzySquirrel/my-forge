@@ -91,3 +91,15 @@ access. Use separate runtime installations for repositories outside the
 trust domain. This does not protect mutually untrusted repositories from one
 another; adding such repositories or claiming multi-tenant isolation reopens
 the finding and requires a filesystem/mount boundary.
+
+## Validation-home correction — 2026-10-24
+
+The normal admission path previously built the validation environment from the
+harness's own per-attempt home. That home contains the private OpenCode data
+directory where `OPENCODE_AUTH_JSON` is imported, so a repository validation
+command could read the credential even though it received no credential
+environment variables. The admission path now creates a separate empty
+validation home, matching the resume path. The integration suite checks that a
+marker written into the harness home is invisible to validation commands. See
+[ADR-077](077-opencode-provider-credential-isolation.md) and
+[Harness credentials and execution boundaries](../harness-credentials.md).

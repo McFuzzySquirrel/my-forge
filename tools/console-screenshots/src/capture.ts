@@ -99,6 +99,19 @@ async function installHostRunnerMocks(page: Awaited<ReturnType<Browser["newPage"
     const pathname = new URL(request.url()).pathname;
     if (pathname === "/api/runtime") {
       await request.respond({ status: 200, contentType: "application/json", body: JSON.stringify(runtime) });
+    } else if (pathname === "/api/runner-readiness") {
+      await request.respond({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          repositoryId: "ledgerly",
+          registered: true,
+          capabilityEnabled: true,
+          hostRunnerStatus: "running",
+          available: true,
+          blocker: null,
+        }),
+      });
     } else if (pathname === "/api/service/host-runner/jobs") {
       await request.respond({ status: 200, contentType: "application/json", body: JSON.stringify(jobs) });
     } else {
@@ -230,7 +243,16 @@ export async function captureAll(browser: Browser, baseUrl: string, currentDir: 
     try {
       if (target.prepare) await target.prepare(page);
       if (target.route === "board") await waitForBoard(page);
-      if (target.fullPage) await expandToContent(page, target.viewport);
+      if (target.fullPage) {
+        // Async panels replace their loading placeholders after the connection
+        // settles. Measuring first would size the viewport to the placeholder
+        // and clip the real content.
+        await page.waitForFunction(
+          () => !(document.querySelector("#view")?.textContent ?? "").includes("Loading"),
+          { timeout: 10000 },
+        ).catch(() => {});
+        await expandToContent(page, target.viewport);
+      }
       await settle(page);
       const file = join(currentDir, `${target.name}.png`);
       await page.screenshot({ path: file, type: "png", fullPage: false, optimizeForSpeed: false });

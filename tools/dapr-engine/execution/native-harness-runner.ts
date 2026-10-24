@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
+import { runCommand } from "./harness/run.ts";
 import { inlinePersona } from "./request.ts";
 import {
   DEFAULT_MAX_WORKSPACE_DELTA_BYTES,
@@ -11,6 +13,8 @@ import type {
   HarnessRunner,
   HarnessRunnerRequestV1,
   HarnessRunnerResultV1,
+  HarnessRunnerValidationCommandV1,
+  HarnessRunnerValidationV1,
 } from "./runner-contract.ts";
 import { parseHarnessRunnerRequest } from "./runner-contract.ts";
 import { executionPrompt } from "./task-execution.ts";
@@ -56,6 +60,87 @@ function sanitizeTaskResult(
   };
 }
 
+const MAX_VALIDATION_OUTPUT_BYTES = 64 * 1024;
+const VALIDATION_TRUNCATION = "[truncated]\n";
+
+function boundedValidationOutput(value: string): string {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.byteLength <= MAX_VALIDATION_OUTPUT_BYTES) return value;
+  const budget = MAX_VALIDATION_OUTPUT_BYTES - Buffer.byteLength(VALIDATION_TRUNCATION, "utf8");
+  return `${VALIDATION_TRUNCATION}${bytes.subarray(Math.max(0, bytes.byteLength - budget)).toString("utf8")}`;
+}
+
+/**
+ * Runs the manifest's validation commands in the disposable clone. The host is
+ * the only place with the harness's installed dependencies and browser
+ * binaries; the service's task workspace is a clean clone and cannot run them.
+ */
+async function installHostDependencies(
+  workspacePath: string,
+  environment: Readonly<Record<string, string>>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }> {
+  const hasProject = existsSync(join(workspacePath, "package.json"))
+    && existsSync(join(workspacePath, "package-lock.json"))
+    && !existsSync(join(workspacePath, "node_modules"));
+  if (!hasProject) return { ok: true };
+  const result = await runCommand("npm", ["ci", "--no-audit", "--no-fund"], {
+    cwd: workspacePath,
+    timeoutMs,
+    maxBufferBytes: 10 * 1024 * 1024,
+    env: { ...environment },
+    inheritEnvironment: false,
+    reapProcessGroupOnExit: true,
+    ...(signal ? { signal } : {}),
+  });
+  if (result.status === 0) return { ok: true };
+  const detail = boundedValidationOutput(redactSecretValues(result.stderr || result.stdout, environment)).trim().slice(-8_000);
+  return {
+    ok: false,
+    reason: `dependency install failed (exit ${String(result.status)}): npm ci${detail ? `\n${detail}` : ""}`,
+  };
+}
+
+async function runHostValidation(
+  task: HarnessRunnerRequestV1["task"],
+  workspacePath: string,
+  environment: Readonly<Record<string, string>>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<HarnessRunnerValidationV1 | undefined> {
+  if (task.validationCommands.length === 0) return undefined;
+  const dependencies = await installHostDependencies(workspacePath, environment, timeoutMs, signal);
+  if (!dependencies.ok) {
+    return { ok: false, reason: dependencies.reason, results: [] };
+  }
+  const results: HarnessRunnerValidationCommandV1[] = [];
+  for (const command of task.validationCommands) {
+    const result = await runCommand(command, [], {
+      shell: true,
+      cwd: workspacePath,
+      timeoutMs,
+      maxBufferBytes: 10 * 1024 * 1024,
+      env: { ...environment },
+      inheritEnvironment: false,
+      reapProcessGroupOnExit: true,
+      ...(signal ? { signal } : {}),
+    });
+    const stdout = boundedValidationOutput(redactSecretValues(result.stdout, environment));
+    const stderr = boundedValidationOutput(redactSecretValues(result.stderr, environment));
+    results.push({ command, status: result.status, stdout, stderr });
+    if (result.status !== 0) {
+      const detail = (stderr || stdout).trim().slice(-8_000);
+      return {
+        ok: false,
+        reason: `validation command failed (exit ${String(result.status)}): ${command}${detail ? `\n${detail}` : ""}`,
+        results,
+      };
+    }
+  }
+  return { ok: true, results };
+}
+
 export function buildNativeHarnessEnvironment(
   inherited: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
@@ -70,6 +155,28 @@ export function buildNativeHarnessEnvironment(
   environment.HOME = home;
   if (process.platform === "win32") environment.USERPROFILE = inherited.USERPROFILE ?? home;
   return environment;
+}
+
+/**
+ * Manifest agent paths point at the registered checkout. The host runner
+ * executes in a disposable clone, so a path that is inside the registered
+ * repository must be rewritten into the clone before native agent selection
+ * (and existence checks) can resolve it.
+ */
+function remapAgentPath(
+  agent: HarnessRunnerRequestV1["agent"],
+  repositoryPath: string,
+  workspacePath: string,
+): HarnessRunnerRequestV1["agent"] {
+  if (!agent.path) return agent;
+  const relativePath = isAbsolute(agent.path)
+    ? relative(repositoryPath, agent.path)
+    : agent.path;
+  if (!relativePath
+    || isAbsolute(relativePath)
+    || relativePath === ".."
+    || relativePath.startsWith(`..${sep}`)) return agent;
+  return { ...agent, path: join(workspacePath, relativePath) };
 }
 
 export interface NativeHarnessRunnerOptions {
@@ -136,7 +243,7 @@ export class NativeHarnessRunner implements HarnessRunner {
         },
       };
       const attemptRequest: TaskAttemptRequest = {
-        agent: runnerRequest.agent,
+        agent: remapAgentPath(runnerRequest.agent, repositoryPath, workspacePath),
         task: runnerRequest.task,
         ...(runnerRequest.effectiveModel ? { effectiveModel: runnerRequest.effectiveModel } : {}),
         repoRoot: workspacePath,
@@ -159,6 +266,10 @@ export class NativeHarnessRunner implements HarnessRunner {
       if (cleanupUnconfirmed) {
         throw new Error("Host runner could not confirm harness process-tree cleanup; rejecting the workspace result.");
       }
+      const validation = result.success
+        ? await runHostValidation(runnerRequest.task, workspacePath, environment, runnerRequest.timeoutMs, signal)
+        : undefined;
+      signal?.throwIfAborted();
       const workspaceDelta = await captureWorkspaceDelta(
         workspacePath,
         runnerRequest.baseRevision,
@@ -174,6 +285,7 @@ export class NativeHarnessRunner implements HarnessRunner {
         identity: runnerRequest.identity,
         result,
         workspaceDelta,
+        ...(validation ? { validation } : {}),
       };
     } finally {
       await rm(attemptRoot, { recursive: true, force: true });

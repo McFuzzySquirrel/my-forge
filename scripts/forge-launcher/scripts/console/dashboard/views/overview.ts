@@ -2,6 +2,7 @@
 
 import { api } from "../api.js";
 import { Epoch, store } from "../state.js";
+import { executorFor, setExecutorChoice } from "../executor.js";
 import { el, fmtAgo, fmtDuration, fmtTime, minutesToTimeoutMs, statusBadge, toast } from "../render/dom.js";
 import type {
   Actions,
@@ -11,7 +12,9 @@ import type {
   BackgroundJob,
   ControlAction,
   ExecutionMode,
+  Executor,
   RederiveStepStatus,
+  RunnerReadiness,
   RunSummary,
   ServiceRunsResponse,
   Summary,
@@ -24,6 +27,7 @@ let pollTimer: number | undefined;
 let refreshTimer: number | undefined;
 let overviewContainer: HTMLElement | null = null;
 let refreshInFlight = false;
+let runnerReadiness: RunnerReadiness | null = null;
 
 function stopPoll(): void {
   if (pollTimer !== undefined) {
@@ -53,6 +57,7 @@ export function unmountOverview(): void {
   stopPoll();
   stopScheduledRender();
   overviewContainer = null;
+  runnerReadiness = null;
   lastServiceProfile = null;
 }
 
@@ -77,7 +82,16 @@ export async function renderOverview(container: HTMLElement): Promise<void> {
   let tasks: TaskRow[] = [];
   let loadError = false;
   try {
-    [summary, actions, tasks] = await Promise.all([api.summary(), api.actions(), api.tasks()]);
+    const [nextSummary, nextActions, nextTasks, readiness] = await Promise.all([
+      api.summary(),
+      api.actions(),
+      api.tasks(),
+      api.runnerReadiness().catch(() => null),
+    ]);
+    summary = nextSummary;
+    actions = nextActions;
+    tasks = nextTasks;
+    runnerReadiness = readiness;
   } catch {
     loadError = true;
     summary = store.summary;
@@ -104,7 +118,7 @@ export async function renderOverview(container: HTMLElement): Promise<void> {
     region("overview-run", renderRun(summary.run)),
     region("overview-service", renderServiceProfile()),
     region("overview-manifest", renderManifest(summary)),
-    region("overview-actions", renderActions(container, summary, actions, tasks)),
+    region("overview-actions", renderActions(container, summary, actions, tasks, runnerReadiness)),
     region("overview-feature", summary.hasPrd && summary.hasTeam ? renderFeatureIncrement(container) : renderFeaturePrd(container)),
   );
   syncRederiveRegion(container, summary);
@@ -132,8 +146,14 @@ async function refreshOverviewData(container: HTMLElement): Promise<void> {
   refreshInFlight = true;
   const myGen = renderEpoch.next();
   try {
-    const [summary, actions, tasks] = await Promise.all([api.summary(), api.actions(), api.tasks()]);
+    const [summary, actions, tasks, readiness] = await Promise.all([
+      api.summary(),
+      api.actions(),
+      api.tasks(),
+      api.runnerReadiness().catch(() => null),
+    ]);
     if (!renderEpoch.isCurrent(myGen) || overviewContainer !== container || !summary) return;
+    runnerReadiness = readiness;
     const update = (name: string, content: HTMLElement): void => {
       const host = container.querySelector<HTMLElement>(`[data-overview-region="${name}"]`);
       if (!host) return;
@@ -156,7 +176,7 @@ async function refreshOverviewData(container: HTMLElement): Promise<void> {
     update("overview-run", renderRun(summary.run));
     update("overview-service", renderServiceProfile());
     update("overview-manifest", renderManifest(summary));
-    update("overview-actions", renderActions(container, summary, actions, tasks));
+    update("overview-actions", renderActions(container, summary, actions, tasks, readiness));
     const feature = summary.hasPrd && summary.hasTeam ? renderFeatureIncrement(container) : renderFeaturePrd(container);
     update("overview-feature", feature);
     announce(`Status updated: ${summary.run?.status ?? "pipeline ready"}.`);
@@ -673,9 +693,16 @@ function startPoll(container: HTMLElement): void {
   }, 4000);
 }
 
-async function continuePipeline(container: HTMLElement, step: PipelineStep): Promise<void> {
+async function continuePipeline(container: HTMLElement, step: PipelineStep, summary: Summary): Promise<void> {
+  // "Start build" submits the first run; carry the per-run executor just like
+  // the Run button does.
+  const executor = step.action === "run" ? executorFor(summary) : undefined;
+  if (executor === "host" && !window.confirm(HOST_EXECUTION_WARNING)) {
+    toast("Host execution cancelled. Choose the worker container to run without this confirmation.");
+    return;
+  }
   try {
-    const res = await api.control(step.action);
+    const res = await api.control(step.action, undefined, undefined, executor);
     toast(res.message || (res.ok ? "ok" : "failed"));
   } catch (err) {
     toast(err instanceof Error ? err.message : "control failed");
@@ -763,9 +790,9 @@ function renderGuidance(container: HTMLElement, summary: Summary, actions: Actio
     if (!working) {
       primary.addEventListener("click", () => {
         if (step.session) void startSession(container, step.session);
-        else void continuePipeline(container, step);
+        else void continuePipeline(container, step, summary);
       });
-      secondary?.addEventListener("click", () => void continuePipeline(container, step));
+      secondary?.addEventListener("click", () => void continuePipeline(container, step, summary));
       idea?.addEventListener("click", () => void startSession(container, "idea"));
     }
     if (!working) {
@@ -804,17 +831,29 @@ function renderGuidance(container: HTMLElement, summary: Summary, actions: Actio
   return el("div", { className: "panel hint" }, children);
 }
 
-function renderActions(container: HTMLElement, summary: Summary, actions: Actions, tasks: TaskRow[]): HTMLElement {
+const HOST_EXECUTION_WARNING =
+  "Host execution runs the selected local harness CLI as your OS user, outside a task sandbox, with access to files and credentials available to your account. Continue only for trusted tasks.";
+
+function renderActions(
+  container: HTMLElement,
+  summary: Summary,
+  actions: Actions,
+  tasks: TaskRow[],
+  runner: RunnerReadiness | null,
+): HTMLElement {
   if (!summary.hasManifest) {
-    return el("div", { className: "panel controls-disabled" }, [
+    return el("div", { className: "panel" }, [
       el("h4", null, "Controls"),
-      el("p", { className: "dim small" }, "Controls unlock after the execution manifest is generated."),
+      // The executor is chosen before the first run, so this control is usable
+      // before the manifest exists.
+      renderExecutorControl(container, summary, runner),
+      el("p", { className: "dim small" }, "Build controls unlock after the execution manifest is generated."),
     ]);
   }
-  const ctl = (action: ControlAction, taskId?: string): void => {
+  const ctl = (action: ControlAction, taskId?: string, executor?: Executor): void => {
     void (async () => {
       try {
-        const res = await api.control(action, taskId);
+        const res = await api.control(action, taskId, undefined, executor);
         toast(res.message || (res.ok ? "ok" : "failed"));
         if (res.job?.status === "running") startPoll(container);
       } catch (err) {
@@ -824,16 +863,33 @@ function renderActions(container: HTMLElement, summary: Summary, actions: Action
     })();
   };
 
+  // The executor is per-run. Starting a run never changes the saved default;
+  // that requires the separate "Save as default" action below the selector.
+  const startRun = (action: "run" | "resume"): void => {
+    const executor = executorFor(summary);
+    if (executor === "host" && !window.confirm(HOST_EXECUTION_WARNING)) {
+      toast("Host execution cancelled. Choose the worker container to run without this confirmation.");
+      return;
+    }
+    ctl(action, undefined, executor);
+  };
+
   const authoringBlocked = summary.authoringReady === false;
   const manualNeedsSelection = summary.executionMode === "manual" && summary.selectedTaskCount === 0;
+  const chosenExecutor = executorFor(summary);
+  // Fail closed: an unverified readiness response disables host execution. The
+  // service would reject it anyway; this makes the reason visible first.
+  const hostBlocked = chosenExecutor === "host" && (runner === null || !runner.available);
+  const startBlocked = authoringBlocked || !actions.canRun || manualNeedsSelection || hostBlocked;
+  const resumeBlocked = authoringBlocked || !actions.canResume || manualNeedsSelection || hostBlocked;
   const buttons = [
-    el("button", { className: "btn btn-primary", disabled: !authoringBlocked && actions.canRun && !manualNeedsSelection ? null : true }, summary.executionMode === "manual" ? "Run selected" : "Run"),
-    el("button", { className: "btn", disabled: !authoringBlocked && actions.canResume && !manualNeedsSelection ? null : true }, summary.executionMode === "manual" ? "Resume selected" : "Resume"),
+    el("button", { className: "btn btn-primary", disabled: startBlocked ? true : null }, summary.executionMode === "manual" ? "Run selected" : "Run"),
+    el("button", { className: "btn", disabled: resumeBlocked ? true : null }, summary.executionMode === "manual" ? "Resume selected" : "Resume"),
     el("button", { className: "btn", disabled: actions.canPause ? null : true }, "Pause"),
     el("button", { className: "btn btn-danger", disabled: actions.canStop ? null : true }, "Stop"),
   ];
-  buttons[0]!.addEventListener("click", () => ctl("run"));
-  buttons[1]!.addEventListener("click", () => ctl("resume"));
+  buttons[0]!.addEventListener("click", () => startRun("run"));
+  buttons[1]!.addEventListener("click", () => startRun("resume"));
   buttons[2]!.addEventListener("click", () => ctl("pause"));
   buttons[3]!.addEventListener("click", () => ctl("stop"));
 
@@ -850,7 +906,7 @@ function renderActions(container: HTMLElement, summary: Summary, actions: Action
   const mode = renderBuildModeControl(container, summary.executionMode, summary.selectedTaskCount);
   const commit = renderAutoCommitToggle(container, store.summary?.autoCommit ?? true);
   const activity = renderLogHarnessActivityToggle(container, store.summary?.logHarnessActivity ?? false);
-  const hostExecution = renderHostExecutionToggle(container, store.summary?.hostExecution ?? false);
+  const executor = renderExecutorControl(container, summary, runner);
   const concurrency = renderConcurrencyControl(container, store.summary?.concurrency ?? 0);
   // Reset lives with the reconciliation data it acts on, in the Manifest panel
   // directly above this one, so this is a pointer rather than a second control.
@@ -862,7 +918,15 @@ function renderActions(container: HTMLElement, summary: Summary, actions: Action
   return el("div", { className: "panel" }, [
     el("h4", null, "Controls"),
     mode,
+    executor,
     el("div", { className: "actions" }, buttons),
+    hostBlocked
+      ? el("p", { className: "error-text small", role: "alert" }, [
+        runner?.blocker ?? "Host execution is unavailable until the local runtime reports a ready host runner.",
+        " ",
+        el("a", { href: "#/host-runner" }, "Host runner"),
+      ])
+      : null,
     manualNeedsSelection
       ? el("p", { className: "dim small" }, ["Manual mode needs at least one selected task. ", el("a", { href: "#/tasks" }, "Choose tasks")])
       : null,
@@ -873,7 +937,6 @@ function renderActions(container: HTMLElement, summary: Summary, actions: Action
     timeouts,
     commit,
     activity,
-    hostExecution,
     concurrency,
     changedCompleted.length > 0
       ? el("p", { className: "dim small" }, `${changedCompleted.length} changed task${changedCompleted.length === 1 ? " has" : "s have"} already completed; reset them in the Manifest panel above to run them again.`)
@@ -881,39 +944,86 @@ function renderActions(container: HTMLElement, summary: Summary, actions: Action
   ]);
 }
 
-function renderHostExecutionToggle(container: HTMLElement, enabled: boolean): HTMLElement {
-  const checkbox = el("input", { type: "checkbox", checked: enabled ? true : null }) as HTMLInputElement;
-  checkbox.addEventListener("change", () => {
-    const value = checkbox.checked;
-    if (value && !window.confirm(
-      "Host execution runs the selected local harness CLI as your OS user, outside a task sandbox, with access to files and credentials available to your account. Enable only for trusted tasks. Continue?",
-    )) {
-      checkbox.checked = false;
-      return;
-    }
-    void (async () => {
-      try {
-        const response = await api.setHostExecution(value);
-        toast(response.message || (response.ok ? "updated" : "update failed"));
-      } catch (error) {
-        toast(error instanceof Error ? error.message : "update failed");
-      }
+function renderExecutorControl(
+  container: HTMLElement,
+  summary: Summary,
+  runner: RunnerReadiness | null,
+): HTMLElement {
+  const chosen = executorFor(summary);
+  const saved: Executor = summary.hostExecution ? "host" : "worker";
+  // A null readiness means the check could not be completed; treat that as
+  // unavailable rather than offering a host run that will fail closed later.
+  const hostUnavailable = runner === null || !runner.available;
+  const hostReason = runner?.blocker ??
+    "Host-runner readiness could not be verified. The run fails closed if the local runtime has no ready runner.";
+
+  const option = (value: Executor, label: string, description: string, disabled: boolean): HTMLElement => {
+    const input = el("input", {
+      type: "radio",
+      name: "executor",
+      value,
+      checked: chosen === value ? true : null,
+      disabled: disabled ? true : null,
+    }) as HTMLInputElement;
+    input.addEventListener("change", () => {
+      if (!input.checked) return;
+      setExecutorChoice(value);
       void renderOverview(container);
-    })();
-  });
-  return el("div", { style: "margin-top:10px" }, [
-    el("label", { className: "checkbox-row" }, [
-      checkbox,
-      el("span", null, "Run harness CLI on this host (no task sandbox)"),
+    });
+    return el("label", { className: "checkbox-row" }, [
+      input,
+      el("span", null, [
+        el("strong", null, label),
+        el("br"),
+        el("span", { className: "dim small" }, description),
+      ]),
+    ]);
+  };
+
+  const children: Array<HTMLElement | null> = [
+    el("fieldset", { className: "executor-control" }, [
+      el("legend", { className: "dim small" }, "Executor for the next run"),
+      option("worker", "Worker container", "Pinned harness CLIs inside the local runtime. Sandboxed, with runtime-granted credentials.", false),
+      option("host", "This computer", "Your installed CLI and its normal login, with your full OS account permissions. No task sandbox.", hostUnavailable),
+      hostUnavailable
+        ? el("p", { className: "error-text small", role: "alert" }, [hostReason, " ", el("a", { href: "#/host-runner" }, "Host runner")])
+        : el("p", { className: "dim small" }, [
+          "Host execution needs a registered project, an enabled capability, and a running host runner. Configure these on the ",
+          el("a", { href: "#/host-runner" }, "Host runner page"),
+          ".",
+        ]),
+      chosen === "host" ? el("p", { className: "dim small", role: "note" }, HOST_EXECUTION_WARNING) : null,
     ]),
-    el("p", { className: "dim small", role: "note" }, [
-      "Off by default. The harness uses your local CLI installation and authentication, with the full permissions of your OS account. Host runner readiness, repository registration, and that project's capability are required; there is no worker fallback. Configure these on the ",
-      el("a", { href: "#/host-runner" }, "Host runner page"),
-      " and ",
-      el("a", { href: "#/runtime" }, "Runtime page"),
-      ".",
-    ]),
-  ]);
+  ];
+
+  if (chosen !== saved) {
+    const save = el("button", { className: "btn btn-sm", type: "button" }, "Save as default for this project");
+    save.addEventListener("click", () => {
+      if (chosen === "host" && !window.confirm(HOST_EXECUTION_WARNING)) return;
+      void (async () => {
+        try {
+          const response = await api.setHostExecution(chosen === "host");
+          toast(response.message || (response.ok ? "saved" : "save failed"));
+        } catch (error) {
+          toast(error instanceof Error ? error.message : "save failed");
+        }
+        void renderOverview(container);
+      })();
+    });
+    children.push(el("p", { className: "dim small" }, [
+      `Saved default: ${saved === "host" ? "this computer" : "worker container"}. `,
+      save,
+    ]));
+  }
+
+  const bound = summary.run?.hostExecution;
+  if (summary.live && typeof bound === "boolean") {
+    children.push(el("p", { className: "dim small" }, [
+      `The active run is bound to ${bound ? "this computer" : "the worker container"}. This choice applies to the next run.`,
+    ]));
+  }
+
+  return el("div", { style: "margin-top:10px" }, children);
 }
 
 function updateExecutionMode(container: HTMLElement, mode: ExecutionMode): void {

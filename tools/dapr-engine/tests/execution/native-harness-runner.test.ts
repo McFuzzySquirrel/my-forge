@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { applyWorkspaceDelta } from "../../execution/workspace-diff.ts";
 import { NativeHarnessRunner } from "../../execution/native-harness-runner.ts";
@@ -127,6 +127,93 @@ describe("NativeHarnessRunner", () => {
     await git(root, "clone", "--quiet", repository.path, target);
     await applyWorkspaceDelta(target, parsed.workspaceDelta);
     assert.equal(await readFile(join(target, "result.txt"), "utf8"), "completed\n");
+  });
+
+  it("rewrites the manifest agent path into the disposable clone", async () => {
+    const root = await mkdtemp(join(tmpdir(), "myforge-native-runner-"));
+    roots.push(root);
+    const repository = await makeRepository(root);
+    const agentPath = join(repository.path, ".opencode", "agents", "builder.md");
+    await mkdir(dirname(agentPath), { recursive: true });
+    await writeFile(agentPath, "---\nname: builder\n---\nYou are builder.\n");
+    await git(repository.path, "add", "--all");
+    await git(repository.path, "commit", "--quiet", "-m", "add agent");
+    const baseRevision = await git(repository.path, "rev-parse", "HEAD");
+    const harness = new ScriptedHarness(() => ({ files: { "result.txt": "completed\n" } }));
+    const runner = new NativeHarnessRunner({
+      workspacesRoot: join(root, "workspaces"),
+      repositoryRoot: (id) => id === "repo_test" ? repository.path : undefined,
+      harnesses: new Map([[harness.name, harness]]),
+    });
+    const original = request("repo_test", baseRevision);
+
+    await runner.run({
+      ...original,
+      agent: { ...original.agent, path: agentPath },
+    });
+
+    const invocation = harness.invocations[0];
+    assert.ok(invocation);
+    assert.equal(invocation.agentPath, join(invocation.repoRoot, ".opencode", "agents", "builder.md"));
+    assert.notEqual(invocation.agentPath, agentPath);
+  });
+
+  it("runs validation commands in the clone and returns their evidence", async () => {
+    const root = await mkdtemp(join(tmpdir(), "myforge-native-runner-"));
+    roots.push(root);
+    const repository = await makeRepository(root);
+    const harness = new ScriptedHarness(() => ({ files: { "result.txt": "completed\n" } }));
+    const runner = new NativeHarnessRunner({
+      workspacesRoot: join(root, "workspaces"),
+      repositoryRoot: (id) => id === "repo_test" ? repository.path : undefined,
+      harnesses: new Map([[harness.name, harness]]),
+    });
+    const original = request("repo_test", repository.baseRevision);
+    const validationCommands = ["test -f result.txt", "printf 'validated\\n'"];
+    const task = manifestTask({
+      id: "T1",
+      ownerAgent: "builder",
+      expectedOutputs: ["result.txt"],
+      validationCommands,
+    });
+
+    const result = await runner.run({ ...original, task });
+    const parsed = parseHarnessRunnerResult(
+      { ...original, task },
+      result,
+      1024 * 1024,
+    );
+
+    assert.equal(result.validation?.ok, true);
+    assert.deepEqual(result.validation?.results.map(({ command }) => command), validationCommands);
+    assert.equal(result.validation?.results[0]?.status, 0);
+    assert.equal(parsed.validation?.ok, true);
+    assert.match(parsed.validation?.results[1]?.stdout ?? "", /validated/);
+  });
+
+  it("returns failed validation evidence without discarding the workspace delta", async () => {
+    const root = await mkdtemp(join(tmpdir(), "myforge-native-runner-"));
+    roots.push(root);
+    const repository = await makeRepository(root);
+    const harness = new ScriptedHarness(() => ({ files: { "result.txt": "completed\n" } }));
+    const runner = new NativeHarnessRunner({
+      workspacesRoot: join(root, "workspaces"),
+      repositoryRoot: (id) => id === "repo_test" ? repository.path : undefined,
+      harnesses: new Map([[harness.name, harness]]),
+    });
+    const original = request("repo_test", repository.baseRevision);
+    const task = manifestTask({
+      id: "T1",
+      ownerAgent: "builder",
+      expectedOutputs: ["result.txt"],
+      validationCommands: ["test -f missing.txt"],
+    });
+
+    const result = await runner.run({ ...original, task });
+
+    assert.equal(result.validation?.ok, false);
+    assert.match(result.validation?.reason ?? "", /validation command failed \(exit 1\)/);
+    assert.match(Buffer.from(result.workspaceDelta.contentBase64, "base64").toString(), /result\.txt/);
   });
 
   it("rejects invalid repository identifiers before resolving a host path", async () => {

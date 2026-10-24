@@ -26,6 +26,8 @@ import {
 } from "../execution/isolation.ts";
 import { superviseExecution, type ExecutionOwnershipStore } from "../execution/process-lifecycle.ts";
 import type { HarnessRunner } from "../execution/runner-contract.ts";
+import type { TaskAdmissionResult } from "../execution/task-admission.ts";
+import type { TaskCompletionStore } from "../execution/task-completions.ts";
 import { TASK_EXECUTION_DIR } from "../execution/task-execution.ts";
 import type { AgentDescriptor, HarnessAdapter, ManifestTask, ProcessIdentityV1 } from "../execution/types.ts";
 import { captureWorkspaceCheckpoint, type WorkspaceCheckpointPublisher } from "../execution/workspace-reconstruction.ts";
@@ -59,6 +61,11 @@ const GIT_OID = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
 const EVIDENCE_TAIL_BYTES = 4_000;
 
 type FailedOutcome = Extract<TaskExecutionOutcomeV1, { status: "failed" }>;
+
+/** Positive configured timeout, or 0 when the value is absent or invalid. */
+function configuredTimeoutMs(value: number | undefined): number {
+  return value !== undefined && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
 
 /**
  * One accepted run as the host executes it. The task definitions come from the
@@ -148,6 +155,8 @@ export interface ExecutionHostDependenciesV1 {
   readonly executions: ExecutionOwnershipStore;
   readonly integration: ExecutionHostIntegrationAuthority;
   readonly checkpoints: ExecutionHostCheckpointStore;
+  /** Durable index of integrated tasks; lets a later run replay, not re-run, them. */
+  readonly completions?: TaskCompletionStore;
   readonly status: {
     getTaskStatus(runId: string, taskId: string): Promise<TaskStatusResponseV1 | undefined>;
     listEvents(runId: string, afterSequence?: number, limit?: number): Promise<RunLifecycleEventPageV1>;
@@ -177,6 +186,8 @@ interface PreparedEffect {
   readonly checkpointDigest: Sha256Digest;
   readonly resultCommit: string;
   readonly baseRevision: string;
+  /** Durable refs for the task's declared `produces` artifacts. */
+  readonly workArtifactRefs: readonly ArtifactRefV1[];
   readonly validationRef: ArtifactRefV1;
   readonly bundleRef: ArtifactRefV1;
   readonly outputFiles: readonly string[];
@@ -312,6 +323,69 @@ export class ExecutionHost {
     const key = operationKey(input);
     const journaled = await this.readJournal(input.operationId);
     if (journaled?.outcome) return journaled.outcome;
+    if (await this.runCancelled(input.runId)) return RUN_CANCELLED;
+
+    // A later run may include a prerequisite that is already integrated at its
+    // base revision. Replay that completion and hydrate its work artifact for
+    // the remaining tasks instead of paying for the harness again.
+    const target = this.targetRoot(run);
+    const head = await this.git(target, ["rev-parse", "--verify", `${run.targetRef}^{commit}`]);
+    const completed = this.dependencies.completions
+      ? await this.dependencies.completions.resolve({
+          repositoryId: run.repositoryId,
+          taskId: input.taskId,
+          repositoryRoot: target,
+          head,
+        })
+      : undefined;
+    const replayable = completed !== undefined
+      && completed.validationCommands.length === task.validationCommands.length
+      && completed.validationCommands.every((command, index) => command === task.validationCommands[index])
+      && task.expectedOutputs.every((file) => completed.outputFiles.includes(file));
+    if (completed && replayable && this.dependencies.completions) {
+      const predecessorTaskIds = run.prerequisites.get(input.taskId) ?? [];
+      const artifactStore = new ArtifactStore({
+        artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts"),
+      });
+      const hydrateOptions = {
+        repositoryId: run.repositoryId,
+        repositoryRoot: target,
+        head,
+        resolveArtifact: (ref: ArtifactRefV1) => this.dependencies.checkpoints.resolveArtifact(ref),
+      };
+      await this.dependencies.completions.hydrate(artifactStore, {
+        ...hydrateOptions,
+        taskIds: predecessorTaskIds,
+      });
+      await this.dependencies.completions.hydrate(artifactStore, {
+        ...hydrateOptions,
+        taskIds: [input.taskId],
+      });
+      const evidence = createTaskCompletionEvidence({
+        runId: input.runId,
+        taskId: input.taskId,
+        manifestDigest: input.manifestDigest,
+        logicalAttempt: input.logicalAttempt,
+        operationId: input.operationId,
+        outputFiles: completed.outputFiles,
+        handoffDigest: completed.handoffDigest,
+        artifactRefs: [
+          ...(completed.workArtifact ? [completed.workArtifact] : []),
+          completed.validationArtifact,
+          completed.bundleArtifact,
+        ],
+        validationCommands: completed.validationCommands,
+        harnessEvidence: [`replayed integrated completion ${completed.commitSha}`],
+      });
+      const bounded = boundTaskExecutionOutcome({ status: "complete", evidence });
+      this.audit({
+        event: "attempt.replayed-completion",
+        ...key,
+        commitSha: completed.commitSha,
+        checkpointDigest: completed.checkpointDigest,
+      });
+      return bounded;
+    }
 
     const claimed = await this.dependencies.receipts.claim(key);
     if (!claimed.ok) throw new Error(`Could not claim operation receipt: ${claimed.code}`);
@@ -328,18 +402,43 @@ export class ExecutionHost {
       const previousFailure = input.logicalAttempt > 1
         ? (await this.readJournal(taskOperationId(input.runId, input.taskId, input.logicalAttempt - 1)))?.failureReason
         : undefined;
+      // A per-task or per-run timeout larger than the service default must also
+      // extend the ownership deadline; otherwise the supervisor aborts at the
+      // default budget before the harness request's own timeout can apply.
+      const attemptBudgetMs = Math.max(
+        this.dependencies.budgetMs,
+        configuredTimeoutMs(task.timeoutMs),
+        configuredTimeoutMs(run.timeoutMs),
+      );
+      let hostValidation: {
+        readonly ok: boolean;
+        readonly reason?: string;
+        readonly record: Readonly<Record<string, unknown>>;
+      } | undefined;
       const supervised = await superviseExecution({
         store: this.dependencies.executions,
         key,
         workerId: this.dependencies.workerId,
-        budgetMs: this.dependencies.budgetMs,
+        budgetMs: attemptBudgetMs,
         heartbeatIntervalMs: this.dependencies.heartbeatIntervalMs,
         heartbeatTtlMs: this.dependencies.heartbeatTtlMs,
         run: async (context) => {
           let home: Awaited<ReturnType<typeof createHarnessHome>> | undefined;
+          let validationHome: Awaited<ReturnType<typeof createHarnessHome>> | undefined;
           try {
+            const homesRoot = join(
+              this.dependencies.taskUidIsolation ? this.requireTaskScratchRoot() : this.dependencies.scratchRoot,
+              "homes",
+            );
             home = await createHarnessHome(
-              join(this.dependencies.taskUidIsolation ? this.requireTaskScratchRoot() : this.dependencies.scratchRoot, "homes"),
+              homesRoot,
+              processIdentity ? { processIdentity } : {},
+            );
+            // Validation commands come from the repository. Give them their own
+            // empty home so they cannot read the credential the harness imported
+            // into its private profile (notably OPENCODE_AUTH_JSON).
+            validationHome = await createHarnessHome(
+              homesRoot,
               processIdentity ? { processIdentity } : {},
             );
             const credentials = run.hostRunner ? {} : run.credentials ? await run.credentials() : {};
@@ -347,6 +446,10 @@ export class ExecutionHost {
               home: home.home,
               inherited: this.dependencies.inheritedEnvironment ?? process.env,
               credentials,
+            });
+            const predecessorTaskIds = run.prerequisites.get(input.taskId) ?? [];
+            const artifactStore = new ArtifactStore({
+              artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts"),
             });
             return await executeVerifiedTaskActivity({
               runId: input.runId,
@@ -379,27 +482,37 @@ export class ExecutionHost {
                 },
               },
               harness: run.harness,
-              artifactStore: new ArtifactStore({ artifactsPath: join(this.dependencies.scratchRoot, "runs", input.runId, "artifacts") }),
-              predecessorTaskIds: run.prerequisites.get(input.taskId) ?? [],
+              artifactStore,
+              predecessorTaskIds,
+              publishArtifacts: (admission) =>
+                this.publishWorkArtifact(run, task, admission, artifactStore, predecessorTaskIds),
               allowNoop: input.allowNoop,
               validationEnvironment: {
                 ...buildHarnessEnvironment({
-                  home: home.home,
+                  home: validationHome.home,
                   inherited: this.dependencies.inheritedEnvironment ?? process.env,
                   credentials: {},
                 }),
                 MYFORGE_LOGICAL_ATTEMPT: String(input.logicalAttempt),
               },
               ...(processIdentity ? { validationProcessIdentity: processIdentity } : {}),
+              onValidation: (validation) => {
+                hostValidation = validation;
+              },
             });
           } finally {
-            if (home) {
+            let cleanupError: unknown;
+            for (const attemptHome of [home, validationHome]) {
+              if (!attemptHome) continue;
               try {
-                await rm(home.home, { recursive: true, force: true });
+                await rm(attemptHome.home, { recursive: true, force: true });
               } catch (error) {
-                if (processIdentity) quarantineTaskProcessIdentity(processIdentity);
-                throw error;
+                cleanupError ??= error;
               }
+            }
+            if (cleanupError !== undefined) {
+              if (processIdentity) quarantineTaskProcessIdentity(processIdentity);
+              throw cleanupError;
             }
           }
         },
@@ -427,6 +540,7 @@ export class ExecutionHost {
 
       const prepared = await this.captureEffect(
         run, task, workspace.path, workspace.baseRevision, outcome, input.logicalAttempt, processIdentity,
+        undefined, hostValidation,
       );
       if (!prepared.ok) return this.finishFailed(key, receipt, prepared.outcome);
       this.audit({
@@ -667,6 +781,56 @@ export class ExecutionHost {
     return this.dependencies.taskScratchRoot;
   }
 
+  /**
+   * Synthesises and durably publishes the artifact a task declares with
+   * `produces`. The per-run store keeps it available to predecessor context
+   * projection; the checkpoint store turns it into durable completion
+   * evidence.
+   */
+  private async publishWorkArtifact(
+    run: ExecutionHostRunV1,
+    task: ManifestTask,
+    admission: Extract<TaskAdmissionResult, { ok: true }>,
+    artifactStore: ArtifactStore,
+    predecessorTaskIds: readonly string[],
+  ): Promise<readonly ArtifactRefV1[]> {
+    if (!task.produces) return [];
+    const projection = artifactStore.projectPredecessors({
+      taskId: task.id,
+      predecessorTaskIds,
+      inputTypes: task.inputs ?? [],
+    });
+    const artifact = artifactStore.write({
+      type: task.produces,
+      category: "work",
+      taskId: task.id,
+      producedBy: run.agentFor(task).name,
+      status: "complete",
+      summary: admission.handoff.summary,
+      inputs: projection.artifacts.map((entry) => entry.artifactId),
+      filesChanged: [...admission.outputFiles],
+      payload: {
+        taskDescription: task.description,
+        decisions: admission.handoff.decisions,
+        interfaces: admission.handoff.interfaces,
+        tests: admission.handoff.tests,
+        unresolved: admission.handoff.unresolved,
+        warnings: admission.handoff.warnings ?? [],
+        validationLimitations: admission.handoff.validationLimitations ?? [],
+      },
+      nextActions: [],
+    });
+    const bytes = new TextEncoder().encode(`${JSON.stringify(artifact, null, 2)}\n`);
+    const published = await this.dependencies.checkpoints.publishArtifact(bytes, {
+      mediaType: "application/json",
+      sizeBytes: bytes.byteLength,
+      sha256: sha256Digest(bytes),
+      retentionClass: "checkpoint-evidence",
+    });
+    if (!published.ok) throw new Error(`Could not publish work artifact: ${published.code}`);
+    return [published.ref];
+  }
+
   private async captureEffect(
     run: ExecutionHostRunV1,
     task: ManifestTask,
@@ -676,9 +840,20 @@ export class ExecutionHost {
     logicalAttempt: number,
     processIdentity?: ProcessIdentityV1,
     parentCheckpointDigest?: Sha256Digest,
+    validationOverride?: {
+      readonly ok: boolean;
+      readonly reason?: string;
+      readonly record: Readonly<Record<string, unknown>>;
+    },
   ): Promise<{ ok: true; effect: PreparedEffect } | { ok: false; outcome: FailedOutcome }> {
-    const timeoutMs = Math.max(1, run.timeoutMs ?? this.dependencies.budgetMs);
-    const validation = await this.runValidation(task, workspacePath, timeoutMs, processIdentity, logicalAttempt);
+    const timeoutMs = Math.max(
+      1,
+      configuredTimeoutMs(run.timeoutMs)
+        || configuredTimeoutMs(task.timeoutMs)
+        || this.dependencies.budgetMs,
+    );
+    const validation = validationOverride
+      ?? await this.runValidation(task, workspacePath, timeoutMs, processIdentity, logicalAttempt);
     if (!validation.ok) {
       return { ok: false, outcome: { status: "failed", retryable: true, failureCode: "validation-failed", reason: validation.reason } };
     }
@@ -714,6 +889,7 @@ export class ExecutionHost {
         checkpointDigest: captured.digest,
         resultCommit: captured.resultCommit,
         baseRevision,
+        workArtifactRefs: [...outcome.evidence.artifactRefs],
         validationRef: published.ref,
         bundleRef: captured.checkpoint.gitObjectBundle,
         outputFiles: outcome.evidence.outputFiles,
@@ -776,7 +952,7 @@ export class ExecutionHost {
       operationId: key.operationId,
       outputFiles: effect.outputFiles,
       handoffDigest: effect.handoffDigest,
-      artifactRefs: [effect.validationRef, effect.bundleRef],
+      artifactRefs: [...(effect.workArtifactRefs ?? []), effect.validationRef, effect.bundleRef],
       validationCommands: effect.validationCommands,
     });
     const complete: TaskExecutionOutcomeV1 = { status: "complete", evidence };
@@ -830,6 +1006,31 @@ export class ExecutionHost {
     }
     const published = await this.transition(key, receipt, "effect-published", result.effectDigest);
     await this.transition(key, published, "accepted");
+    try {
+      await this.dependencies.completions?.record({
+        schemaVersion: 1,
+        repositoryId: run.repositoryId,
+        targetRef: run.targetRef,
+        taskId: key.taskId,
+        runId: key.runId,
+        commitSha: result.commitSha,
+        baseRevision: effect.baseRevision,
+        checkpointDigest: effect.checkpointDigest,
+        ...(effect.workArtifactRefs[0] ? { workArtifact: effect.workArtifactRefs[0] } : {}),
+        validationArtifact: effect.validationRef,
+        bundleArtifact: effect.bundleRef,
+        outputFiles: effect.outputFiles,
+        validationCommands: effect.validationCommands,
+        handoffDigest: effect.handoffDigest,
+        completedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.audit({
+        event: "completion.record-failed",
+        ...key,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     await this.writeJournal(key.operationId, { outcome: complete });
     this.audit({
       event: "attempt.integrated",
@@ -877,7 +1078,7 @@ export class ExecutionHost {
       operationId: key.operationId,
       outputFiles: effect.outputFiles,
       handoffDigest: effect.handoffDigest,
-      artifactRefs: [],
+      artifactRefs: [...(effect.workArtifactRefs ?? [])],
       validationCommands: effect.validationCommands,
     });
     const processIdentity = this.dependencies.taskUidIsolation ? allocateTaskProcessIdentity() : undefined;

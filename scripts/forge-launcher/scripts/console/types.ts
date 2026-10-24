@@ -30,6 +30,8 @@ export interface ServiceRunSnapshot {
   status: string;
   createdAt?: string;
   updatedAt?: string;
+  /** Which runner accepted the submission; absent on older snapshots. */
+  hostExecution?: boolean;
   tasks: ServiceTaskSnapshot[];
 }
 
@@ -104,6 +106,8 @@ export interface RunSummary {
   counts: RunCounts;
   total: number;
   blockers: string[];
+  /** Executor bound at submission; null when the snapshot does not report one. */
+  hostExecution: boolean | null;
 }
 
 export interface ManifestSummary {
@@ -430,9 +434,23 @@ export interface RuntimeAdminState {
   missingServices: string[];
   diagnostics: string[];
   repositories: Array<{ id: string; path: string }>;
+  hostRunnerEnabledRepositoryIds: string[];
+  hostRunnerStatus: "disabled" | "running" | "stopped";
   harnessGrants: Record<string, string[]>;
   startOptions: { hostTools: boolean; postgresPort?: number } | null;
   restartRequired: boolean;
+}
+
+/** The executor for one run. The saved project value is only a default. */
+export type Executor = "worker" | "host";
+
+export interface RunnerReadiness {
+  repositoryId: string | null;
+  registered: boolean;
+  capabilityEnabled: boolean;
+  hostRunnerStatus: "disabled" | "running" | "stopped";
+  available: boolean;
+  blocker: string | null;
 }
 
 export type RuntimeAdminAction =

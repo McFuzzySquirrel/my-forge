@@ -38,10 +38,11 @@ Before completing the change:
 | Document | Authority and purpose | Update when |
 |---|---|---|
 | [`README.md`](../README.md) | Public overview, quick start, main components, and top-level usage. | Installation, quick start, major features, commands, or public terminology change. Keep `**Latest:**` synchronized with [`docs/updates.md`](updates.md). |
-| [`docs/forge-launcher.md`](forge-launcher.md) | Detailed launcher command and workflow reference. | Launcher commands, options, environment variables, setup flow, or supported harnesses change. |
+| [`docs/forge-launcher.md`](forge-launcher.md) | Detailed launcher command and workflow reference. | Launcher commands, options, environment variables, setup flow, supported harnesses, or credential grants change. |
 | [`scripts/forge-launcher/README.md`](../scripts/forge-launcher/README.md) | NPM package and launcher-specific reference. | Package commands, installation, autonomous-build options, or package behavior change. |
 | [`docs/forge-console.md`](forge-console.md) | Forge Console capabilities and operation. | Console routes, controls, setup, or user workflows change. |
 | [`docs/forge-console-user-guide.md`](forge-console-user-guide.md) | Step-by-step Console walkthrough. | A user-facing Console workflow changes. |
+| [`docs/harness-credentials.md`](harness-credentials.md) | Harness credential storage, provider/model matching, worker versus host execution boundaries, threat model, and incident response. | Grant storage, provider auth, worker isolation, host-execution disclosure, or credential-handling guidance changes. |
 | [`docs/forge-console-screenshots.md`](forge-console-screenshots.md) | Visual tour and current UI captures. | Significant UI layout or interaction changes make screenshots stale. |
 | [`docs/prompt-playbook.md`](prompt-playbook.md) | Interactive launcher prompts and expected answers. | Prompt wording, order, defaults, or onboarding behavior changes. |
 | [`docs/running-with-local-models.md`](running-with-local-models.md) | Local-model setup and operation. | Local model providers, configuration, or supported execution paths change. |

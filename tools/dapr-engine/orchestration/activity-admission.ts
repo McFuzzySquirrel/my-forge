@@ -57,6 +57,16 @@ export interface ExecuteVerifiedTaskActivityInputV1 {
   readonly publishArtifacts?: (
     admission: Extract<TaskAdmissionResult, { ok: true }>,
   ) => Promise<readonly ArtifactRefV1[]>;
+  /**
+   * Receives validation evidence produced by a host runner so the execution
+   * host can publish it with the checkpoint instead of re-running the commands
+   * in a workspace that does not contain the harness's installed dependencies.
+   */
+  readonly onValidation?: (validation: {
+    readonly ok: boolean;
+    readonly reason?: string;
+    readonly record: Readonly<Record<string, unknown>>;
+  }) => void | Promise<void>;
 }
 
 function outcomeForAdmission(
@@ -127,6 +137,11 @@ export async function executeVerifiedTaskActivity(
   });
   const baseline = await captureWorktree(request.repoRoot);
   let result: TaskResult;
+  let hostValidation: {
+    readonly ok: boolean;
+    readonly reason?: string;
+    readonly record: Readonly<Record<string, unknown>>;
+  } | undefined;
   if (input.hostRunner) {
     if (!input.repositoryId || !input.baseRevision) {
       throw new Error("Host-runner execution requires a registered repository ID and accepted base revision.");
@@ -161,6 +176,13 @@ export async function executeVerifiedTaskActivity(
       maxBytes: input.maxWorkspaceDeltaBytes ?? DEFAULT_MAX_WORKSPACE_DELTA_BYTES,
     });
     result = remote.result;
+    hostValidation = remote.validation
+      ? {
+          ok: remote.validation.ok,
+          ...(remote.validation.reason ? { reason: remote.validation.reason } : {}),
+          record: { taskId: task.id, results: remote.validation.results },
+        }
+      : undefined;
   } else {
     result = await input.harness.invoke(request);
   }
@@ -173,8 +195,10 @@ export async function executeVerifiedTaskActivity(
     timeoutMs: request.budget.timeoutMs,
     ...(input.validationEnvironment ? { validationEnvironment: input.validationEnvironment } : {}),
     ...(request.isolation?.processIdentity ? { validationProcessIdentity: request.isolation.processIdentity } : {}),
+    ...(hostValidation ? { validation: hostValidation } : {}),
   });
   if (!admission.ok) return outcomeForAdmission(input, admission, []);
+  if (hostValidation) await input.onValidation?.(hostValidation);
   const artifactRefs = input.publishArtifacts ? await input.publishArtifacts(admission) : [];
   return outcomeForAdmission(input, admission, artifactRefs);
 }

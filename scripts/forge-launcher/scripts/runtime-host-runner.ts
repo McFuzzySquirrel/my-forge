@@ -182,6 +182,15 @@ async function ownsProcess(record: HostRunnerPidFileV1): Promise<boolean> {
     && command.includes("host-runner.ts"));
 }
 
+async function readLogTail(file: string, maxBytes = 4_000): Promise<string> {
+  try {
+    const text = await readFile(file, "utf8");
+    return text.length > maxBytes ? `[truncated]\n${text.slice(-maxBytes)}` : text;
+  } catch {
+    return "";
+  }
+}
+
 export async function getHostRunnerProcessStatus(
   dataDir: string,
 ): Promise<"disabled" | "running" | "stopped"> {
@@ -230,19 +239,25 @@ export async function startHostRunner(
     { cwd: packageDir, detached: true, env, stdio: ["ignore", log.fd, log.fd], windowsHide: true },
   );
   let spawnError: Error | undefined;
+  let exited = false;
   child.once("error", (error) => { spawnError = error; });
+  child.once("exit", () => { exited = true; });
   await log.close();
   if (!child.pid) {
     throw new Error("Could not start the native host runner.", { cause: spawnError });
   }
   child.unref();
   await writeAtomic(path.join(dataDir, PID_FILE), `${JSON.stringify({ version: 1, pid: child.pid, instanceId })}\n`);
-  const record = { version: 1 as const, pid: child.pid, instanceId };
   const startDeadline = Date.now() + 30_000;
   while (Date.now() < startDeadline) {
-    if (spawnError || !await ownsProcess(record)) {
+    if (spawnError || exited || child.exitCode !== null || child.signalCode !== null) {
+      const tail = await readLogTail(logPath);
       await stopHostRunner(dataDir);
-      throw new Error(`Native host runner exited during startup; inspect ${logPath}.`, { cause: spawnError });
+      throw new Error(
+        `Native host runner exited during startup; inspect ${logPath}.`
+        + (tail ? `\n${tail}` : ""),
+        { cause: spawnError },
+      );
     }
     try {
       const readyInstanceId = await readFile(readyFile, "utf8");
@@ -256,8 +271,12 @@ export async function startHostRunner(
     }
     await delay(100);
   }
+  const tail = await readLogTail(logPath);
   await stopHostRunner(dataDir);
-  throw new Error(`Native host runner did not become ready within 30 seconds; inspect ${logPath}.`);
+  throw new Error(
+    `Native host runner did not become ready within 30 seconds; inspect ${logPath}.`
+    + (tail ? `\n${tail}` : ""),
+  );
 }
 
 export async function stopHostRunner(dataDir: string): Promise<void> {

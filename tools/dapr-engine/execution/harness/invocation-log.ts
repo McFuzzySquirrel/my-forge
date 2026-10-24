@@ -9,8 +9,8 @@ import type { TaskAttemptRequest } from "../types.ts";
  * executable or argv. Opt-in activity logging mirrors harness stdout/stderr
  * into the same stream as it arrives.
  *
- * Lines are written to stdout, which `forge-launcher engine-run` and the
- * detached engine redirect/tee to `docs/engine-run.log`; the Console tails that
+ * Lines are written to stdout, which `forge-launcher run` and the
+ * detached engine redirect/tee to `docs/forge.log`; the Console tails that
  * file over SSE. Nothing here touches the engine's captured stdout/stderr used
  * for structured-result parsing.
  */

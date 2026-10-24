@@ -147,11 +147,11 @@ Once the build starts, switch between the views to follow the work:
   - Failed tasks stay listed at the lower left with a link into Tasks.
   - The mode and filters are remembered per project.
 - **Tasks**: a sortable, filterable task table with a detail drawer for each task.
-- **Logs**: the repository engine log, the local runtime host-runner log, and
-  the live audit event stream. Service and host-runner activity appears under
-  **Runtime log**; the **Engine log** tab follows `docs/engine-run.log` for
-  legacy engine runs. Each tab has an empty state explaining which source is
-  missing.
+- **Logs**: the repository activity log, the local runtime host-runner log, and
+  the live service run-event stream. **Activity log** follows `docs/forge.log`
+  for authoring, team, skills, manifest and service-command output; **Runtime
+  log** follows the native host runner; **Run events** follows the latest
+  service run. Each tab has an empty state explaining which source is missing.
 - **Plan & Team**: the project documents as a table (kind, title, path, status)
   and the generated agent/skill files. Selecting a document opens it in a wide
   popup with an **Open externally** button; `forge-requirement` and `forge-task`
@@ -165,10 +165,15 @@ roots, so a skills-only directory cannot silently replace the generated team.
 For an existing compiled manifest, the manifest's `harnessRoot` is preferred
 over automatic detection. If that path is stale, update the selected root and
 recompile the manifest explicitly; the Console will not silently switch roots.
-- **Artifacts**: structured outputs produced by the run, browsable by type and task.
-- **Timeline**: a chronological record of important events and failures.
+- **Artifacts**: repository-local structured outputs under `docs/artifacts/`,
+  browsable by type and task.
+- **Evidence**: durable work, validation and git-bundle artifacts recorded by
+  integrated service tasks. Works for both worker-container and host-runner
+  executions because both write the same completion ledger.
+- **Timeline**: a chronological record of important events and failures from
+  the service lifecycle (and any repository authoring audit records).
 - **Service runs**: runs held by the local execution service for the open
-  repository, whether started from Overview, `engine-run`, or
+  repository, whether started from Overview, `run`, or
   `forge-launcher service submit`. Select a run to see its tasks and events,
   see whether it runs in the worker or on the host runner, and to pause, resume,
   stop, cancel, approve, or replay it. Each button shows the service's
@@ -239,7 +244,7 @@ The table shows only job identity and lifecycle metadata. It never shows CLI
 output, job payloads, results, raw failure details, or capability values.
 
 Authoring lifecycle records use the `FORGE_EVENT {json}` prefix in
-`docs/engine-run.log` and are also sent as `authoring` SSE events. Ordinary
+`docs/forge.log` and are also sent as `authoring` SSE events. Ordinary
 process output remains unchanged and continues as `log` events, preserving
 plain log tails and compatibility with older clients. Failed stages leave both
 the lifecycle failure record and the command output in the same log.
@@ -271,7 +276,7 @@ host execution uses the local CLI with full OS permissions. See
   workflow, or **manual** to run only the saved task selection from the Tasks
   view. Manual mode requires at least one selected task.
 - **Auto-commit after each task**: toggles one-commit-per-task git history (on by default).
-- **Log harness activity**: streams harness CLI stdout/stderr into `docs/engine-run.log` for legacy engine runs, where the **Engine log** tab shows it live. Service and host-runner runs write to the runtime host-runner log instead; use the **Runtime log** tab. Off by default; the saved choice is applied to subsequently started runs and restored after a reload. Activity logs can contain sensitive repository content and increase log volume, and command invocation logging is always on regardless. Turning it off stops activity capture for later runs without disabling command logging.
+- **Log harness activity**: streams harness CLI stdout/stderr into `docs/forge.log`, where the **Activity log** tab shows it live. Service and host-runner runs also write to the runtime host-runner log; use the **Runtime log** tab. Off by default; the saved choice is applied to subsequently started runs and restored after a reload. Activity logs can contain sensitive repository content and increase log volume, and command invocation logging is always on regardless. Turning it off stops activity capture for later runs without disabling command logging.
 - **Concurrency preference**: stores the engine concurrency value in `docs/engine-config.json`. Enter a positive integer (e.g. `3`) and click **Set**; enter `0` to return to the engine default. The value is shown in later Run/Resume summaries. Above `1` the engine runs up to that many ready tasks at once, each in its own git worktree under `.forge-sandboxes/`, so each task's reported files and commit stay its own. Two things to know before setting it above `1`: **the working tree must be clean** (the run stops and lists any uncommitted path otherwise, so commit or stash first). Each task selects its own project through the spawn working directory, with the child's `PWD` set to match, since OpenCode v2 resolves the project from `process.env.PWD ?? process.cwd()` and no longer accepts `--dir` (see [ADR-058](adr/058-opencode-v2-project-resolution.md) and [ADR-059](adr/059-pwd-aligned-spawn-environment.md)). See [ADR-056](adr/056-parallel-execution-task-sandboxes.md).
 - **Reset changed tasks for review**: after feature reconciliation, resets completed or skipped tasks whose contracts changed back to pending. Review the changed task IDs before using this action.
 - **Launch \<harness\> CLI**: opens the project's harness CLI (opencode/copilot/claude) in a new terminal from the project folder, so you can watch the live run and take over manually. Also available on the Tasks header.
@@ -354,7 +359,7 @@ review task resuming and completing. It does not write a legacy `reviewFile`
 attestation. Resume or attach to the service run with:
 
 ```bash
-forge-launcher engine-run --repo /path/to/project --yes
+forge-launcher run --repo /path/to/project --yes
 ```
 
 Export the trail with `forge-launcher service events <run-id> --json`.

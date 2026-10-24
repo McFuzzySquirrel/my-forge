@@ -35,7 +35,7 @@ export interface BootstrapOptions {
 
 /** Canonical log consumed by the Console for work performed in a repository. */
 export function repositoryLogFile(repoDir: string): string {
-  return path.join(path.resolve(repoDir), "docs", "engine-run.log");
+  return path.join(path.resolve(repoDir), "docs", "forge.log");
 }
 
 function makeLogger(logFile?: string) {
@@ -78,27 +78,9 @@ function copyTree(srcDir: string, destDir: string, rewrite?: { from: string; to:
   }
 }
 
-function copyRetiredWorkflowSkill(
-  srcDir: string,
-  destDir: string,
-  rewrite?: { from: string; to: string },
-): void {
-  for (const relative of ["SKILL.md", "references/engine-entry.md", "scripts/cli.ts"]) {
-    const source = path.join(srcDir, relative);
-    if (!fs.existsSync(source)) throw new Error(`Retired workflow skill resource is missing: ${source}`);
-    const destination = path.join(destDir, relative);
-    fs.mkdirSync(path.dirname(destination), { recursive: true });
-    fs.copyFileSync(source, destination);
-    if (rewrite && relative.endsWith(".md")) {
-      const text = fs.readFileSync(destination, "utf8");
-      fs.writeFileSync(destination, text.split(rewrite.from).join(rewrite.to));
-    }
-  }
-}
-
 function ensureGitignore(targetDir: string): void {
   const gi = path.join(targetDir, ".gitignore");
-  const entries = ["node_modules/", "docs/engine-run.log", "docs/artifacts/"];
+  const entries = ["node_modules/", "docs/forge.log", "docs/engine-run.log", "docs/artifacts/"];
   let content = "";
   if (fs.existsSync(gi)) content = fs.readFileSync(gi, "utf8");
   if (content && !content.endsWith("\n")) content += "\n";
@@ -109,24 +91,6 @@ function ensureGitignore(targetDir: string): void {
     out(`  Updated:  ${gi} (${missing.join(", ")})`);
   } else {
     out(`  OK:       ${gi} already contains all required ignore entries`);
-  }
-}
-
-function rewriteExecutionImports(engineDir: string): void {
-  const files = fs.readdirSync(engineDir, { withFileTypes: true });
-  for (const entry of files) {
-    const file = path.join(engineDir, entry.name);
-    if (entry.isDirectory()) {
-      rewriteExecutionImports(file);
-      continue;
-    }
-    if (!entry.isFile() || !entry.name.endsWith(".ts")) continue;
-    let text = fs.readFileSync(file, "utf8");
-    text = text
-      .replaceAll("../../../../tools/dapr-engine/execution/", "./execution/")
-      .replaceAll("../../../../../tools/dapr-engine/execution/", "../execution/")
-      .replaceAll("../../../templates/skills/forge-execution-adapter/", "../../../forge-execution-adapter/");
-    fs.writeFileSync(file, text);
   }
 }
 
@@ -145,9 +109,9 @@ export async function bootstrap(opts: BootstrapOptions): Promise<number> {
     if (result.code !== 0) throw new Error(`Error: git init failed: ${result.stderr || result.stdout}`);
   }
 
-  const { templatesDir, docsDir, executionDir, usingBundled } = resolveResources();
+  const { templatesDir, docsDir, usingBundled } = resolveResources();
   // Keep bootstrap output beside the artifacts it is preparing. This also makes
-  // it visible to the Console's existing docs/engine-run.log poller.
+  // it visible to the Console's existing docs/forge.log poller.
   const log = makeLogger(opts.logFile ?? repositoryLogFile(targetDir));
 
   try {
@@ -202,15 +166,7 @@ export async function bootstrap(opts: BootstrapOptions): Promise<number> {
         }
       }
       fs.rmSync(destDir, { recursive: true, force: true });
-      if (skillName === "forge-workflow-engine") {
-        copyRetiredWorkflowSkill(srcDir, destDir, rewrite);
-        const packagedExecutionDir = path.join(destDir, "scripts", "execution");
-        fs.rmSync(packagedExecutionDir, { recursive: true, force: true });
-        copyTree(executionDir, packagedExecutionDir);
-        rewriteExecutionImports(destDir);
-      } else {
-        copyTree(srcDir, destDir, rewrite);
-      }
+      copyTree(srcDir, destDir, rewrite);
       log.ok(`Copied:  ${skillName}/`);
     }
 

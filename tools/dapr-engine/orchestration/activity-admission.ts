@@ -195,10 +195,15 @@ export async function executeVerifiedTaskActivity(
     timeoutMs: request.budget.timeoutMs,
     ...(input.validationEnvironment ? { validationEnvironment: input.validationEnvironment } : {}),
     ...(request.isolation?.processIdentity ? { validationProcessIdentity: request.isolation.processIdentity } : {}),
+    ...(input.hostRunner ? { installValidationDependencies: false } : { installValidationDependencies: true }),
     ...(hostValidation ? { validation: hostValidation } : {}),
   });
   if (!admission.ok) return outcomeForAdmission(input, admission, []);
-  if (hostValidation) await input.onValidation?.(hostValidation);
+  const validationEvidence = hostValidation ?? {
+    ok: true,
+    record: admission.validationRecord,
+  };
+  await input.onValidation?.(validationEvidence);
   const artifactRefs = input.publishArtifacts ? await input.publishArtifacts(admission) : [];
   return outcomeForAdmission(input, admission, artifactRefs);
 }

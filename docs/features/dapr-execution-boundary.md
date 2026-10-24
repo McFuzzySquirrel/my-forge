@@ -138,12 +138,12 @@ matrix are in the [versioned contract](../contracts/dapr-execution-v1.md).
   "ownerAgent":"forge-runtime-engineer",
   "dependencies":["P2-01","P2-06"],
   "expectedOutputs":["tools/dapr-engine/execution/index.ts","tools/dapr-engine/package.json"],
-  "validationCommands":["npm test --prefix templates/skills/forge-workflow-engine","npm run typecheck --prefix templates/skills/forge-workflow-engine","npm run typecheck --prefix tools/dapr-engine","npm test --prefix scripts/forge-launcher","npm run typecheck --prefix scripts/forge-launcher"],
+  "validationCommands":["npm run typecheck --prefix tools/dapr-engine","npm test --prefix tools/dapr-engine","npm test --prefix scripts/forge-launcher","npm run typecheck --prefix scripts/forge-launcher"],
   "contract":{
     "version":2,"kind":"implementation",
     "requirements":[],
     "requirementRefs":["docs/features/dapr-execution-boundary.md#DAPR-EXEC-03"],
-    "acceptanceCriteria":["Reusable execution APIs have no dependency on the old scheduler state machine or Dapr SDK.","All preserved legacy call paths use the extracted modules without semantic changes.","Launcher bootstrap stages the canonical execution library into the legacy skill and does not install a second scheduler.","The existing engine test suite and typecheck pass."],
+    "acceptanceCriteria":["Reusable execution APIs have no dependency on the old scheduler state machine or Dapr SDK.","The extracted modules are shared by host and worker execution without semantic drift.","Launcher bootstrap does not install a second scheduler.","The existing engine test suite and typecheck pass."],
     "constraints":[],
     "constraintRefs":["docs/PRD.md#DAPR-C-01","docs/PRD.md#DAPR-C-02"],
     "references":["tools/dapr-engine/execution/request.ts","tools/dapr-engine/execution/task-context.ts","tools/dapr-engine/execution/task-execution.ts","tools/dapr-engine/execution/verify.ts","tools/dapr-engine/execution/artifacts.ts","tools/dapr-engine/execution/sandbox.ts","tools/dapr-engine/execution/harness/run.ts"]

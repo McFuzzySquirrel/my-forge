@@ -18,7 +18,6 @@ jobs:
         package:
           - scripts/forge-launcher
           - templates/skills/forge-execution-adapter
-          - templates/skills/forge-workflow-engine
           - templates/skills/skill-review
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -33,7 +32,7 @@ jobs:
         if: matrix.package != 'templates/skills/forge-execution-adapter'
         run: npm ci --prefix ${{ matrix.package }}
       - name: Install shared execution engine dependencies
-        if: matrix.package == 'templates/skills/forge-workflow-engine'
+        if: matrix.package == 'scripts/forge-launcher'
         run: npm ci --prefix tools/dapr-engine
       - name: Typecheck
         run: npm run typecheck --prefix ${{ matrix.package }}

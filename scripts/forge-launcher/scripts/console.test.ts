@@ -32,7 +32,6 @@ function makeRepo(): string {
   const docs = join(root, "docs");
   mkdirSync(docs, { recursive: true });
   mkdirSync(join(root, ".git"), { recursive: true });
-  mkdirSync(join(root, ".agents", "skills", "forge-workflow-engine"), { recursive: true });
   mkdirSync(join(root, ".agents", "skills", "add-endpoint"), { recursive: true });
   mkdirSync(join(root, ".agents", "agents"), { recursive: true });
 
@@ -101,7 +100,7 @@ function makeRepo(): string {
   };
   writeFileSync(join(docs, "WORKFLOW-STATE.json"), JSON.stringify(state), "utf8");
   writeFileSync(join(docs, "EXECUTION-AUDIT.jsonl"), "", "utf8");
-  writeFileSync(join(docs, "engine-run.log"), "line one\nline two\n", "utf8");
+  writeFileSync(join(docs, "forge.log"), "line one\nline two\n", "utf8");
   writeFileSync(join(docs, "AUTHORING-EVENTS.jsonl"), "", "utf8");
 
   mkdirSync(join(docs, "artifacts", "solution"), { recursive: true });
@@ -134,12 +133,6 @@ function makeRepo(): string {
   writeFileSync(
     join(root, ".agents", "skills", "add-endpoint", "SKILL.md"),
     "---\nname: add-endpoint\ndescription: >\n  Adds a REST endpoint following\n  project conventions.\n---\n\n# Skill: Add Endpoint\n",
-    "utf8",
-  );
-
-  writeFileSync(
-    join(root, ".agents", "skills", "forge-workflow-engine", "SKILL.md"),
-    "---\nname: forge-workflow-engine\ndescription: >\n  Autonomous execution engine\n  for MyForge manifests.\n---\n\n# Skill: Workflow Engine\n",
     "utf8",
   );
 
@@ -309,15 +302,11 @@ test("serves summary, tasks, docs, team, and actions", async () => {
     assert.equal(team.agents[0]!.name, "qa-engineer");
     assert.equal(team.agents[0]!.description, "Owns test quality and keeps the build green.");
     assert.equal(team.agents[0]!.model, "gpt-4o");
-    assert.equal(team.skills.length, 2);
+    assert.equal(team.skills.length, 1);
     const projectSkill = team.skills.find((s) => s.name === "add-endpoint");
     assert.ok(projectSkill, "add-endpoint skill should be listed");
     assert.equal(projectSkill!.description, "Adds a REST endpoint following project conventions.");
     assert.equal(projectSkill!.category, "project");
-    const forgeSkill = team.skills.find((s) => s.name === "forge-workflow-engine");
-    assert.ok(forgeSkill, "forge-workflow-engine skill should be listed");
-    assert.equal(forgeSkill!.category, "forge");
-
     const actions = await getJson(`${server.url}/api/actions`) as { canRun: boolean; failedTasks: string[] };
     assert.equal(actions.canRun, true, "archived legacy running state must not block a new Dapr run");
     assert.deepEqual(actions.failedTasks, []);
@@ -374,10 +363,10 @@ test("streams a snapshot and audit/log events over SSE", async () => {
     await sleep(200);
     const snapshot = events.find((e) => e.type === "snapshot");
     assert.ok(snapshot);
-    assert.equal("state" in (snapshot.data as Record<string, unknown>), false);
+    assert.equal((snapshot.data as Record<string, unknown>).state, null);
 
     appendFileSync(join(repo, "docs", "EXECUTION-AUDIT.jsonl"), `${JSON.stringify({ timestamp: new Date().toISOString(), action: "task.complete", taskId: "1.2" })}\n`, "utf8");
-    appendFileSync(join(repo, "docs", "engine-run.log"), "new log line\n", "utf8");
+    appendFileSync(join(repo, "docs", "forge.log"), "new log line\n", "utf8");
 
     const deadline = Date.now() + 3000;
     while (Date.now() < deadline && !(events.some((e) => e.type === "audit") && events.some((e) => e.type === "log"))) {
@@ -386,7 +375,7 @@ test("streams a snapshot and audit/log events over SSE", async () => {
     assert.ok(events.some((e) => e.type === "audit" && (e.data as { action: string }).action === "task.complete"));
     assert.ok(events.some((e) => e.type === "log"));
 
-    appendFileSync(join(repo, "docs", "engine-run.log"), `FORGE_EVENT ${JSON.stringify({ type: "authoring.started", operation: "feature-increment" })}\nplain after event\n`, "utf8");
+    appendFileSync(join(repo, "docs", "forge.log"), `FORGE_EVENT ${JSON.stringify({ type: "authoring.started", operation: "feature-increment" })}\nplain after event\n`, "utf8");
     const eventDeadline = Date.now() + 3000;
     while (Date.now() < eventDeadline && !events.some((e) => e.type === "authoring")) await sleep(50);
     assert.ok(events.some((e) => e.type === "authoring" && (e.data as { type: string }).type === "authoring.started"));
@@ -539,7 +528,7 @@ test("requirements actions are refused; team, skills, and manifest still dispatc
     assert.ok((compile.body as { message: string }).message.includes("Manifest"), "message should mention manifest");
     assert.ok(spawned.calls.at(-1)?.args.includes("compile-manifest"), "compile-manifest action should spawn the compile-manifest subcommand");
     for (const call of spawned.calls.slice(-2)) {
-      assert.equal(call.opts.logFile, join(repo, "docs", "engine-run.log"));
+      assert.equal(call.opts.logFile, join(repo, "docs", "forge.log"));
     }
   });
 });
@@ -703,7 +692,7 @@ test("engine-config toggles auto-commit and flows into service-run entrypoint ar
 
     const run = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
     assert.equal((run.body as { ok: boolean }).ok, true);
-    assert.ok(spawned.calls.at(-1)!.args.includes("--no-auto-commit"), "engine-run should pass --no-auto-commit");
+    assert.ok(spawned.calls.at(-1)!.args.includes("--no-auto-commit"), "run should pass --no-auto-commit");
 
     const on = await postJson(`${server.url}/api/engine-config`, { autoCommit: true }, { "X-Forge-Token": token });
     assert.equal((on.body as { ok: boolean }).ok, true);
@@ -724,7 +713,7 @@ test("engine-config toggles harness activity logging and flows into service-run 
 
     const run = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
     assert.equal((run.body as { ok: boolean }).ok, true);
-    assert.ok(spawned.calls.at(-1)!.args.includes("--log-harness-activity"), "engine-run should pass --log-harness-activity");
+    assert.ok(spawned.calls.at(-1)!.args.includes("--log-harness-activity"), "run should pass --log-harness-activity");
     assert.ok(!spawned.calls.at(-1)!.args.includes("--no-log-harness-activity"), "enabled run must not pass the off flag");
 
     const off = await postJson(`${server.url}/api/engine-config`, { logHarnessActivity: false }, { "X-Forge-Token": token });
@@ -784,7 +773,7 @@ test("a per-run executor overrides the saved default without changing it", async
 
     const host = await postJson(`${server.url}/api/control`, { action: "run", executor: "host" }, { "X-Forge-Token": token });
     assert.equal((host.body as { ok: boolean }).ok, true);
-    assert.ok(spawned.calls.at(-1)!.args.includes("--host-execution"), "an explicit host choice must reach engine-run");
+    assert.ok(spawned.calls.at(-1)!.args.includes("--host-execution"), "an explicit host choice must reach run");
     assert.equal(existsSync(configFile), false, "a per-run choice must not persist");
 
     const enabled = await postJson(`${server.url}/api/engine-config`, { hostExecution: true, confirmed: true }, { "X-Forge-Token": token });
@@ -811,7 +800,7 @@ test("a per-run host choice is rejected before submission when the runner is una
     assert.equal(res.status, 409);
     assert.equal((res.body as { code: string }).code, "host-runner-unavailable");
     assert.match((res.body as { message: string }).message, /capability/);
-    assert.equal(spawned.calls.length, 0, "no engine-run job should start for a blocked host request");
+    assert.equal(spawned.calls.length, 0, "no run job should start for a blocked host request");
   }, { repoRoot: true, registered: true, runner: unavailable });
 });
 
@@ -865,7 +854,7 @@ test("engine-config sets concurrency and flows into service-run entrypoint args"
     assert.equal((run.body as { ok: boolean }).ok, true);
     const runArgs = spawned.calls.at(-1)!.args;
     const concIdx = runArgs.indexOf("--concurrency");
-    assert.ok(concIdx !== -1 && runArgs[concIdx + 1] === "3", "engine-run should pass --concurrency 3");
+    assert.ok(concIdx !== -1 && runArgs[concIdx + 1] === "3", "run should pass --concurrency 3");
 
     // Reset to engine default (0)
     const reset = await postJson(`${server.url}/api/engine-config`, { concurrency: 0 }, { "X-Forge-Token": token });
@@ -874,7 +863,7 @@ test("engine-config sets concurrency and flows into service-run entrypoint args"
     assert.equal((await getJson(`${server.url}/api/summary`) as { concurrency: number }).concurrency, 0);
 
     const run2 = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
-    assert.ok((run2.body as { ok: boolean }).ok, "engine-run after reset should succeed");
+    assert.ok((run2.body as { ok: boolean }).ok, "run after reset should succeed");
     assert.ok(!spawned.calls.at(-1)!.args.includes("--concurrency"), "no --concurrency arg when at default");
   }, { repoRoot: true, registered: true });
 });
@@ -903,15 +892,15 @@ test("engine-config stores manual selection and passes it to the service-run ent
 
     const run = await postJson(`${server.url}/api/control`, { action: "run" }, { "X-Forge-Token": token });
     assert.equal((run.body as { ok: boolean }).ok, true);
-    assert.equal((run.body as { job?: { type: string } }).job?.type, "engine-run");
+    assert.equal((run.body as { job?: { type: string } }).job?.type, "run");
 
     const args = spawned.calls.at(-1)!.args;
-    assert.ok(args.includes("--execution-mode"), "engine-run should pass --execution-mode");
-    assert.ok(args.includes("manual"), "engine-run should pass manual mode");
-    assert.ok(args.includes("--selection-scope"), "engine-run should pass --selection-scope");
-    assert.ok(args.includes("range"), "engine-run should pass range scope");
+    assert.ok(args.includes("--execution-mode"), "run should pass --execution-mode");
+    assert.ok(args.includes("manual"), "run should pass manual mode");
+    assert.ok(args.includes("--selection-scope"), "run should pass --selection-scope");
+    assert.ok(args.includes("range"), "run should pass range scope");
     const taskIdx = args.indexOf("--selected-tasks");
-    assert.ok(taskIdx !== -1 && args[taskIdx + 1] === "1.1,1.2", "engine-run should pass the selected task ids");
+    assert.ok(taskIdx !== -1 && args[taskIdx + 1] === "1.1,1.2", "run should pass the selected task ids");
 
     const config = JSON.parse(readFileSync(join(repo, "docs", "engine-config.json"), "utf8")) as {
       executionMode: string;

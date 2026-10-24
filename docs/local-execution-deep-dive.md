@@ -2,8 +2,8 @@
 
 > **Current architecture:** this guide traces the active Dapr-backed
 > service-run path from launcher submission through durable orchestration,
-> harness execution, result verification, and operator monitoring. It is not a
-> guide to the retired `forge-workflow-engine` scheduler.
+> harness execution, result verification, and operator monitoring. It does not
+> cover the removed pre-Dapr scheduler.
 
 Start with the [local execution overview](local-execution.md) for component
 roles and the compact system diagram. This guide adds implementation detail
@@ -21,6 +21,8 @@ the [feature requirements](features/dapr-execution-boundary.md), or the
 | Host runner | The separate launcher-managed process that polls durable jobs and executes a local harness when a run explicitly selects host execution. |
 | Attempt | One execution of a task under a logical attempt identity and operation ID. |
 | Accepted result | A harness result that has passed the task's result, output, no-op, artifact, and validation gates. |
+| Completion record | Durable evidence that an integrated task is already present at a revision; later runs replay it and hydrate its work artifact for dependants. |
+| Runtime evidence | Content-addressed work, validation, and Git-bundle artifacts plus the completion ledger exposed by the service evidence API. |
 
 The launcher is the submission and operator client. The execution service
 validates and binds submissions, but Dapr Workflow owns run/task scheduling.
@@ -31,7 +33,7 @@ orchestrators.
 ## 1. Compile and submit an immutable run
 
 `scripts/forge-launcher/scripts/service-run.ts` implements the
-`engine-run` path. It:
+`run` path. It:
 
 1. Resolves the repository and requires it to be registered with the local
    runtime.
@@ -77,8 +79,11 @@ For `POST /v1/runs`, the API delegates to `RunService.submit` in
   workflow using a stable workflow instance ID.
 
 The API's authenticated routes expose submission, run status, lifecycle events,
-controls, and (when enabled) host-runner operations and bounded job summaries.
-They do not expose Dapr internals as the public application contract.
+controls, (when enabled) host-runner operations and bounded job summaries, and
+read-only completion evidence. The evidence routes list records for a repository
+and resolve an artifact only after checking it belongs to one of that
+repository's completions. They do not expose Dapr internals as the public
+application contract.
 
 At startup, `tools/dapr-engine/service/main.ts` initializes PostgreSQL-backed
 stores, loads the capability hashes available to the worker, creates the run
@@ -154,10 +159,16 @@ The task activity then checks the changed workspace against the task contract:
 
 1. Compare the result with the captured baseline.
 2. Validate the structured task handoff and declared outputs.
-3. Apply the configured no-op policy and required validation commands.
-4. Publish any declared artifacts and produce completion evidence.
-5. Capture a checkpoint and integrate the verified effect into the run branch.
+3. Apply the configured no-op policy.
+4. Install missing project dependencies, then run the required validation
+   commands in the isolated validation environment.
+5. Publish any declared artifacts and one validation record.
+6. Capture a checkpoint, record the completion, and integrate the verified
+   effect into the run branch.
 
+Worker and host execution use the same validation implementation. The host
+runner performs validation in its disposable clone; the worker performs it in
+its managed workspace, after installing dependencies that are absent there.
 Failures at an admission or integration gate are represented as task outcomes;
 an unaccepted task result does not become an integrated repository change.
 
@@ -229,7 +240,8 @@ checks.
 | Submission snapshots and run/task status | Application PostgreSQL stores | Stable run binding, current status, and queryable lifecycle history. |
 | Control records and effect receipts | Application PostgreSQL stores | Idempotent acknowledgements, effect transitions, and redelivery fencing. |
 | Host-runner jobs and leases | `PostgresHostRunnerJobStore` | Durable queue, claim lease, cancellation request, and result. |
-| Artifacts and task checkpoints | File-backed artifact/checkpoint store | Content-addressed evidence and verified workspace state. |
+| Completion ledger | File-backed `completions/` store | Integrated task commit, output files, validation commands, and artifact refs for replay. |
+| Artifacts and task checkpoints | File-backed artifact/checkpoint store | Content-addressed work/validation/bundle evidence and verified workspace state. |
 | Runner capabilities and repository registry | Launcher runtime data | Host-side authority for registered project polling. |
 | Attempt workspaces and harness homes | Worker or host temporary directories | Disposable execution state, cleaned after each attempt. |
 
@@ -257,6 +269,13 @@ terminal summaries, optionally filtered by repository. It projects only
 allowlisted identity, harness, state, and timestamp fields; it does not return
 capabilities, job requests or results, CLI output, or raw failure details.
 
+The Console server polls the latest service run and broadcasts a service-backed
+snapshot so Overview, Board, and Tasks update on status/task changes. Run
+lifecycle events feed **Run events** and **Timeline**; `docs/forge.log` feeds
+**Activity log**; the native host-runner log feeds **Runtime log**. The
+**Evidence** view reads the completion/evidence API and is independent of
+repository-local `docs/artifacts/`.
+
 Host-mode run summaries identify the executor. Run-level events remain the
 source for workflow progress; the runner job view is bounded operational
 diagnostics rather than a second run history.
@@ -266,19 +285,24 @@ diagnostics rather than a second run history.
 | Concern | Implementation | Representative tests |
 |---|---|---|
 | Launcher submit/follow path | `scripts/forge-launcher/scripts/service-run.ts`, `scripts/forge-launcher/scripts/service-client.ts` | `scripts/forge-launcher/scripts/service-run.test.ts`, `scripts/forge-launcher/scripts/service-client.test.ts` |
-| Service validation and HTTP API | `tools/dapr-engine/service/runs.ts`, `tools/dapr-engine/service/api.ts` | `tools/dapr-engine/tests/service/api.test.ts`, `tools/dapr-engine/tests/service/runs.test.ts` |
+| Service validation and HTTP API | `tools/dapr-engine/service/runs.ts`, `tools/dapr-engine/service/api.ts`, `tools/dapr-engine/service/evidence.ts` | `tools/dapr-engine/tests/service/api.test.ts`, `tools/dapr-engine/tests/service/runs.test.ts`, `tools/dapr-engine/tests/service/evidence.test.ts` |
 | Dapr run/task orchestration | `tools/dapr-engine/orchestration/workflow.ts`, `tools/dapr-engine/orchestration/execution-host.ts` | `tools/dapr-engine/tests/orchestration/workflow.test.ts`, `tools/dapr-engine/tests/orchestration/execution-host.integration.test.ts` |
-| Shared runner interface and workspace delta | `tools/dapr-engine/execution/runner-contract.ts`, `tools/dapr-engine/execution/workspace-diff.ts` | `tools/dapr-engine/tests/execution/runner-contract.test.ts`, `tools/dapr-engine/tests/execution/workspace-diff.test.ts` |
+| Shared runner interface and workspace delta | `tools/dapr-engine/execution/runner-contract.ts`, `tools/dapr-engine/execution/workspace-diff.ts`, `tools/dapr-engine/execution/validation.ts`, `tools/dapr-engine/execution/agent-path.ts` | `tools/dapr-engine/tests/execution/runner-contract.test.ts`, `tools/dapr-engine/tests/execution/workspace-diff.test.ts`, `tools/dapr-engine/tests/execution/validation.test.ts`, `tools/dapr-engine/tests/execution/native-harness-runner.test.ts` |
 | Durable host-runner dispatch | `tools/dapr-engine/execution/queued-harness-runner.ts`, `tools/dapr-engine/storage/postgres/host-runner-jobs.ts` | `tools/dapr-engine/tests/service/host-runner.test.ts`, `tools/dapr-engine/tests/storage/postgres-host-runner-jobs.integration.test.ts` |
 | Host lifecycle and native invocation | `scripts/forge-launcher/scripts/runtime-host-runner.ts`, `tools/dapr-engine/scripts/host-runner.ts`, `tools/dapr-engine/execution/host-runner-worker.ts`, `tools/dapr-engine/execution/native-harness-runner.ts` | `scripts/forge-launcher/scripts/runtime-host-runner.test.ts`, `tools/dapr-engine/tests/execution/host-runner-worker.test.ts`, `tools/dapr-engine/tests/execution/native-harness-runner.test.ts` |
 | Safe job summaries | `tools/dapr-engine/service/host-runner-monitor.ts`, `tools/dapr-engine/storage/postgres/host-runner-jobs.ts`, `scripts/forge-launcher/scripts/console/host-runner-jobs.ts` | `tools/dapr-engine/tests/service/host-runner-monitor.test.ts`, `scripts/forge-launcher/scripts/host-runner-jobs.test.ts` |
+| Completion replay | `tools/dapr-engine/execution/task-completions.ts`, `tools/dapr-engine/orchestration/execution-host.ts` | `tools/dapr-engine/tests/execution/task-completions.test.ts`, `tools/dapr-engine/tests/orchestration/execution-host.integration.test.ts` |
+| Console evidence and live activity | `tools/dapr-engine/service/evidence.ts`, `scripts/forge-launcher/scripts/console/service-runs.ts`, `scripts/forge-launcher/scripts/console/dashboard/views/evidence.ts`, `scripts/forge-launcher/scripts/console/server.ts` | `tools/dapr-engine/tests/service/evidence.test.ts`, `scripts/forge-launcher/scripts/console-service-runs.test.ts`, `scripts/forge-launcher/scripts/console.test.ts` |
 | Runtime deployment | `tools/dapr-engine/deploy/compose.yaml`, `scripts/forge-launcher/scripts/runtime.ts` | `tools/dapr-engine/tests/service/deployment.test.ts`, `scripts/forge-launcher/scripts/runtime.test.ts` |
 
 Tests establish the behavior of their respective adapters and contracts. Unit
 or package tests alone do not qualify real provider authentication, cancellation
-of a provider's full child-process tree, or every host OS. The host-execution
-feature and project roadmap remain authoritative for outstanding qualification;
-do not infer platform support from this guide.
+of a provider's full child-process tree, or every host OS. The Linux rootless
+worker profile is qualified for stub, Copilot and OpenCode. Native host
+execution is implemented, but HR-04 live-runtime/host-OS qualification and
+HR-GATE remain pending; native macOS/Windows and Claude are unqualified. The
+host-execution feature and project roadmap remain authoritative for outstanding
+qualification; do not infer platform support from this guide.
 
 ## Related reading
 
@@ -289,5 +313,5 @@ do not infer platform support from this guide.
 - [Forge Launcher command guide](forge-launcher.md)
 - [Forge Console user guide](forge-console-user-guide.md)
 - [Dapr execution cutover decision](adr/079-dapr-execution-cutover.md)
-- [Retired workflow-engine overview](workflow-engine.md)
-- [Retired workflow-engine deep dive](workflow-engine-deep-dive.md)
+- [Runtime evidence and live Console activity](adr/087-runtime-evidence-and-live-console.md)
+- [Remove the pre-Dapr legacy engine](adr/088-remove-pre-dapr-legacy.md)

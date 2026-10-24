@@ -15,6 +15,7 @@ import {
   type TaskCheckpointV1,
 } from "../contract/v1/index.ts";
 import { ArtifactStore } from "../execution/artifacts.ts";
+import { remapAgentPath } from "../execution/agent-path.ts";
 import { runCommand } from "../execution/harness/run.ts";
 import {
   allocateTaskProcessIdentity,
@@ -463,7 +464,7 @@ export class ExecutionHost {
                 baseRevision: workspace.baseRevision,
               } : {}),
               request: {
-                agent: run.agentFor(task),
+                agent: remapAgentPath(run.agentFor(task), target, workspace.path),
                 task,
                 repoRoot: workspace.path,
                 runId: input.runId,

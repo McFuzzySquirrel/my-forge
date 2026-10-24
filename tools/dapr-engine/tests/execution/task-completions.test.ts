@@ -92,6 +92,12 @@ test("records, resolves, and hydrates an integrated task completion", async (t) 
     completedAt: "2026-10-24T00:01:00.000Z",
   });
 
+  const listed = await store.list("repo_test");
+  assert.equal(listed.length, 1);
+  assert.equal(listed[0]?.taskId, "FND-01");
+  assert.equal(listed[0]?.commitSha, baseRevision);
+  assert.deepEqual(await store.list("repo_other"), []);
+
   const resolved = await store.resolve({
     repositoryId: "repo_test",
     taskId: "FND-01",

@@ -20,9 +20,9 @@ export function renderLogs(container: HTMLElement): void {
   unmountLogs();
   container.textContent = "";
 
-  const engineTab = el("button", { className: "tab active", type: "button", "aria-selected": "true" }, "Engine log");
+  const engineTab = el("button", { className: "tab active", type: "button", "aria-selected": "true" }, "Activity log");
   const runtimeTab = el("button", { className: "tab", type: "button", "aria-selected": "false" }, "Runtime log");
-  const auditTab = el("button", { className: "tab", type: "button", "aria-selected": "false" }, "Audit");
+  const auditTab = el("button", { className: "tab", type: "button", "aria-selected": "false" }, "Run events");
   const enginePanel = el("div", { className: "tab-panel" });
   const runtimePanel = el("div", { className: "tab-panel", style: "display:none" });
   const auditPanel = el("div", { className: "tab-panel", style: "display:none" });
@@ -55,7 +55,7 @@ export function renderLogs(container: HTMLElement): void {
   renderLogSource(
     enginePanel,
     "engine",
-    "No engine log yet. Service and host-runner activity appears in the Runtime log tab.",
+    "No activity log yet. Authoring, team, skills and manifest output appears here; host-runner activity appears in the Runtime log tab.",
   );
   renderLogSource(
     runtimePanel,

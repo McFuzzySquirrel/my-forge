@@ -198,6 +198,10 @@ function renderDetail(run: ServiceRunRecord): void {
   ]));
   detailHost.appendChild(el("div", { className: "panel" }, [
     el("h3", null, "Tasks"),
+    el("p", { className: "dim small" }, [
+      el("a", { href: "#/evidence" }, "Open durable task evidence"),
+      " for work, validation and git-bundle artifacts.",
+    ]),
     tasks.length
       ? el("div", { className: "table-scroll" }, el("table", null, [
         el("thead", null, el("tr", null, [el("th", null, "Task"), el("th", null, "Status"), el("th", null, "Attempt"), el("th", null, "")])),

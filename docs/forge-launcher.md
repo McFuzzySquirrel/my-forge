@@ -28,7 +28,7 @@
 
 The launcher resolves one harness root for an invocation and passes that
 selection through authoring, team validation, manifest compilation, and Console
-team/report/model-override views. For engine-run and Console operations, a
+team/report/model-override views. For run and Console operations, a
 `harnessRoot` recorded in the compiled manifest takes precedence over automatic
 detection. An explicit authoring CLI root override remains higher priority.
 Discovery uses the structured frontmatter parser and follows this order when no
@@ -59,6 +59,7 @@ configuration.
 |------|----------|---------|
 | `node` (18+) | For the npm package | Runs the `forge-launcher` package (canonical implementation) |
 | `git` | **Yes** | All harnesses |
+| Podman + Compose provider | **Yes for builds** | Runs the local Dapr execution service, worker container, PostgreSQL, and runtime volumes |
 | `xdg-open` | Linux desktop optional | Opens the Console, workflow board, and documents automatically |
 | `gh` (GitHub CLI) | For GitHub harness | Creates and clones the GitHub repo |
 | `opencode` | For opencode harness auto-launch | Spawns the opencode session |
@@ -72,6 +73,31 @@ configuration.
 > delegate to the package. They are retained for one release after the package
 > migration for existing scripts and CI; use the package command for new
 > integrations.
+
+### Podman installation
+
+Build execution requires **rootless Podman** with a Compose provider. Install
+Podman for your platform:
+
+- **Linux:** [distribution packages](https://podman.io/docs/installation#linux-distributions);
+  see the [rootless tutorial](https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md)
+  if user namespaces or subuid/subgid mappings need configuration.
+- **macOS:** [Podman installation](https://podman.io/docs/installation#macos),
+  then `podman machine init` and `podman machine start`.
+- **Windows:** [Podman installation](https://podman.io/docs/installation#windows)
+  with WSL2, then `podman machine init` and `podman machine start`; see the
+  [Podman for Windows guide](https://github.com/podman-container-tools/podman/blob/main/docs/tutorials/podman-for-windows.md).
+- **GUI option:** [Podman Desktop](https://podman-desktop.io/downloads).
+
+Verify before starting the runtime:
+
+```bash
+podman info
+podman compose version
+```
+
+The Linux rootless profile is currently qualified. Native macOS and Windows
+Podman-machine behavior remains unqualified, including native host execution.
 
 On Linux, install `xdg-open` from the `xdg-utils` package for automatic browser
 and document opening:
@@ -106,7 +132,7 @@ npx forge-launcher@beta [--non-interactive] [--headless] [--draft] [--dry-run] [
 npx forge-launcher@beta bootstrap [TARGET_DIR] [--harness agents|github|claude|opencode] [--force]
 npx forge-launcher@beta bootstrap [TARGET_DIR] ... [--init-git]
                               [--runner <copilot|opencode|claude|inherit>]
-npx forge-launcher@beta engine-run [--repo <path>] [--harness <h>] [--concurrency <n>]
+npx forge-launcher@beta run [--repo <path>] [--harness <h>] [--concurrency <n>]
                               [--task-timeout-ms <ms>] [--yes] [--dry-run]
                               [--allow-noop] [--run-validation] [--host-execution]
                               [--log-harness-activity|--no-log-harness-activity]
@@ -181,7 +207,7 @@ add` enables a capability for that repository; `runtime runner enable|rotate|rev
 stopped. The per-repository capability authorizes Dapr-to-runner requests only;
 it is separate from provider credentials and runtime tokens.
 
-Runs use the worker by default. `engine-run --host-execution` or
+Runs use the worker by default. `run --host-execution` or
 `service submit --host-execution` explicitly selects the locally installed CLI
 and its normal local authentication. Host execution is **not sandboxed**: the
 CLI and its child tools run as the logged-in user with access to that account's
@@ -254,56 +280,19 @@ schema newer than the installed service. Updating the launcher package and
 running `runtime start` applies compatible migrations; schema downgrade and
 cross-version workflow-history compatibility are not promised.
 
-## Cut over from the legacy engine
+## Rollback
 
-The launcher no longer falls back to the legacy in-process scheduler. Every
-repository must be registered with the local Dapr service before
-`engine-run`, Console execution, or service controls are available. Legacy
-workflow state is not imported: create a new service run from the repository's
-current Git revision instead of translating `WORKFLOW-STATE.json` into Dapr
-history.
-
-Before upgrading a repository to the cutover release:
-
-1. Use the previous launcher release to stop new legacy runs and gracefully
-   stop each active run after its current task. Wait for the process to exit;
-   do not rely on the new service controls to signal a legacy PID.
-2. Record `git status --short`, make a private copy of any uncommitted work,
-   and create a Git bundle with `git bundle create
-   ../<repo-name>-pre-cutover.bundle --all`. The bundle preserves commits and
-   refs, not uncommitted or untracked files.
-3. Privately archive any existing `docs/WORKFLOW-STATE.json`,
-   `docs/EXECUTION-AUDIT.jsonl`, `docs/PROGRESS.md`, `docs/engine-run.log`,
-   `docs/task-executions/`, and `docs/artifacts/`. Keep these as audit and
-   recovery material; they are not Dapr checkpoints.
-4. Register the repository with `forge-launcher runtime repo add <path>`,
-   restart the runtime, compile the current manifest, and submit a new service
-   run. Review the first service run and its `forge/<branch>` integration
-   before resuming normal work.
-
-Do not register the same repository with multiple runtime installations or
-leave a legacy worker running against its target branch. If a legacy run cannot
-be drained safely, stop the cutover and preserve its state and repository for
-manual recovery; partial legacy histories are unsupported.
-
-### Rollback
-
-Rollback is an ownership change, not a workflow-history conversion. Stop the
-Dapr runtime first so it cannot write to registered repositories. Preserve the
-current service backup and Git refs before restoring anything; keep and review
-all post-cutover commits and uncommitted changes rather than silently
-discarding them. Restore the pre-cutover repository and legacy-state archives,
-then run the previous launcher release only after confirming the Dapr writer
-is stopped. Never feed Dapr history to the legacy engine. Runtime schema
-downgrade is unsupported; if rollback includes a service database, restore a
-backup made by the earlier compatible release. Work created after that backup
-must be reconciled manually.
+Rollback is an ownership change. Stop the Dapr runtime first so it cannot write
+to registered repositories. Preserve the current service backup and Git refs
+before restoring anything; keep and review all commits and uncommitted changes
+rather than silently discarding them. Runtime schema downgrade is unsupported;
+if rollback includes a service database, restore a backup made by the earlier
+compatible release. Work created after that backup must be reconciled manually.
 
 The migration and rollback procedures must be rehearsed against disposable
-repositories before a production cutover. Legacy-state preservation is
-separate from `runtime backup`, which backs up service-owned volumes and
-records registered Forge branch tips. The isolated migration/rollback
-qualification command and its environment are documented in
+repositories. `runtime backup` backs up service-owned volumes and records
+registered Forge branch tips. The isolated migration/rollback qualification
+command and its environment are documented in
 [testing guide §4a](testing-guide.md#4a-live-runtime-qualification-developers).
 
 #### Service runs
@@ -437,18 +426,18 @@ native checks pass. This deferral is not a Linux-only product policy. See
 **Execution routing.** Repositories must be registered with the runtime;
 unregistered execution now fails closed with registration guidance. Once a
 repository is registered,
-`engine-run`, `resume`, feature-increment runs, and Console builds use the
+`run`, `resume`, feature-increment runs, and Console builds use the
 local service:
 
-- `engine-run --repo <path> [--harness <h>]` compiles a missing manifest, then
+- `run --repo <path> [--harness <h>]` compiles a missing manifest, then
   resumes or attaches to the repository's active run, or submits a new one.
 - It follows the run's events, which are also written to
-  `docs/engine-run.log`. When the run completes, it fast-forwards the
+  `docs/forge.log`. When the run completes, it fast-forwards the
   checked-out branch to `forge/<branch>`.
 - `--concurrency`, `--max-retries`, `--retry-delay-ms`, `--allow-noop`,
   `--granularity`, and task selection apply to new runs. An active run keeps
   its settings and harness.
-- `engine-run --stop`/`--pause` send service controls.
+- `run --stop`/`--pause` send service controls.
 - Flags with no service meaning (timeouts, heartbeats, `--viz`, commit
   options) are reported as ignored.
 - Human-review tasks wait in the service until approved through the Console
@@ -456,7 +445,7 @@ local service:
 
 `FORGE_DEPLOYMENT` selects the deployment: unset or `local` uses the local
 service, and `hosted` is not available yet. Legacy state is never imported into
-Dapr history; see [cutover and rollback](#cut-over-from-the-legacy-engine).
+The Dapr service owns run state.
 
 `bootstrap` takes these options:
 
@@ -519,7 +508,7 @@ usage.
 |---|---|
 | `scripts/forge-launcher.sh` / `.ps1` | `forge-launcher [options]` |
 | `scripts/bootstrap.sh` / `.ps1` | `forge-launcher bootstrap [options]` |
-| `scripts/forge-engine-run.sh` / `.ps1` | `forge-launcher engine-run [options]` |
+| `scripts/forge-run.sh` / `.ps1` | `forge-launcher run [options]` |
 
 #### Linux / macOS
 
@@ -716,15 +705,15 @@ starts a detached Dapr service run. The repository must be registered with the
 local runtime, and startup failures are reported through the launcher instead
 of being mistaken for a successful handoff.
 
-The launcher starts `forge-launcher engine-run` **detached** (log:
-`docs/engine-run.log`). The Dapr service owns durable run state; the launcher
-does not poll or control `docs/WORKFLOW-STATE.json`. Once the manifest exists,
+The launcher starts `forge-launcher run` **detached** (log:
+`docs/forge.log`). The Dapr service owns durable run state; the launcher does not read or control
+legacy workflow state files. Once the manifest exists,
 you can start or resume a service run directly:
 
 ```bash
-forge-launcher engine-run --repo <repo-dir> --harness opencode --yes
-forge-launcher engine-run --repo <repo-dir> --harness copilot --yes
-forge-launcher engine-run --repo <repo-dir> --harness claude --yes
+forge-launcher run --repo <repo-dir> --harness opencode --yes
+forge-launcher run --repo <repo-dir> --harness copilot --yes
+forge-launcher run --repo <repo-dir> --harness claude --yes
 ```
 
 A `--headless` launcher run can therefore go from a reviewed PRD to a finished
@@ -796,9 +785,8 @@ unchanged. See [ADR-065](adr/065-opencode-mini-interactive-authoring.md).
 
 `GO --workflow-engine` and `FORGE_WORKFLOW_ENGINE` are retired. For autonomous
 execution, register the repository with `forge-launcher runtime repo add
-<path>`, restart the runtime, then use `forge-launcher engine-run --repo <path>
+<path>`, restart the runtime, then use `forge-launcher run --repo <path>
 --yes`. New runs require the Dapr service; legacy workflow histories are not
-imported. See [Cut over from the legacy engine](#cut-over-from-the-legacy-engine)
 for preservation and rollback guidance.
 
 > **Headless skill runs set `FORGE_HEADLESS=1`** for the spawned harness CLI, so
@@ -829,8 +817,7 @@ forge-launcher resume --repo <path> --non-interactive   # print state + next com
 ```
 
 It detects what's already drafted, prints where you are (with clickable review
-links to `docs/IDEA.md`, `docs/PRD.md`, the agent/skills dirs, and
-legacy `docs/WORKFLOW-STATE.json` when present as read-only history), then
+links to `docs/IDEA.md`, `docs/PRD.md`, and the agent/skills dirs), then
 offers the right next action:
 
 - Nothing captured yet → capture the idea / open the harness for `forge-auto-build-prd`.
@@ -838,7 +825,7 @@ offers the right next action:
 - PRD, no team → auto-draft the agent team headlessly, or open the harness for `forge-build-agent-team`.
 - Team, skills incomplete → run `draft-skills` or open the harness for `forge-build-project-skills`.
 - Skills ready, no manifest → compile the manifest with `forge-execution-adapter`.
-- Manifest ready → start a Dapr service run (`engine-run`), print the command, or open the harness for the interactive orchestrator.
+- Manifest ready → start a Dapr service run (`run`), print the command, or open the harness for the interactive orchestrator.
 - Active service run → show its status, task counts, failed tasks, and blockers; resume or attach to it, monitor events, or open the harness CLI. Pause and stop are acknowledged service controls; there is no file/PID control fallback.
 
 The same "where am I / what's next" checks make each queued handoff conditional
@@ -860,8 +847,8 @@ From it you can pick or create a project, advance the pipeline one stage at a
 time (draft the PRD → generate the agent team → create the manifest or start the
 build), and
 monitor/control a run (board, tasks, logs, artifacts, timeline; pause/stop/
-resume/replay). It is a projection over the same `docs/*` files the terminal
-tools write, so the CLI paths stay first-class and interchangeable. Browsers
+resume/replay). It combines the repository authoring files with the local execution service's
+live run snapshot, so the CLI paths stay first-class and interchangeable. Browsers
 sign in with the single-use link the command prints (the browser it opens is
 signed in automatically); see
 [ADR-070](adr/070-local-operator-session-and-sidecar-token.md).
@@ -942,9 +929,9 @@ step - a set of defaults you can press Enter through:
 - **Live Forge Board dashboard** - launch the visualization during the run
   (default on). A port prompt follows (blank = `4299`). The dashboard starts
   when the engine starts - after the manifest is prepared - and its URL is
-  printed in `docs/engine-run.log`.
+  printed in `docs/forge.log`.
 - **Harness activity logging** - stream harness CLI stdout/stderr into
-  `docs/engine-run.log` (default **off**). Off by default because activity logs
+  `docs/forge.log` (default **off**). Off by default because activity logs
   can contain sensitive repository content and increase log volume; command
   invocation logging is always on regardless. The choice is persisted and
   applied to subsequently started runs.
@@ -969,11 +956,10 @@ repository and start a Dapr service run:
 ```bash
 forge-launcher runtime repo add "<repo-dir>"
 forge-launcher runtime restart
-forge-launcher engine-run --repo "<repo-dir>" --harness opencode --yes
+forge-launcher run --repo "<repo-dir>" --harness opencode --yes
 ```
 
-Open the Console's service-backed Board to monitor tasks; legacy standalone
-workflow-engine visualization commands are not supported for new runs.
+Open the Console's service-backed Board to monitor tasks.
 
 **Per-task cold boots are handled by OpenCode, not the engine.** Each
 `opencode run` would otherwise cold-start its own project instance (config,
@@ -983,10 +969,7 @@ AGENTS.md, skills, and every MCP server). The engine used to manage a warm
 `FORGE_ENGINE_ATTACH` / `FORGE_ENGINE_ATTACH_URL` env variables are **retired**
 in v3.87. Each task now connects to OpenCode's background service, which is warm
 by default, and still gets a fresh, isolated session. Set
-`OPENCODE_EXTRA_FLAGS=--standalone` to give a run a private server. See the
-legacy workflow-engine
-[harness warm-up reference](workflow-engine.md#harness-warm-up-opencode-harness) section
-and [ADR-058](adr/058-opencode-v2-project-resolution.md).
+`OPENCODE_EXTRA_FLAGS=--standalone` to give a run a private server. See [ADR-058](adr/058-opencode-v2-project-resolution.md).
 
 The launcher passes `--concurrency <n>` through to the Dapr service and persists
 it to `docs/engine-config.json`. Above `1` the service runs up to `n` ready tasks at
@@ -1100,16 +1083,12 @@ Remote URL (e.g. https://github.com/user/repo.git): https://github.com/user/my-c
 ### Step 4 -Bootstrap MyForge
 
 Runs the bundled bootstrap with `--force` into the new repository, copying all
-agent and supported skill templates into the harness directory. The retired
-workflow-engine skill is limited to its retirement notice, Dapr entry guidance,
-and fail-closed CLI; legacy DAG/state/control/PID and visualization code is not
-bootstrapped. It also stages the Dapr-independent execution utility library
-inside that reference package. Bootstrap does not install the Dapr service or
-its Scheduler (shown here with a spinner in a terminal; output is also tee'd to
+agent and supported skill templates into the harness directory. Bootstrap does not
+install the Dapr service or its Scheduler (shown here with a spinner in a terminal; output is also tee'd to
 a per-run log).
 
 Bootstrap also ensures the target `.gitignore` includes `node_modules/`,
-`docs/engine-run.log`, and `docs/artifacts/`. Existing rules are
+`docs/forge.log`, and `docs/artifacts/`. Existing rules are
 preserved and repeated runs do not duplicate entries. This does not untrack
 files already committed to Git.
 
@@ -1231,7 +1210,7 @@ Compile the execution manifest now? [Y/n]: y
     2) Print the service command to run later
     3) Skip - I will launch the CLI / build manually
 Select [1-3] [2]: 2
-    npx forge-launcher@beta engine-run --repo "/home/user/projects/my-cool-app" --harness opencode --yes
+    npx forge-launcher@beta run --repo "/home/user/projects/my-cool-app" --harness opencode --yes
 ```
 
 Choosing **1) Run a Dapr service-backed build now** submits the run to the
@@ -1244,11 +1223,11 @@ already running, so the launcher no longer offers to open a CLI or re-run
     2) Print the service command to run later
     3) Skip - I will launch the CLI / build manually
 Select [1-3] [2]: 1
-  ✔  Dapr service run started. Log: /home/user/projects/my-cool-app/docs/engine-run.log
+  ✔  Dapr service run started. Log: /home/user/projects/my-cool-app/docs/forge.log
 
   The service owns durable execution, even after this launcher exits.
   Monitor progress from another terminal with:
-    tail -f /home/user/projects/my-cool-app/docs/engine-run.log
+    tail -f /home/user/projects/my-cool-app/docs/forge.log
     tail -f /home/user/projects/my-cool-app/docs/PROGRESS.md
 
   The Dapr service-backed run is already running in the background.
@@ -1295,9 +1274,8 @@ whether the agent team exists**:
 with per-phase approval. `/forge-auto-build` is the **terminal/headless
 fast-path**: it requires the PRD to already exist, generates the agent team,
 optionally assigns models, then executes the interactive build after `GO`.
-Autonomous execution must use `forge-launcher engine-run` against a registered
-repository; the Dapr service owns run state and legacy
-`docs/WORKFLOW-STATE.json` is not imported.
+Autonomous execution must use `forge-launcher run` against a registered
+repository; the Dapr service owns run state and legacy workflow files are not read.
 
 ### Step 9 -Summary
 
@@ -1325,7 +1303,7 @@ repository; the Dapr service owns run state and legacy
       #  project PRD - it generates the team in-chat)
 
   3. Drive the build interactively (project-orchestrator), or run it
-     autonomously with forge-launcher engine-run.
+     autonomously with forge-launcher run.
 ```
 
 When the engine was started in Step 8, the summary's **Next steps** instead
@@ -1335,16 +1313,15 @@ reflect the running build (monitor + resume) rather than the manual
 ```
   Next steps:
 
-  1. The workflow engine is building the project in the background
+  1. The Dapr execution service is building the project in the background
      (it keeps running after this launcher exits).
   2. Monitor progress from another terminal:
 
-      tail -f /home/user/projects/my-cool-app/docs/engine-run.log
-      tail -f /home/user/projects/my-cool-app/docs/PROGRESS.md
+      tail -f /home/user/projects/my-cool-app/docs/forge.log
 
   3. Attach to or resume the service run later:
 
-      npx forge-launcher@beta engine-run --repo "/home/user/projects/my-cool-app" --harness opencode --yes
+      npx forge-launcher@beta run --repo "/home/user/projects/my-cool-app" --harness opencode --yes
 ```
 
 ---
@@ -1386,9 +1363,9 @@ reflect the running build (monitor + resume) rather than the manual
   | `FORGE_ENGINE_HARNESS` | 8 | Per-task harness for the workflow engine: `claude`, `opencode`, `copilot`, `openai`, or `stub`. Default follows the repository harness: `claude` for `--harness claude`, `copilot` for `--harness github`, `opencode` otherwise |
   | `FORGE_ENGINE_VIZ` | 8 | `1` to launch the live Forge Board dashboard with the engine run |
   | `FORGE_ENGINE_VIZ_PORT` | 8 | Dashboard port when `FORGE_ENGINE_VIZ=1` (default `4299`) |
-  | `FORGE_ENGINE_ALLOW_NOOP` | 8 | `1` to relax the engine's output-verification no-op heuristic (`engine-run --allow-noop`) |
-  | `FORGE_ENGINE_RUN_VALIDATION` | 8 | `1` to run each task's manifest `validationCommands` before marking it complete (`engine-run --run-validation`) |
-  | `FORGE_ENGINE_LOG_HARNESS_ACTIVITY` | 8 | `1` to stream harness CLI stdout/stderr into `docs/engine-run.log` as it arrives (`engine-run --log-harness-activity`; `--no-log-harness-activity` overrides). Default off; may contain sensitive content |
+  | `FORGE_ENGINE_ALLOW_NOOP` | 8 | `1` to relax the engine's output-verification no-op heuristic (`run --allow-noop`) |
+  | `FORGE_ENGINE_RUN_VALIDATION` | 8 | `1` to run each task's manifest `validationCommands` before marking it complete (`run --run-validation`) |
+  | `FORGE_ENGINE_LOG_HARNESS_ACTIVITY` | 8 | `1` to stream harness CLI stdout/stderr into `docs/forge.log` as it arrives (`run --log-harness-activity`; `--no-log-harness-activity` overrides). Default off; may contain sensitive content |
   | `FORGE_DEPLOYMENT` | 8 | Execution deployment: unset or `local` uses the local service; `hosted` is not available yet and fails. Repository registration with `runtime repo add` is mandatory; unregistered repositories fail closed (ADR-079) |
 
 All other step inputs (repo name, description, visibility, parent directory) use their defaults in non-interactive mode. Override them by setting the variables before running:
@@ -1434,7 +1411,7 @@ or autonomously:
 ```
 @workspace /forge-build-agent-team Use docs/PRD.md to build the agent team
 @workspace @project-orchestrator Execute the full build      # interactive
-forge-launcher engine-run --repo <repo-dir> --yes             # autonomous, Dapr service
+forge-launcher run --repo <repo-dir> --yes             # autonomous, Dapr service
 ```
 
 `forge-auto-build` remains available as the **terminal/headless fast-path** -
@@ -1552,7 +1529,7 @@ air-gapped machine (`podman save`/`podman load`) is not yet supported.
 | Option | Status |
 |---|---|
 | Service runs with `copilot`, `claude`, or `opencode` and no credential grant | Rejected at submission (`harness-unavailable`). Run `runtime harness grant <harness> <VARIABLE>`. |
-| `engine-run --task-timeout-ms`, `--heartbeat-ms`, `--viz`, `--viz-port`, `--run-validation`, `--log-harness-activity`, `--auto-commit`, `--commit-message-template` for registered repositories | Ignored with a note. The service applies its own budgets, validation, and per-task commits, and the Console **Service runs** view replaces the board. |
+| `run --task-timeout-ms`, `--heartbeat-ms`, `--viz`, `--viz-port`, `--run-validation`, `--log-harness-activity`, `--auto-commit`, `--commit-message-template` for registered repositories | Ignored with a note. The service applies its own budgets, validation, and per-task commits, and the Console **Service runs** view replaces the board. |
 | `FORGE_DEPLOYMENT=hosted` | Not available until shared access is qualified (P8). |
 | `--postgres-port` without `--host-tools` | Rejected. PostgreSQL stays private unless host tools are requested. |
 | Binding the Console or service API beyond loopback | Not available in the local profile ([ADR-068](adr/068-local-deployment-and-access-profiles.md)). |

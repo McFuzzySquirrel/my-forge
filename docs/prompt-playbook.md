@@ -75,7 +75,7 @@ If you prefer to drive the PRD yourself, use `forge-build-prd` directly (Step 2 
 
 ## Full Auto Build - Terminal Fast-Path (Requires an Existing PRD)
 
-`forge-auto-build` is the **terminal/headless execution fast-path**: it takes an existing, reviewed PRD and runs the derivation and build pipeline with no manual hand-offs. It does **not** generate a PRD - requirements authoring is always interactive and must happen first. It is driven by `forge-launcher --headless` or the derivation options of `--draft`, rather than invoked as an in-harness slash command. Inside a chat harness, use `@project-orchestrator` for interactive builds; autonomous runs use the registered Dapr service through `forge-launcher engine-run`.
+`forge-auto-build` is the **terminal/headless execution fast-path**: it takes an existing, reviewed PRD and runs the derivation and build pipeline with no manual hand-offs. It does **not** generate a PRD - requirements authoring is always interactive and must happen first. It is driven by `forge-launcher --headless` or the derivation options of `--draft`, rather than invoked as an in-harness slash command. Inside a chat harness, use `@project-orchestrator` for interactive builds; autonomous runs use the registered Dapr service through `forge-launcher run`.
 
 `forge-build-agent-team` → `forge-build-project-skills` → `forge-execution-adapter` → `forge-orchestrate-build` **(each stage has its own review boundary)**
 
@@ -100,12 +100,12 @@ opencode run --auto "/forge-auto-build Use docs/PRD.md as the project PRD. GO"
 > **Autonomous execution:** the legacy `GO --workflow-engine` path is retired.
 > Register the repository with `forge-launcher runtime repo add <path>`, restart
 > the local runtime, then start a service-backed run with
-> `forge-launcher engine-run --repo <path> --yes`. Legacy workflow histories are
+> `forge-launcher run --repo <path> --yes`. Legacy workflow histories are
 > not imported; see the [cutover procedure](forge-launcher.md#cut-over-from-the-legacy-engine).
 
 > **Resuming after interruption:** If the run is interrupted, use
 > `forge-launcher resume` to pick up the current authoring or manifest stage.
-> Once a Dapr service run has started, use `forge-launcher engine-run --repo
+> Once a Dapr service run has started, use `forge-launcher run --repo
 > <path> --yes` to reconnect or resume it; inspect authoritative run status with
 > `forge-launcher service runs` and `forge-launcher service status`. Legacy
 > `docs/WORKFLOW-STATE.json` is read-only history and is never imported.
@@ -402,64 +402,6 @@ Inspect the compiled manifest and review any warnings before running:
 npm run forge-execution-adapter -- inspect
 ```
 
-### 7b. Legacy workflow-engine commands (retired)
-
-> Do not run the legacy commands below. They are retained as historical
-> examples only; use the registered Dapr service instructions in the cutover
-> notice at the top of this guide.
-
-Historical examples only: these commands used to install the workflow-engine
-dependencies and start the retired scheduler:
-
-```bash
-cd .agents/skills/forge-workflow-engine
-npm install
-
-# OpenCode CLI (default) - requires `opencode` in $PATH
-npm run workflow-engine -- run --harness opencode
-
-# OpenAI API - requires OPENAI_API_KEY env var
-npm run workflow-engine -- run --harness openai
-
-# Stub / dry-run - no real calls, verifies engine setup
-npm run workflow-engine -- run --harness stub
-
-# Parallel dispatch (opt-in, harness-gated) - up to 3 ready tasks at once
-npm run workflow-engine -- run --harness opencode --concurrency 3
-
-```
-
-The former `workflow-orchestrator` agent also invoked that retired scheduler:
-
-```
-@workspace @workflow-orchestrator Run the workflow using OpenCode.
-```
-
-### 7c. Legacy monitoring and recovery commands (retired)
-
-> Do not run these commands. They read or control the retired file-backed
-> workflow engine; use the registered Dapr service instructions instead.
-
-```bash
-# Check current run state
-npm run workflow-engine -- status
-
-# Replay a failed task after fixing the root cause
-npm run workflow-engine -- replay P1-T1 --harness opencode
-
-# Pause after the current task (then resume with `run`)
-npm run workflow-engine -- pause
-```
-
-> **Current execution paths:**
->
-> Use `project-orchestrator` for interactive, phase-by-phase builds with human
-> review. For autonomous execution, register the repository and use
-> `forge-launcher engine-run`; the retired `workflow-orchestrator` and
-> file-backed scheduler are not supported for new runs.
-
----
-
 ## Step 8 - Optimize Existing Skills
 
 After building a project, audit the generated skills against agentskills.io best practices:
@@ -489,7 +431,7 @@ Only modify skills I've approved in the audit report.
 | **Build reviewed PRD from idea** | `@workspace /forge-auto-build-prd I want to build [idea]` |
 | **Headless PRD from idea** | `opencode run --auto (cwd=<repo>) "/forge-auto-build-prd Use docs/IDEA.md as the project idea. Headless mode: auto-proceed with default assumptions and approve the PRD. After drafting, run a PRD gap check: every major component must have clear acceptance criteria, a defined tech stack, non-functional requirements (performance, security, privacy), and implementation phases; fill any gaps before approving."` |
 | **Interactive build in the harness** | `@workspace @project-orchestrator Execute the full build` |
-| **Autonomous service build** | `forge-launcher engine-run --repo <path> --yes` (registered repository required) |
+| **Autonomous service build** | `forge-launcher run --repo <path> --yes` (registered repository required) |
 | **Pick up where you left off** | `forge-launcher resume` (or `--repo <path>`) |
 | **Full auto build (terminal/headless, requires PRD)** | `forge-launcher --headless` (drives `opencode run --auto "/forge-auto-build Use docs/PRD.md as the project PRD. GO"` / `copilot -p "..." --yolo`) |
 | **Launcher headless (whole pipeline)** | `forge-launcher --headless` (add `--dry-run` to print the command) |
@@ -517,7 +459,7 @@ Only modify skills I've approved in the audit report.
 | Audit skills | `@workspace /forge-optimize-skills Audit all skills in .agents/skills/ against best practices...` |
 | Apply skill improvements | `@workspace /forge-optimize-skills Apply the approved changes from docs/SKILL-AUDIT.md` |
 | Compile execution manifest | `cd .agents/skills/forge-execution-adapter && npm install && npm run forge-execution-adapter -- compile` |
-| Run or resume a service build | `forge-launcher engine-run --repo <path> --yes` |
+| Run or resume a service build | `forge-launcher run --repo <path> --yes` |
 | Service run status | `forge-launcher service status <run-id>` |
 | Replay failed task | `forge-launcher service control <run-id> replay-task --task <task-id>` |
 
@@ -534,4 +476,4 @@ Only modify skills I've approved in the audit report.
 - **Re-bootstrap safely** - run `forge-launcher bootstrap . --force` any time you want to pull in updated MyForge templates without losing your generated agents.
 - **Optimize generated skills** - after the initial build, run `@workspace /forge-optimize-skills` to audit your skills against best practices. The audit surfaces specific improvements you can apply immediately.
 - **Full auto build** - use `forge-auto-build` when a reviewed PRD already exists (`docs/PRD.md`, or the decomposed layout) and you want a single command to take you from that PRD to committed, validated code. One pre-flight gate, then fully autonomous. If no PRD exists yet, run `forge-auto-build-prd` first. If the run is interrupted, just re-invoke it -it resumes from `docs/PROGRESS.md`.
-- **Autonomous execution** - use the registered Dapr service through `forge-launcher engine-run`; follow the cutover procedure before submitting a run.
+- **Autonomous execution** - use the registered Dapr service through `forge-launcher run`; follow the cutover procedure before submitting a run.

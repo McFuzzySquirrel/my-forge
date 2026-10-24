@@ -51,12 +51,12 @@ function defaultSpawner(cmd: string, args: string[], opts: SpawnOptions): SpawnR
   return spawnDetached(cmd, args, opts);
 }
 
-/** Builds the engine-run invocation args (console is the live view, so no --viz). */
+/** Builds the run invocation args (console is the live view, so no --viz). */
 function engineRunArgs(repoRoot: string, executor?: Executor): string[] {
   const cfg = loadEngineConfig(repoRoot);
   const harness = process.env.FORGE_ENGINE_HARNESS ?? cfg?.harness ?? inferEngineHarness(repoRoot);
   assertEngineHarnessAvailable(harness);
-  const args = ["engine-run", "--repo", repoRoot, "--harness", harness];
+  const args = ["run", "--repo", repoRoot, "--harness", harness];
   // The Console states the executor for every run it starts. The saved value is
   // only a pre-selection (and a fallback for a client that predates the
   // selector); it must never override an explicit worker choice.
@@ -115,7 +115,7 @@ export class RunController {
     return { ok: false, message: "Legacy PID controls are retired; stop a run through the local execution service." };
   }
 
-  run(jobType: "engine-run" | "engine-resume" = "engine-run", executor?: Executor): ControlResult {
+  run(jobType: "run" | "resume" = "run", executor?: Executor): ControlResult {
     refreshJobs();
     const blocker = authoringBlocker(this.p);
     if (blocker) return { ok: false, message: blocker };
@@ -375,8 +375,8 @@ export class RunController {
     switch (action) {
       case "pause": return this.pause();
       case "stop": return this.stop();
-      case "run": return this.run("engine-run", executor);
-      case "resume": return this.run("engine-resume", executor);
+      case "run": return this.run("run", executor);
+      case "resume": return this.run("resume", executor);
       case "replay": return taskId ? this.replay(taskId) : { ok: false, message: "replay requires a taskId." };
       case "draft-prd":
       case "draft-existing-prd": return interactiveRequirements();

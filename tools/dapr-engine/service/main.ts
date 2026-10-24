@@ -25,6 +25,7 @@ import { createRecordRunLifecycleEventActivity } from "../orchestration/status-a
 import { RECORD_RUN_LIFECYCLE_EVENT_ACTIVITY_NAME } from "../orchestration/workflow.ts";
 import { FileArtifactCheckpointStore } from "../storage/files/artifact-checkpoint-store.ts";
 import { FileTaskCompletionStore } from "../execution/task-completions.ts";
+import { CompletionEvidenceService } from "./evidence.ts";
 import {
   PostgresControlRecordStore,
   PostgresExecutionOwnershipStore,
@@ -164,6 +165,7 @@ async function proveWorkflowAdmission(): Promise<void> {
 
 const checkpoints = new FileArtifactCheckpointStore(join(DATA_DIR, "artifacts"));
 const completions = new FileTaskCompletionStore(join(DATA_DIR, "completions"));
+const evidence = new CompletionEvidenceService(completions, checkpoints);
 const integration = new PostgresRepositoryIntegrationAuthority(database, repositoryRoot, checkpoints);
 
 function createWorkflowHost(): ExecutionHost {
@@ -278,6 +280,7 @@ async function listen(runs: RunService): Promise<void> {
     runs,
     hostRunner,
     hostRunnerMonitor,
+    evidence,
     health: () => ({ live: !stopping, ready: ready && !stopping }),
     onError: (error) => process.stderr.write(`API request failed: ${error instanceof Error ? error.message : "unknown error"}\n`),
   }));

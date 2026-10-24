@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -41,22 +41,7 @@ test("bootstrap copies agents, skills, prompt-playbook, and excludes artifacts",
   assert.ok(fs.existsSync(path.join(target, ".agents", "agents", "project-orchestrator.md")));
   assert.ok(fs.existsSync(path.join(target, ".agents", "skills", "forge-auto-build", "SKILL.md")));
   assert.ok(fs.existsSync(path.join(target, "docs", "prompt-playbook.md")));
-  const engineDir = path.join(target, ".agents", "skills", "forge-workflow-engine");
-  const executionDir = path.join(engineDir, "scripts", "execution");
-  assert.ok(fs.existsSync(path.join(executionDir, "index.ts")));
-  assert.ok(fs.existsSync(path.join(executionDir, "harness", "run.ts")));
-  assert.ok(fs.existsSync(path.join(engineDir, "references", "engine-entry.md")));
-  assert.match(fs.readFileSync(path.join(engineDir, "scripts", "cli.ts"), "utf8"), /retired/);
-  for (const retired of ["engine.ts", "state.ts", "control.ts", "request.ts", "package.json"]) {
-    assert.ok(!fs.existsSync(path.join(engineDir, "scripts", retired)) && !fs.existsSync(path.join(engineDir, retired)));
-  }
-  const stagedContext = await import(pathToFileURL(path.join(executionDir, "task-context.ts")).href) as {
-    taskReferenceContext?: unknown;
-  };
-  assert.equal(typeof stagedContext.taskReferenceContext, "function");
-  assert.ok(!fs.existsSync(path.join(executionDir, "workflow.ts")));
-  assert.ok(!fs.existsSync(path.join(engineDir, "node_modules")));
-  assert.ok(!fs.existsSync(path.join(engineDir, "dist")));
+  assert.ok(!fs.existsSync(path.join(target, ".agents", "skills", "forge-workflow-engine")));
 });
 
 test("bootstrap rewrites .agents/ paths for a non-default harness", async () => {
@@ -81,7 +66,7 @@ test("bootstrap adds gitignore entries without duplicating existing ones", async
 
   const gi = fs.readFileSync(path.join(target, ".gitignore"), "utf8");
   const lines = gi.split("\n");
-  assert.ok(lines.includes("docs/engine-run.log"));
+  assert.ok(lines.includes("docs/forge.log"));
   assert.ok(lines.includes("docs/extraction-results/"));
   assert.ok(lines.includes("docs/artifacts/"));
   assert.ok(lines.includes("custom-output/"));
@@ -95,7 +80,7 @@ test("bootstrap writes progress to the repository-local Console log", async () =
   fs.mkdirSync(path.join(target, ".git"));
   await bootstrap({ targetDir: target, harness: "agents", force: true, nonInteractive: true });
 
-  const log = path.join(target, "docs", "engine-run.log");
+  const log = path.join(target, "docs", "forge.log");
   assert.ok(fs.existsSync(log));
   assert.match(fs.readFileSync(log, "utf8"), /Bootstrap complete/);
 });
@@ -151,7 +136,7 @@ test("a corrupt authoring config warns instead of failing a completed bootstrap"
   assert.equal(code, 0);
   assert.ok(fs.existsSync(path.join(target, ".claude", "agents", "project-orchestrator.md")));
 
-  const log = fs.readFileSync(path.join(target, "docs", "engine-run.log"), "utf8");
+  const log = fs.readFileSync(path.join(target, "docs", "forge.log"), "utf8");
   assert.match(log, /Authoring runner 'claude' was not saved/);
   assert.match(log, /docs[\\/]authoring-config\.json/);
   assert.match(log, /Bootstrap complete/);

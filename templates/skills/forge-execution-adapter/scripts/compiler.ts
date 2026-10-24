@@ -82,7 +82,7 @@ function fallbackOwner(agents: AgentDescriptor[]): string | undefined {
   return orchestrator?.name ?? agents[0]?.name;
 }
 
-const FORGE_COORDINATOR_NAMES = new Set(["forge-team-builder", "project-orchestrator", "workflow-orchestrator"]);
+const FORGE_COORDINATOR_NAMES = new Set(["forge-team-builder", "project-orchestrator"]);
 
 function isForgeCoordinator(agent: AgentDescriptor): boolean {
   return FORGE_COORDINATOR_NAMES.has(agent.name.toLowerCase()) ||

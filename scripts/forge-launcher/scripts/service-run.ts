@@ -66,9 +66,9 @@ async function defaultClient(): Promise<RunClient> {
   return new ServiceClient(access.baseUrl, access.token);
 }
 
-/** Mirrors a command's progress to the terminal and docs/engine-run.log (read by the Console). */
+/** Mirrors a command's progress to the terminal and docs/forge.log (read by the Console). */
 function teeWriter(repoRoot: string): (text: string) => void {
-  const logFile = path.join(repoRoot, "docs", "engine-run.log");
+  const logFile = path.join(repoRoot, "docs", "forge.log");
   fs.mkdirSync(path.dirname(logFile), { recursive: true });
   return (text) => {
     if (process.stdout.isTTY) process.stdout.write(text);
@@ -156,7 +156,7 @@ function integrateCompletedRun(repoRoot: string, runId: string, forgeBranch: str
 }
 
 /**
- * `engine-run` through the local service. Legacy execution is not a fallback.
+ * `run` through the local service. Legacy execution is not a fallback.
  */
 export async function serviceEngineRun(
   args: readonly string[],
@@ -175,7 +175,7 @@ export async function serviceEngineRun(
   const write = dependencies.write ?? teeWriter(repoRoot);
   const dryRun = flags.has("--dry-run");
   const client = dryRun ? undefined : await (dependencies.client ?? defaultClient)();
-  const resumeCommand = `forge-launcher engine-run --repo "${repoRoot}"`;
+  const resumeCommand = `forge-launcher run --repo "${repoRoot}"`;
 
   if (flags.has("--stop") || flags.has("--pause")) {
     const action = flags.has("--stop") ? "stop" : "pause";
@@ -226,7 +226,7 @@ export async function serviceEngineRun(
   if (flags.has("--host-execution")) settings.hostExecution = true;
 
   const executionModeLabel = settings.hostExecution === true ? "native host (full OS permissions)" : "worker";
-  write(`forge-engine-run: repo=${repoRoot} deployment=local service repository=${repositoryId} harness=${harness} execution=${executionModeLabel}\n`);
+  write(`forge-run: repo=${repoRoot} deployment=local service repository=${repositoryId} harness=${harness} execution=${executionModeLabel}\n`);
   const ignored = [...flags.keys()].filter((flag) => IGNORED_FLAGS[flag] && flag !== "--yes" && flag !== "--no-open");
   for (const flag of ignored) write(`  Note: ${flag} is ignored for service runs (${IGNORED_FLAGS[flag]}).\n`);
 
@@ -297,7 +297,7 @@ export async function serviceResume(
   const runId = String(active.runId);
   if (options.nonInteractive || options.dryRun) {
     write(`Service run ${runId} is ${active.status} for ${repoRoot}.\n`);
-    write(`  Next: forge-launcher engine-run --repo "${repoRoot}"   (resumes or attaches)\n`);
+    write(`  Next: forge-launcher run --repo "${repoRoot}"   (resumes or attaches)\n`);
     write(`  Monitor: forge-launcher service events ${runId} --follow\n`);
     return 0;
   }

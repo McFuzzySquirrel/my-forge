@@ -289,14 +289,6 @@ function writeSkills(repoRoot: string): void {
     "",
     "Use the shared spacing scale, colour tokens, and accessible components.",
   ].join("\n"));
-  touch(repoRoot, `${HARNESS_ROOT}/skills/forge-workflow-engine/SKILL.md`, [
-    "---",
-    "name: forge-workflow-engine",
-    "description: Autonomous execution engine for MyForge manifests.",
-    "---",
-    "",
-    "# Skill: Workflow Engine",
-  ].join("\n"));
 }
 
 interface FixtureTask {

@@ -15,6 +15,8 @@ export interface AuditEvent {
   artifactId?: string;
   reductionPercent?: number;
   outputFiles?: string[];
+  sequence?: number;
+  source?: "authoring" | "service";
 }
 
 export interface ExecutionManifest {
@@ -118,7 +120,7 @@ export interface Summary {
   defaultTimeoutMs: number | null;
   /** Auto-commit after each completed task (engine-config; default on). */
   autoCommit: boolean;
-  /** Stream harness CLI activity into docs/engine-run.log (engine-config; default off). */
+  /** Stream harness CLI activity into docs/forge.log (engine-config; default off). */
   logHarnessActivity: boolean;
   /** Execute local harness CLIs on the host with full OS permissions. */
   hostExecution: boolean;
@@ -254,6 +256,44 @@ export interface ArtifactMeta {
 export interface ArtifactIndex {
   artifacts: ArtifactMeta[];
   types: string[];
+}
+
+export interface EvidenceArtifactRef {
+  artifactId: string;
+  uri: string;
+  mediaType: string;
+  sizeBytes: number;
+  sha256: string;
+  retentionClass?: string;
+}
+
+export interface EvidenceRecord {
+  taskId: string;
+  runId: string;
+  commitSha: string;
+  baseRevision: string;
+  completedAt: string;
+  outputFiles: string[];
+  validationCommands: string[];
+  workArtifact?: EvidenceArtifactRef;
+  validationArtifact: EvidenceArtifactRef;
+  bundleArtifact: EvidenceArtifactRef;
+}
+
+export interface EvidenceTask {
+  taskId: string;
+  records: EvidenceRecord[];
+}
+
+export interface EvidenceIndex {
+  repositoryId: string;
+  tasks: EvidenceTask[];
+  count: number;
+}
+
+export interface EvidenceArtifactResponse extends EvidenceArtifactRef {
+  encoding: "base64";
+  content: string;
 }
 
 export interface DocEntry {
@@ -412,9 +452,9 @@ export type BackgroundJobType =
   | "draft-skills"
   | "rederive"
   | "compile-manifest"
-  | "engine-run"
-  | "engine-resume"
-  | "engine-replay";
+  | "run"
+  | "resume"
+  | "replay";
 
 export type BackgroundJobStatus = "running" | "complete" | "failed" | "paused";
 

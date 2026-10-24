@@ -76,7 +76,7 @@ commands, dependencies, inputs, output files, and error/artifact metadata.
 
 ## 6. Logs (engine)
 
-The `docs/engine-run.log` tail, live-appended over SSE. Follow mode keeps new
+The `docs/forge.log` tail, live-appended over SSE. Follow mode keeps new
 output in view; disabling it preserves the reading position and shows unread
 output.
 

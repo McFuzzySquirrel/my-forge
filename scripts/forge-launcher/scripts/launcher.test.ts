@@ -288,7 +288,7 @@ test("auto-draft engine command carries configured granularity/concurrency/timeo
 
   assert.equal(code, 0, out);
   const repo = path.join(parent, "engine-opts-app");
-  assert.ok(out.includes(`engine-run --repo ${repo}`), out);
+  assert.ok(out.includes(`run --repo ${repo}`), out);
   assert.ok(out.includes("--harness copilot"), out);
   assert.ok(out.includes("--granularity coarse"), out);
   assert.ok(out.includes("--concurrency 3"), out);
@@ -313,7 +313,7 @@ test("auto-draft engine command enables the live dashboard from env", async () =
 
   assert.equal(code, 0, out);
   const repo = path.join(parent, "engine-viz-app");
-  assert.ok(out.includes(`engine-run --repo ${repo}`), out);
+  assert.ok(out.includes(`run --repo ${repo}`), out);
   assert.ok(out.includes("--viz"), out);
   assert.ok(out.includes("--viz-port 5500"), out);
   assert.ok(out.includes("--yes"), out);
@@ -336,7 +336,7 @@ test("auto-draft engine command ignores the retired keep-alive/attach env", asyn
 
   assert.equal(code, 0, out);
   const repo = path.join(parent, "engine-keepalive-app");
-  assert.ok(out.includes(`engine-run --repo ${repo}`), out);
+  assert.ok(out.includes(`run --repo ${repo}`), out);
   assert.ok(!out.includes("--keep-alive"), out);
   assert.ok(!out.includes("--attach"), out);
   assert.ok(out.includes("--yes"), out);
@@ -367,7 +367,7 @@ test("spawnDetached tees child output to the log even with only logFile", async 
 
 test("detached engine command resolves a runnable CLI entry", () => {
   const repo = "/tmp/example-repo";
-  const { cmd, args } = engineDetachedCommand(["engine-run", "--repo", repo, "--harness", "opencode", "--yes"]);
+  const { cmd, args } = engineDetachedCommand(["run", "--repo", repo, "--harness", "opencode", "--yes"]);
 
   assert.equal(cmd, process.execPath);
   // The CLI entry must resolve to a real file: dist/cli.js when compiled, or
@@ -377,8 +377,8 @@ test("detached engine command resolves a runnable CLI entry", () => {
   assert.ok(entryIdx >= 0, args.join(" "));
   assert.ok(fs.existsSync(args[entryIdx]), `entry exists: ${args[entryIdx]}`);
 
-  const runIdx = args.indexOf("engine-run");
-  assert.ok(runIdx > entryIdx, "engine-run subcommand must follow the CLI entry");
+  const runIdx = args.indexOf("run");
+  assert.ok(runIdx > entryIdx, "run subcommand must follow the CLI entry");
   assert.ok(args.includes("--repo") && args.includes(repo));
   assert.ok(args.includes("--harness") && args.includes("opencode"));
   assert.ok(args.includes("--yes"));
@@ -417,7 +417,7 @@ test("feature-prd accepts a newly created non-empty feature document", async () 
 
   assert.equal(result.code, 0, result.out);
   assert.ok(fs.readFileSync(path.join(repo, "docs", "features", "stub-feature.md"), "utf8").trim());
-  const log = fs.readFileSync(path.join(repo, "docs", "engine-run.log"), "utf8");
+  const log = fs.readFileSync(path.join(repo, "docs", "forge.log"), "utf8");
   const event = log.split("\n").find((line) => line.startsWith("FORGE_EVENT "));
   assert.ok(event, "feature authoring should emit a structured lifecycle event");
   assert.equal(JSON.parse(event!.slice("FORGE_EVENT ".length)).type, "authoring.started");
@@ -664,7 +664,7 @@ test("auto-draft compiles the native manifest after team and skills without auth
   assert.ok(fs.existsSync(path.join(repo, "docs", "EXECUTION-MANIFEST.json")), "native execution manifest should exist");
   assert.ok(!fs.existsSync(path.join(repo, "docs", "PROGRESS.md")), "engine progress must not be authored by an LLM");
   assert.ok(out.includes("Execution manifest compiled"), out);
-  assert.ok(out.includes("engine-run --repo"), out);
+  assert.ok(out.includes("run --repo"), out);
 });
 
 test("a stubbed PRD stage that produces nothing fails validation with no commit", async () => {

@@ -10,7 +10,7 @@ import { findRegisteredRepository } from "../runtime-repositories.ts";
 import { CONTROL_ACTIONS, ServiceApiError, ServiceClient } from "../service-client.ts";
 
 export interface ServiceRunsDeps {
-  client(): Promise<Pick<ServiceClient, "list" | "get" | "events" | "control">>;
+  client(): Promise<Pick<ServiceClient, "list" | "get" | "events" | "control" | "evidence" | "evidenceArtifact">>;
   repositoryId(repoRoot: string): Promise<string | undefined>;
 }
 
@@ -72,6 +72,40 @@ export async function listServiceRuns(deps: ServiceRunsDeps, repoRoot: string | 
   } catch (error) {
     const response = failure(error);
     return { status: 200, body: { ...response.body, ok: true, available: false, reason: "unavailable", runs: [] } };
+  }
+}
+
+/** Lists durable task evidence for the current repository. */
+export async function listServiceEvidence(
+  deps: ServiceRunsDeps,
+  repoRoot: string | null,
+): Promise<ServiceResponse> {
+  const repositoryId = await scope(deps, repoRoot);
+  if (typeof repositoryId !== "string") return repositoryId;
+  try {
+    const evidence = await (await deps.client()).evidence(repositoryId);
+    return { status: 200, body: { ok: true, available: true, ...evidence, repositoryId } };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/** Reads one work, validation or bundle artifact from the current repository's evidence. */
+export async function readServiceEvidenceArtifact(
+  deps: ServiceRunsDeps,
+  repoRoot: string | null,
+  artifactId: unknown,
+): Promise<ServiceResponse> {
+  if (typeof artifactId !== "string" || !/^art_[0-9a-f]{64}$/.test(artifactId)) {
+    return { status: 400, body: { ok: false, code: "invalid-artifact", message: "A valid artifact id is required." } };
+  }
+  const repositoryId = await scope(deps, repoRoot);
+  if (typeof repositoryId !== "string") return repositoryId;
+  try {
+    const artifact = await (await deps.client()).evidenceArtifact(repositoryId, artifactId);
+    return { status: 200, body: { ok: true, repositoryId, ...artifact } };
+  } catch (error) {
+    return failure(error);
   }
 }
 

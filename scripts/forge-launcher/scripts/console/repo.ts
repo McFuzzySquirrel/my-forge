@@ -45,7 +45,7 @@ import { detectHarnessRoot, findAdapterDir, inferEngineHarness, looksLikeForgeRe
 
 // ─── Low-level reads (tolerant of missing files) ─────────────────────────────
 
-/** Mirrors the workflow engine's DEFAULT_TASK_TIMEOUT_MS (and the launcher's interactive default). */
+/** Mirrors the Dapr execution service's DEFAULT_TASK_TIMEOUT_MS (and the launcher's interactive default). */
 const DEFAULT_TASK_TIMEOUT_MS = 600000;
 
 function readJson<T>(file: string): T | null {
@@ -543,7 +543,8 @@ export function logLines(file: string, lines = 400): LogsResponse {
 }
 
 export function logs(p: RepoPaths, lines = 400): LogsResponse {
-  return logLines(p.logPath, lines);
+  const path = fs.existsSync(p.logPath) || !fs.existsSync(p.legacyLogPath) ? p.logPath : p.legacyLogPath;
+  return logLines(path, lines);
 }
 
 // ─── Artifacts ───────────────────────────────────────────────────────────────
@@ -690,7 +691,7 @@ function listAgents(repoRoot: string, harnessRoot: string): AgentInfo[] {
   // The three template agents ship with every bootstrap; exclude them so the
   // team view (and hasTeam) reflects the generated specialist team, mirroring
   // the launcher's hasGeneratedTeam().
-  const excluded = new Set(["forge-team-builder.md", "project-orchestrator.md", "workflow-orchestrator.md"]);
+  const excluded = new Set(["forge-team-builder.md", "project-orchestrator.md"]);
   const agentsDir = path.join(repoRoot, harnessRoot, "agents");
   return walk(agentsDir, (name) => name.endsWith(".md") && name !== "SKILL.md" && !excluded.has(name)).map((file) => {
     const raw = readText(file) ?? "";
@@ -797,9 +798,9 @@ function jobLabel(job: BackgroundJob): string {
       case "draft-team": return "generating team";
       case "draft-skills": return "generating skills";
       case "compile-manifest": return "compiling manifest";
-      case "engine-run":
-      case "engine-resume": return "running";
-      case "engine-replay": return "replaying";
+      case "run":
+      case "resume": return "running";
+      case "replay": return "replaying";
     }
   }
   return "ready";
@@ -998,10 +999,10 @@ function resolveJobOutcome(job: BackgroundJob): { status: BackgroundJob["status"
       return fs.existsSync(p.manifestPath)
         ? { status: "complete", message: "Execution manifest compiled." }
         : { status: "failed", message: "Manifest compile exited without producing a manifest." };
-    case "engine-run":
-    case "engine-resume":
+    case "run":
+    case "resume":
       return { status: "complete", message: "Service run command completed; see Service Runs for execution status." };
-    case "engine-replay":
+    case "replay":
       return { status: "complete", message: `Replay command for ${job.taskId ?? "task"} completed; see Service Runs for execution status.` };
   }
 }

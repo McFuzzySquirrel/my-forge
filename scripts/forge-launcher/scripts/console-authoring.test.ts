@@ -594,7 +594,7 @@ test("synchronous startup failure is an error result, not a running success", (t
 
 test("split structured authoring events survive ordinary partial-line log streaming", async (t) => {
   const root = fixture(t);
-  const log = path.join(root, "docs", "engine-run.log");
+  const log = path.join(root, "docs", "forge.log");
   fs.writeFileSync(log, "");
   const server = await startConsoleServer({ repoRoot: root, port: port++, open: false });
   let received = "";

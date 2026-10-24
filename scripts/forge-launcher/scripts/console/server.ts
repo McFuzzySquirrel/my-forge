@@ -33,9 +33,9 @@ import { harnessCliForHarness } from "./dashboard/harness-rules.ts";
 import * as repo from "./repo.ts";
 import { removeProjects, sameProjectPath } from "./remove-projects.ts";
 import { OperatorSessions, SIGN_IN_PATH } from "./session.ts";
-import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, latestServiceRun, listServiceRuns, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
+import { controlServiceRun, routeServiceControl, defaultServiceRunsDeps, latestServiceRun, listServiceEvidence, listServiceRuns, readServiceEvidenceArtifact, serviceRunDetail, type ServiceRunsDeps } from "./service-runs.ts";
 import { defaultHostRunnerJobsDeps, listHostRunnerJobs, type HostRunnerJobsDeps } from "./host-runner-jobs.ts";
-import type { ControlAction, CreateProjectRequest, Executor, ManifestTask, RunnerReadiness, ServiceRunSnapshot } from "./types.ts";
+import type { AuditEvent, ControlAction, CreateProjectRequest, Executor, ManifestTask, RunnerReadiness, ServiceRunSnapshot } from "./types.ts";
 import {
   executeRuntimeAdminAction,
   getHostRunnerReadiness,
@@ -150,19 +150,16 @@ function asServiceRunSnapshot(value: unknown): ServiceRunSnapshot | null {
 // their focused tests.
 
 /**
- * Durations observed so far in this run, keyed by task id.
- *
- * Harvested from `task.complete` audit events rather than only from current state
- * so a task that failed and was retried contributes every attempt, which is what
- * makes the median meaningful. This is the Gantt's best available evidence; the
- * estimate ladder falls back to the owning agent's median and then a constant.
+ * Durations observed so far in the current service run, keyed by task id. The
+ * service task snapshot is the live source; no legacy audit file is consulted.
  */
-function observedDurations(audit: ReturnType<typeof repo.loadAudit>): Record<string, number[]> {
+function observedDurations(serviceRun: ServiceRunSnapshot | null): Record<string, number[]> {
   const samples: Record<string, number[]> = {};
-  for (const event of audit) {
-    if (event.action !== "task.complete" || !event.taskId || typeof event.durationMs !== "number") continue;
-    if (!Number.isFinite(event.durationMs) || event.durationMs <= 0) continue;
-    (samples[event.taskId] ??= []).push(event.durationMs);
+  for (const task of serviceRun?.tasks ?? []) {
+    if (!task.startedAt || !task.completedAt) continue;
+    const durationMs = Date.parse(task.completedAt) - Date.parse(task.startedAt);
+    if (!Number.isFinite(durationMs) || durationMs <= 0) continue;
+    (samples[task.taskId] ??= []).push(durationMs);
   }
   return samples;
 }
@@ -187,8 +184,9 @@ async function buildLayout(
     kanban: layoutManifest(manifest, {}),
     gantt: layoutGantt(manifest, state, {
       concurrency,
-      observedDurationsMs: observedDurations(repo.loadAudit(p)),
+      observedDurationsMs: observedDurations(serviceRun),
     }),
+    state,
   };
 }
 
@@ -467,9 +465,95 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
     for (const send of clients) send(event, data);
   }
 
-  function snapshotEvent(): unknown {
+  function serviceAuditEvent(runId: string, event: Record<string, unknown>): AuditEvent {
+    const detail = [event.runStatus, event.taskStatus, event.attemptStatus]
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+      .join(" · ");
+    return {
+      timestamp: typeof event.createdAt === "string" ? event.createdAt : new Date().toISOString(),
+      action: typeof event.eventType === "string" ? event.eventType : "run.event",
+      ...(typeof event.taskId === "string" ? { taskId: event.taskId } : {}),
+      note: `${runId}${detail ? ` · ${detail}` : ""}`,
+      ...(typeof event.sequence === "number" ? { sequence: event.sequence } : {}),
+      runId,
+      source: "service",
+    };
+  }
+
+  async function serviceAuditEvents(): Promise<AuditEvent[]> {
     const p = currentPaths();
-    if (!p) return { summary: null, manifest: null, layout: null };
+    if (!p) return [];
+    const run = await currentServiceRun(p.repoRoot).catch(() => null);
+    if (!run) return [];
+    const client = await serviceRuns().client();
+    const events: AuditEvent[] = [];
+    let cursor = 0;
+    for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+      const page = await client.events(run.runId, cursor);
+      events.push(...page.events.map((event) => serviceAuditEvent(run.runId, event)));
+      cursor = page.cursor;
+      if (!page.hasMore) break;
+    }
+    return events;
+  }
+
+  let snapshotInFlight = false;
+  async function broadcastSnapshot(): Promise<void> {
+    if (snapshotInFlight) return;
+    snapshotInFlight = true;
+    try {
+      broadcast("snapshot", await snapshotEvent());
+    } finally {
+      snapshotInFlight = false;
+    }
+  }
+
+  let serviceFingerprint: string | null = null;
+  let serviceEventCursor: { readonly runId: string; cursor: number } | null = null;
+  let servicePollInFlight = false;
+
+  async function pollServiceActivity(): Promise<void> {
+    if (servicePollInFlight) return;
+    servicePollInFlight = true;
+    try {
+      const p = currentPaths();
+      if (!p) return;
+      const run = await currentServiceRun(p.repoRoot).catch(() => null);
+      const fingerprint = run
+        ? JSON.stringify({ status: run.status, updatedAt: run.updatedAt, tasks: run.tasks })
+        : null;
+      if (fingerprint !== serviceFingerprint) {
+        serviceFingerprint = fingerprint;
+        if (run) broadcast("service", run);
+        await broadcastSnapshot();
+      }
+      if (!run) {
+        serviceEventCursor = null;
+        return;
+      }
+      if (serviceEventCursor?.runId !== run.runId) {
+        serviceEventCursor = { runId: run.runId, cursor: 0 };
+      }
+      const cursorState = serviceEventCursor;
+      const client = await serviceRuns().client();
+      for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+        const page = await client.events(run.runId, cursorState.cursor);
+        if (page.events.length > 0) {
+          cursorState.cursor = page.cursor;
+          for (const event of page.events) broadcast("audit", serviceAuditEvent(run.runId, event));
+        }
+        if (!page.hasMore) break;
+      }
+    } catch (error) {
+      onLog(`console service activity: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      servicePollInFlight = false;
+    }
+  }
+
+  async function snapshotEvent(): Promise<unknown> {
+    const p = currentPaths();
+    if (!p) return { summary: null, manifest: null, layout: null, state: null };
     // Each source is read independently. A repository in a half-authored state (a
     // harness root that does not exist yet, an unreadable manifest) must not take
     // down the whole event stream, or every other view stops updating as well.
@@ -481,10 +565,28 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         return null;
       }
     };
+    const serviceRun = await currentServiceRun(p.repoRoot).catch(() => null);
+    const manifest = safe(() => repo.loadManifest(p));
+    const layout = manifest
+      ? await buildLayout(p.repoRoot, serviceRun).catch((error: unknown) => {
+          onLog(`console layout: ${error instanceof Error ? error.message : String(error)}`);
+          return null;
+        })
+      : null;
     return {
-      summary: safe(() => repo.summary(p)),
-      manifest: safe(() => repo.loadManifest(p)),
-      layout: null,
+      summary: safe(() => repo.summary(p, serviceRun)),
+      manifest,
+      layout,
+      state: serviceRun
+        ? {
+            startedAt: serviceRun.createdAt,
+            tasks: Object.fromEntries(serviceRun.tasks.map((task) => [task.taskId, {
+              status: task.status,
+              startedAt: task.startedAt,
+              completedAt: task.completedAt,
+            }])),
+          }
+        : null,
     };
   }
 
@@ -542,7 +644,8 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           onLog(`  console: failed to read runtime log: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      if (jobsChanged) broadcast("snapshot", snapshotEvent());
+      if (jobsChanged) void broadcastSnapshot();
+      void pollServiceActivity();
     } catch (error) {
       onLog(`  console: poller error: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -588,7 +691,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
         };
         clients.add(send);
-        send("snapshot", snapshotEvent());
+        void snapshotEvent().then((snapshot) => send("snapshot", snapshot));
         const heartbeat = setInterval(() => res.write(": ping\n\n"), HEARTBEAT_MS);
         heartbeat.unref?.();
         req.on("close", () => {
@@ -611,8 +714,12 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             return p ? sendJson(res, 200, repo.summary(p, await currentServiceRun(currentRepo))) : sendJson(res, 200, null);
           case "/api/tasks":
             return p ? sendJson(res, 200, repo.tasks(p, await currentServiceRun(currentRepo))) : sendJson(res, 200, []);
-          case "/api/audit":
-            return p ? sendJson(res, 200, repo.loadAudit(p)) : sendJson(res, 200, []);
+          case "/api/audit": {
+            if (!p) return sendJson(res, 200, []);
+            const authoringAudit = repo.loadAudit(p);
+            const serviceAudit = await serviceAuditEvents().catch(() => []);
+            return sendJson(res, 200, [...authoringAudit, ...serviceAudit]);
+          }
           case "/api/authoring-events":
             return p ? sendJson(res, 200, repo.authoringEvents(p)) : sendJson(res, 200, []);
           case "/api/logs": {
@@ -676,6 +783,15 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
         if (urlPath === "/api/service/run") {
           const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");
           const result = await serviceRunDetail(serviceRuns(), currentRepo, q.get("id"), q.get("after"));
+          return sendJson(res, result.status, result.body);
+        }
+        if (urlPath === "/api/service/evidence") {
+          const result = await listServiceEvidence(serviceRuns(), currentRepo);
+          return sendJson(res, result.status, result.body);
+        }
+        if (urlPath === "/api/service/evidence/artifact") {
+          const q = new URLSearchParams(rawUrl.split("?")[1] ?? "");
+          const result = await readServiceEvidenceArtifact(serviceRuns(), currentRepo, q.get("artifactId"));
           return sendJson(res, result.status, result.body);
         }
 
@@ -744,7 +860,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             return sendJson(res, 400, { ok: false, message: error instanceof Error ? error.message : String(error) });
           }
           const saved = saveAuthoringConfig(currentRepo, config);
-          broadcast("snapshot", snapshotEvent());
+          void broadcastSnapshot();
           return sendJson(res, 200, { ok: true, config: saved, message: "Authoring models saved. Omitted stages inherit the runner default." });
         }
         if (urlPath === "/api/authoring-inventory/refresh") {
@@ -826,7 +942,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             result = repo.setAllTaskTimeouts(p, timeoutMs);
             if (result.ok) repo.setDefaultTimeout(p, timeoutMs);
           }
-          if (result.ok) broadcast("snapshot", snapshotEvent());
+          if (result.ok) void broadcastSnapshot();
           return sendJson(res, result.ok ? 200 : 400, result);
         }
         if (urlPath === "/api/tasks/human-review") {
@@ -848,7 +964,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           } catch (error) {
             message += ` The review record was not written: ${error instanceof Error ? error.message : String(error)}`;
           }
-          broadcast("snapshot", snapshotEvent());
+          void broadcastSnapshot();
           return sendJson(res, routed.status, { ...routed.body, message, reviewRecord, resumed: false });
         }
         if (urlPath === "/api/projects/remove") {
@@ -862,7 +978,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             controller.repoRoot = "";
             resetOffsets();
           }
-          broadcast("snapshot", snapshotEvent());
+          void broadcastSnapshot();
           return sendJson(res, 200, { results, current: currentRepo });
         }
         if (urlPath === "/api/projects/select") {
@@ -874,7 +990,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           controller.repoRoot = currentRepo;
           resetOffsets();
           upsertProject({ path: currentRepo });
-          broadcast("snapshot", snapshotEvent());
+          void broadcastSnapshot();
           return sendJson(res, 200, { ok: true, repoRoot: currentRepo });
         }
         if (urlPath === "/api/projects/add") {
@@ -904,7 +1020,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
               return sendJson(res, 400, { ok: false, message: "concurrency must be a non-negative integer." });
             }
             const result = repo.setConcurrency(currentPaths()!, body.concurrency);
-            broadcast("snapshot", snapshotEvent());
+            void broadcastSnapshot();
             return sendJson(res, result.ok ? 200 : 400, result);
           }
           if (body.executionMode !== undefined) {
@@ -912,7 +1028,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
               return sendJson(res, 400, { ok: false, message: "executionMode must be 'auto' or 'manual'." });
             }
             const result = repo.setExecutionMode(currentPaths()!, body.executionMode);
-            broadcast("snapshot", snapshotEvent());
+            void broadcastSnapshot();
             return sendJson(res, result.ok ? 200 : 400, result);
           }
           if (body.selectedTaskIds !== undefined || body.selectionScope !== undefined) {
@@ -923,7 +1039,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
               return sendJson(res, 400, { ok: false, message: "selectionScope must be single, range, or list." });
             }
             const result = repo.setTaskSelection(currentPaths()!, selectionScope as "single" | "range" | "list" | null | undefined ?? null, selectedTaskIds);
-            broadcast("snapshot", snapshotEvent());
+            void broadcastSnapshot();
             return sendJson(res, result.ok ? 200 : 400, result);
           }
           if (body.logHarnessActivity !== undefined) {
@@ -931,7 +1047,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
               return sendJson(res, 400, { ok: false, message: "logHarnessActivity must be a boolean." });
             }
             const result = repo.setLogHarnessActivity(currentPaths()!, body.logHarnessActivity);
-            broadcast("snapshot", snapshotEvent());
+            void broadcastSnapshot();
             return sendJson(res, result.ok ? 200 : 400, result);
           }
           if (body.hostExecution !== undefined) {
@@ -942,7 +1058,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
               return sendJson(res, 400, { ok: false, message: "Enabling host execution requires explicit confirmation." });
             }
             const result = repo.setHostExecution(currentPaths()!, body.hostExecution);
-            broadcast("snapshot", snapshotEvent());
+            void broadcastSnapshot();
             return sendJson(res, result.ok ? 200 : 400, result);
           }
           const autoCommit = body.autoCommit;
@@ -950,7 +1066,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
             return sendJson(res, 400, { ok: false, message: "autoCommit must be a boolean." });
           }
           const result = repo.setAutoCommit(currentPaths()!, autoCommit);
-          broadcast("snapshot", snapshotEvent());
+          void broadcastSnapshot();
           return sendJson(res, result.ok ? 200 : 400, result);
         }
         if (urlPath === "/api/launch-cli") {
@@ -1005,7 +1121,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           try {
             const outputs = await validateAuthoredPrd(currentRepo);
             recordAuthoringStageSuccess(currentRepo, "prd", outputs, detectHarnessRoot(currentRepo) ?? ".agents");
-            broadcast("snapshot", snapshotEvent());
+            void broadcastSnapshot();
             return sendJson(res, 200, { ok: true, message: `PRD validated (${outputs.length} output${outputs.length === 1 ? "" : "s"}).` });
           } catch (error) {
             return sendJson(res, 200, { ok: false, message: error instanceof Error ? error.message : String(error) });
@@ -1017,7 +1133,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
           const primary = typeof body.primary === "string" && body.primary.trim() ? body.primary.trim() : undefined;
           const fallback = typeof body.fallback === "string" && body.fallback.trim() ? body.fallback.trim() : undefined;
           const result = repo.setModelOverride(currentPaths()!, agent, primary, fallback);
-          if (result.ok) broadcast("snapshot", snapshotEvent());
+          if (result.ok) void broadcastSnapshot();
           return sendJson(res, result.ok ? 200 : 400, result);
         }
         if (urlPath === "/api/model-plan/terminal") {
@@ -1168,7 +1284,7 @@ export async function startConsoleServer(options: ConsoleServerOptions = {}): Pr
       controller.repoRoot = currentRepo;
       resetOffsets();
       upsertProject({ path: currentRepo });
-      broadcast("snapshot", snapshotEvent());
+      void broadcastSnapshot();
     },
     stop() {
       return new Promise<void>((resolve) => {

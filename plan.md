@@ -22,6 +22,15 @@ P7-01–05 are complete and merged to `main` in
 P7-GATE was accepted by the operator on 2026-10-22, authorizing P8. Hosted
 deployment remains a separate capability.
 
+**Post-P7 cleanup (v3.155):** the retired `forge-workflow-engine` skill package,
+`workflow-orchestrator` persona, `engine-run` CLI, legacy state/PID handling,
+and historical workflow-engine documentation were removed. The activity log is
+now `docs/forge.log`; old `docs/engine-run.log` files remain read-only history.
+This does not change P7 acceptance evidence; it completes the legacy retirement.
+References below to removed `engine-run.ts`, `forge-engine-run`, or
+`forge-workflow-engine` paths are retained as historical implementation records,
+not current entry points.
+
 **Direction:** One Dapr Workflow engine, with local Podman and hosted deployment
 profiles; no permanent legacy backend
 

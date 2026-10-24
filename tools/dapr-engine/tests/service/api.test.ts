@@ -36,6 +36,7 @@ async function start(
     token: TOKEN,
     runs,
     hostRunnerMonitor,
+    evidence: { list: ok("evidence"), artifact: ok("evidenceArtifact") },
     health: () => ({ live: true, ready }),
     maxBodyBytes: 1024,
   }));
@@ -83,6 +84,11 @@ test("API requires a bearer token compared in constant time", async (t) => {
   const listed = await send(port, { path: "/v1/runs?limit=5&repositoryId=demo", headers: auth });
   assert.equal(listed.status, 200);
   assert.deepEqual(calls, ['list:[5,"demo"]']);
+  const evidence = await send(port, { path: "/v1/evidence?repositoryId=demo", headers: auth });
+  assert.equal(evidence.status, 200);
+  const artifact = await send(port, { path: `/v1/evidence/artifact?repositoryId=demo&artifactId=art_${"a".repeat(64)}`, headers: auth });
+  assert.equal(artifact.status, 200);
+  assert.deepEqual(calls.slice(-2), ['evidence:["demo"]', `evidenceArtifact:["demo","art_${"a".repeat(64)}"]`]);
 });
 
 test("API rejects non-loopback hosts and browser origins before authentication", async (t) => {

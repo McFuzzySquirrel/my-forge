@@ -5,24 +5,49 @@ Node.js entry point for [MyForge](https://github.com/McFuzzySquirrel/my-forge) -
 it creates a repo, bootstraps the agent/skill templates, captures your idea, and
 drives the pipeline from PRD → agent team → autonomous build.
 
-> Requires **Node.js 18+**.
+> Requires **Node.js 18+** and **rootless Podman** with a Compose provider.
+
+Podman install references:
+[Linux distributions](https://podman.io/docs/installation#linux-distributions) ·
+[macOS](https://podman.io/docs/installation#macos) ·
+[Windows](https://podman.io/docs/installation#windows) ·
+[Podman Desktop](https://podman-desktop.io/downloads).
+
+On macOS and Windows, create and start the Podman machine first:
+
+```bash
+podman machine init
+podman machine start
+```
+
+Verify with `podman info` and `podman compose version`. The Linux rootless
+profile is currently qualified; native macOS/Windows host execution remains
+unqualified.
 
 ## Install
 
 ```bash
 npm install -g forge-launcher
 # or, without a global install:
-npx forge-launcher
+npx forge-launcher console
 ```
 
 ## Quick start
 
+Start the local execution runtime once, then open the **Forge Console**:
+
 ```bash
-forge-launcher            # interactive: create a repo, bootstrap templates, capture your idea
+forge-launcher runtime start
+forge-launcher runtime status
+forge-launcher console
 ```
 
-Answer the prompts, then open the generated repo in your agent harness and run
-the queued command it prints.
+The Console is the recommended entry point. It opens the local Console and its
+single-use sign-in link; create or open a project, author requirements, and
+monitor and control builds there.
+
+The interactive terminal launcher remains available as `forge-launcher` if you
+prefer prompts in the terminal.
 
 ## Commands
 
@@ -32,7 +57,7 @@ the queued command it prints.
 | `forge-launcher --draft` | Same, but auto-draft the agent team and project skills (keeps review boundaries). The PRD is always interactive. |
 | `forge-launcher --headless` | Drive the queued skill from the terminal via `opencode run --auto` / `copilot -p --yolo`. Stops with a handoff when no PRD exists. |
 | `forge-launcher bootstrap <dir> [--harness agents\|github\|claude\|opencode]` | Copy agent/skill templates into an existing project. |
-| `forge-launcher engine-run [--repo <path>] [--harness <h>] …` | Compile the manifest and run the autonomous build through the local Dapr service. The repository must be registered with `runtime repo add` and the runtime restarted. |
+| `forge-launcher run [--repo <path>] [--harness <h>] …` | Compile the manifest and run the autonomous build through the local Dapr service. The repository must be registered with `runtime repo add` and the runtime restarted. |
 | `forge-launcher resume [--repo <path>]` | Pick up a paused/finished setup where it left off; build execution requires a registered repository and uses the local service. |
 | `forge-launcher console [--repo <path>]` | Local web UI (`http://127.0.0.1:4300`) for authoring, build monitoring, service-run controls, and full local runtime administration; sign in with the printed single-use link. |
 | `forge-launcher runtime start [--host-tools]` | Start the Forge worker and persistent PostgreSQL/Dapr services with rootless Podman; host tools publish PostgreSQL on loopback only. |
@@ -50,10 +75,10 @@ the queued command it prints.
 | `forge-launcher draft-prd \| draft-existing-prd [--repo <path>]` | Report the interactive requirements handoff. The PRD is never authored headlessly — see [ADR-060](../../docs/adr/060-interactive-requirements-authoring.md). |
 | `forge-launcher compile-manifest [--repo <path>]` | Headless build-prep stage: install the adapter if needed and write `docs/EXECUTION-MANIFEST.json` without submitting a run. |
 
-Bootstrap includes the canonical Dapr-independent execution utilities in the
-retired workflow-engine compatibility package; it does not install or restore
-the legacy scheduler. The launcher-managed Dapr service runs outside the target
-repository and is provisioned with `forge-launcher runtime start`.
+Bootstrap installs agent, skill, and execution-adapter resources into the target
+repository. It does not install a scheduler. The launcher-managed Dapr service
+runs outside the target repository and is provisioned with
+`forge-launcher runtime start`.
 
 The `runtime` commands manage the local service and its infrastructure. The
 `service` commands use its loopback, token-authenticated run API. The worker
@@ -62,9 +87,8 @@ with credentials granted through `runtime harness grant`. The Console's
 **Runtime** view manages lifecycle, repository registration, backups, token
 rotation, and harness grants; destructive actions require confirmation, and
 registration changes require a separate restart. For registered repositories,
-`engine-run`, `resume`, and Console builds and controls use the service.
-Unregistered repositories fail closed; legacy workflow histories are not
-imported. See the [cutover and rollback procedure](../../docs/forge-launcher.md#cut-over-from-the-legacy-engine)
+`run`, `resume`, and Console builds and controls use the service. Unregistered
+repositories fail closed. See the [runtime backup and rollback procedure](../../docs/forge-launcher.md#rollback)
 and [ADR-079](../../docs/adr/079-dapr-execution-cutover.md).
 
 For an unpublished checkout, run `npm install`, `npm pack`, and
@@ -81,18 +105,19 @@ block removal. Existing folders can be added again without bootstrapping.
 ### Autonomous build
 
 ```bash
-forge-launcher engine-run --harness opencode --yes                 # per-task: opencode run
-forge-launcher engine-run --harness copilot --yes                  # per-task: copilot -p --yolo
-forge-launcher engine-run --harness opencode --concurrency 3 --yes # parallel dispatch
-forge-launcher engine-run --stop    # stop an active service run after the current task
-forge-launcher engine-run --pause   # pause an active service run after the current task
+forge-launcher run --harness opencode --yes                 # per-task: opencode run
+forge-launcher run --harness copilot --yes                  # per-task: copilot -p --yolo
+forge-launcher run --harness opencode --concurrency 3 --yes # parallel dispatch
+forge-launcher run --stop    # stop an active service run after the current task
+forge-launcher run --pause   # pause an active service run after the current task
 ```
 
 Use `forge-launcher console` to monitor and control service runs in the Console,
-including the Kanban/Gantt Board. The service ignores legacy `engine-run`
-options for task timeout, heartbeat, visualization, validation, harness-output
-logging, and auto-commit; `forge-launcher engine-run --help` lists the supported
-service behavior.
+including the Kanban/Gantt Board. The service ignores retired local-engine options for task timeout, heartbeat,
+visualization, validation, harness-output logging, and auto-commit;
+`forge-launcher run --help` lists the supported service behavior. Build activity
+is written to `docs/forge.log`; use the Console **Activity log** and **Runtime
+log** tabs to follow it live.
 
 OpenCode v2 is required. The former `--keep-alive`, `--keep-alive-port`,
 `--no-keep-alive`, and `--attach` flags are retired (see
@@ -114,4 +139,5 @@ testing.
 - [Full project README](https://github.com/McFuzzySquirrel/my-forge#readme)
 - [Launcher reference](https://github.com/McFuzzySquirrel/my-forge/blob/main/docs/forge-launcher.md)
 - [Forge Console](https://github.com/McFuzzySquirrel/my-forge/blob/main/docs/forge-console.md)
-- [Legacy workflow-engine reference](https://github.com/McFuzzySquirrel/my-forge/blob/main/docs/workflow-engine.md)
+- [Architecture blueprint](https://github.com/McFuzzySquirrel/my-forge/blob/main/Project_Architecture_Blueprint.md)
+- [Local execution architecture](https://github.com/McFuzzySquirrel/my-forge/blob/main/docs/local-execution.md)

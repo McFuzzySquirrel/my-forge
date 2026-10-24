@@ -27,7 +27,7 @@ Usage:
   forge-launcher runtime runner <enable|rotate|revoke> <repository-id>
   forge-launcher runtime harness <list|grant <harness> <VARIABLE>|revoke <harness> [VARIABLE]>
   forge-launcher service <submit|runs|status|events|control|merge> ...  # local execution service API
-  forge-launcher engine-run [--repo <path>] [--harness <h>] [--granularity <fine|coarse>]
+  forge-launcher run [--repo <path>] [--harness <h>] [--granularity <fine|coarse>]
                             [--concurrency <n>] [--task-timeout-ms <ms>] [--max-retries <n>]
                             [--retry-delay-ms <ms>] [--heartbeat-ms <ms>] [--yes] [--dry-run]
                             [--viz [--viz-port <n>]] [--no-open]
@@ -74,7 +74,7 @@ Model and runner flags are saved to docs/authoring-config.json when creating a p
 On draft/feature/resume subcommands they override only that invocation.
 
 Deployment:
-  engine-run uses the local Dapr execution service. Register each repository with
+  run uses the local Dapr execution service. Register each repository with
   "forge-launcher runtime repo add <path>", then restart the runtime. Unregistered
   repositories fail closed; legacy histories are not imported. Service runs integrate
   into forge/<branch> and fast-forward the checked-out branch when they complete.
@@ -85,18 +85,18 @@ Deployment:
   sandbox. Enable only for trusted tasks; the launcher-managed host runner is required and
   there is no fallback to the worker.
 
-engine-run control:
+run control:
   --stop              Stop the active local service run after the current task.
   --pause             Pause the active local service run after the current task.
                       Both send an acknowledged service control; legacy file/PID controls are retired.
 
-engine-run auto-commit:
+run auto-commit:
   --auto-commit       Commit the working tree after each completed task (default: on).
   --no-auto-commit    Disable per-task auto-commit.
   --commit-message-template <tmpl>  Commit message with {taskId}/{taskTitle} placeholders.
 
-engine-run harness activity:
-  --log-harness-activity     Stream harness CLI stdout/stderr into docs/engine-run.log as it
+run harness activity:
+  --log-harness-activity     Stream harness CLI stdout/stderr into docs/forge.log as it
                              arrives (default: off). May contain sensitive repository content
                              and increase log volume. Command invocation logging is always on.
   --no-log-harness-activity  Force activity logging off, overriding
@@ -192,7 +192,7 @@ async function main(): Promise<number> {
   if (args[0] === "console") return consoleCli(args.slice(1));
   if (args[0] === "runtime") return runtimeCli(args.slice(1));
   if (args[0] === "service") return serviceCli(args.slice(1));
-  if (args[0] === "engine-run") {
+  if (args[0] === "run") {
     const rest = args.slice(1);
     if (rest.includes("-h") || rest.includes("--help")) { process.stdout.write(USAGE); return 0; }
     return serviceEngineRun(rest);

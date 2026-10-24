@@ -102,6 +102,14 @@ export class ServiceClient {
   control(runId: string, action: string, payload: Record<string, unknown> = {}, controlId: string = randomUUID()) {
     return this.request("POST", `/v1/runs/${encodeURIComponent(runId)}/controls`, { controlId, action, payload });
   }
+  evidence(repositoryId: string) {
+    return this.request<{ repositoryId: string; tasks: Record<string, unknown>[]; count: number }>(
+      "GET", `/v1/evidence?repositoryId=${encodeURIComponent(repositoryId)}`);
+  }
+  evidenceArtifact(repositoryId: string, artifactId: string) {
+    return this.request<Record<string, unknown>>(
+      "GET", `/v1/evidence/artifact?repositoryId=${encodeURIComponent(repositoryId)}&artifactId=${encodeURIComponent(artifactId)}`);
+  }
 }
 
 export interface SubmissionInput {
@@ -380,7 +388,7 @@ Runs integrate into forge/<base>, never the checked-out branch; "merge"
 fast-forwards the checked-out branch to the run's forge branch.
 The worker runs the stub (default here), copilot, claude, and opencode harnesses;
 a CLI harness needs a credential grant ("forge-launcher runtime harness grant").
-"forge-launcher engine-run" and "resume" use the service for registered repositories.
+"forge-launcher run" and "resume" use the service for registered repositories.
 --json prints the service API records unchanged: one JSON document for runs and
 status, and one JSON event per line (NDJSON) for events.
 `;

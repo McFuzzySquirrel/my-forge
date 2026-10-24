@@ -13,6 +13,7 @@ export interface RunServiceApi {
   get(runId: string): Promise<RunServiceResult>;
   events(runId: string, after: number, limit: number): Promise<RunServiceResult>;
   control(runId: string, body: unknown): Promise<RunServiceResult>;
+  activity?(runId: string, repositoryId: string, taskId: string, attempt: number): Promise<RunServiceResult>;
 }
 
 export interface HostRunnerApi {
@@ -46,6 +47,7 @@ export interface ServiceApiOptions {
 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 const RUN_PATH = /^\/v1\/runs\/(run_[0-9a-f]{32})(\/events|\/controls)?$/;
+const ACTIVITY_PATH = /^\/v1\/runs\/(run_[0-9a-f]{32})\/activity$/;
 export const MIN_API_TOKEN_LENGTH = 32;
 
 class HttpError extends Error {
@@ -206,6 +208,19 @@ export function createServiceApiHandler(options: ServiceApiOptions): (request: I
       }
       if (typeof body.message !== "string") throw new HttpError(400, "invalid-request", "message is required");
       return deliver(response, await options.hostRunner.fail(body.repositoryId, operationId!, body.leaseId, cap, body.message));
+    }
+
+    const activityMatch = ACTIVITY_PATH.exec(url.pathname);
+    if (activityMatch) {
+      if (method !== "GET") throw new HttpError(405, "method-not-allowed", "Use GET");
+      if (!options.runs.activity) throw new HttpError(404, "not-found", "Activity logging is not enabled");
+      const repositoryId = url.searchParams.get("repositoryId") ?? "";
+      const taskId = url.searchParams.get("taskId") ?? "";
+      const attempt = integer(url.searchParams.get("attempt"), Number.NaN);
+      if (!Number.isSafeInteger(attempt) || attempt < 1) {
+        throw new HttpError(400, "invalid-request", "A positive attempt number is required");
+      }
+      return deliver(response, await options.runs.activity(activityMatch[1]!, repositoryId, taskId, attempt));
     }
 
     if (url.pathname === "/v1/runs") {

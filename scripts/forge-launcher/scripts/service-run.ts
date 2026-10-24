@@ -78,14 +78,11 @@ function teeWriter(repoRoot: string): (text: string) => void {
 
 /** Flags the service owns itself; accepted from older scripts and saved settings but ignored. */
 const IGNORED_FLAGS: Readonly<Record<string, string>> = {
-  "--task-timeout-ms": "the service applies its own attempt budget",
   "--heartbeat-ms": "the service records progress events instead of heartbeats",
   "--viz": "use the Console Service runs view",
   "--viz-port": "use the Console Service runs view",
   "--no-open": "no dashboard is opened",
   "--run-validation": "the service runs task validation itself",
-  "--log-harness-activity": "harness output stays in the service's attempt logs",
-  "--no-log-harness-activity": "harness output stays in the service's attempt logs",
   "--auto-commit": "the service commits each completed task to forge/<branch>",
   "--no-auto-commit": "the service commits each completed task to forge/<branch>",
   "--commit-message-template": "the service writes its own checkpoint commits",
@@ -213,6 +210,7 @@ export async function serviceEngineRun(
     throw new Error("Manual execution needs --selected-tasks <id,id,...>.");
   }
   const settings: Record<string, number | boolean> = {};
+  const engineConfig = loadEngineConfig(repoRoot);
   const numeric = [
     ["--concurrency", "FORGE_ENGINE_CONCURRENCY", "concurrency"],
     ["--max-retries", "FORGE_ENGINE_MAX_RETRIES", "maxRetries"],
@@ -222,6 +220,17 @@ export async function serviceEngineRun(
     const value = integerSetting(flags.get(flag) ?? process.env[variable], flag);
     if (value !== undefined) settings[key] = value;
   }
+  const taskTimeoutMs = integerSetting(
+    flags.get("--task-timeout-ms") ?? process.env.FORGE_ENGINE_TASK_TIMEOUT_MS ?? engineConfig?.taskTimeoutMs,
+    "--task-timeout-ms",
+  );
+  if (taskTimeoutMs !== undefined) settings.taskTimeoutMs = taskTimeoutMs;
+  const logHarnessActivity = flags.has("--log-harness-activity")
+    ? true
+    : flags.has("--no-log-harness-activity")
+      ? false
+      : engineConfig?.logHarnessActivity === true;
+  if (logHarnessActivity) settings.logHarnessActivity = true;
   if (flags.has("--allow-noop") || process.env.FORGE_ENGINE_ALLOW_NOOP === "1") settings.allowNoop = true;
   if (flags.has("--host-execution")) settings.hostExecution = true;
 

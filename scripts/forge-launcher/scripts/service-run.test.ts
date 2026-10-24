@@ -117,7 +117,7 @@ test("a paused run is resumed and followed until it completes", async () => {
   assert.equal(service.submitted.length, 0);
   const text = output.join("");
   assert.match(text, /Resuming service run paused/);
-  assert.match(text, /--task-timeout-ms is ignored/);
+  assert.doesNotMatch(text, /--task-timeout-ms is ignored/);
   assert.match(text, /--viz is ignored/);
   assert.doesNotMatch(text, /--yes is ignored/);
   assert.match(text, /service merge paused/);
@@ -150,6 +150,7 @@ test("without an active run a new run is submitted with service settings", async
   const output: string[] = [];
   const code = await serviceEngineRun([
     "--repo", repo, "--harness", "stub", "--concurrency", "2", "--max-retries", "1", "--allow-noop", "--host-execution",
+    "--task-timeout-ms", "1234", "--log-harness-activity",
     "--execution-mode", "manual", "--selected-tasks", "T1, T2", "--selection-scope", "phase",
   ], dependencies(service, output));
   assert.equal(code, 0);
@@ -157,7 +158,14 @@ test("without an active run a new run is submitted with service settings", async
   const input = service.submitted[0] as Record<string, unknown>;
   assert.equal(input.harness, "stub");
   assert.equal(input.repositoryId, REPOSITORY_ID);
-  assert.deepEqual(input.settings, { concurrency: 2, maxRetries: 1, allowNoop: true, hostExecution: true });
+  assert.deepEqual(input.settings, {
+    concurrency: 2,
+    maxRetries: 1,
+    taskTimeoutMs: 1234,
+    logHarnessActivity: true,
+    allowNoop: true,
+    hostExecution: true,
+  });
   assert.deepEqual(input.requestedTaskIds, ["T1", "T2"]);
   assert.match(output.join(""), /Submitted service run run-new -> forge\/main/);
 });

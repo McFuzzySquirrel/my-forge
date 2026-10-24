@@ -165,6 +165,7 @@ export async function executeVerifiedTaskActivity(
       requiredCapabilities: request.requiredCapabilities,
       timeoutMs: request.budget.timeoutMs,
       instructions: request.instructions,
+      ...(request.logHarnessActivity ? { logHarnessActivity: true } : {}),
     };
     const remote = parseHarnessRunnerResult(
       runnerRequest,

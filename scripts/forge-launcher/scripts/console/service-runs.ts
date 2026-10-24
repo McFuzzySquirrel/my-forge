@@ -10,7 +10,7 @@ import { findRegisteredRepository } from "../runtime-repositories.ts";
 import { CONTROL_ACTIONS, ServiceApiError, ServiceClient } from "../service-client.ts";
 
 export interface ServiceRunsDeps {
-  client(): Promise<Pick<ServiceClient, "list" | "get" | "events" | "control" | "evidence" | "evidenceArtifact">>;
+  client(): Promise<Pick<ServiceClient, "list" | "get" | "events" | "control" | "evidence" | "evidenceArtifact" | "activity">>;
   repositoryId(repoRoot: string): Promise<string | undefined>;
 }
 
@@ -104,6 +104,36 @@ export async function readServiceEvidenceArtifact(
   try {
     const artifact = await (await deps.client()).evidenceArtifact(repositoryId, artifactId);
     return { status: 200, body: { ok: true, repositoryId, ...artifact } };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/** Reads bounded harness activity for one owned run/task/attempt. */
+export async function serviceRunActivity(
+  deps: ServiceRunsDeps,
+  repoRoot: string | null,
+  runId: unknown,
+  taskId: unknown,
+  attempt: unknown,
+): Promise<ServiceResponse> {
+  if (typeof taskId !== "string" || taskId.length === 0) {
+    return { status: 400, body: { ok: false, code: "invalid-task", message: "A task id is required." } };
+  }
+  const attemptNumber = typeof attempt === "string" && /^\d+$/.test(attempt) ? Number(attempt) : Number.NaN;
+  if (!Number.isSafeInteger(attemptNumber) || attemptNumber < 1) {
+    return { status: 400, body: { ok: false, code: "invalid-attempt", message: "A positive attempt number is required." } };
+  }
+  const owned = await ownedRun(deps, repoRoot, runId);
+  if ("status" in owned && "body" in owned) return owned;
+  try {
+    const result = await owned.client.activity(
+      String(runId),
+      String(owned.run.repositoryId),
+      taskId,
+      attemptNumber,
+    );
+    return { status: 200, body: { ok: true, runId, taskId, attempt: attemptNumber, ...result } };
   } catch (error) {
     return failure(error);
   }

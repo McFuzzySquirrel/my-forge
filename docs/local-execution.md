@@ -156,10 +156,11 @@ submissions when it starts.
 - Use `forge-launcher run` or `forge-launcher service` to submit, follow,
   inspect, and control service runs.
 - Use the Forge Console's **Service runs** view for run-level monitoring and
-  controls, its **Evidence** view for durable work/validation/bundle artifacts,
-  and its **Host runner** view for runner readiness, capabilities, and bounded
-  job summaries. **Activity log**, **Runtime log**, and **Run events** are
-  separate live sources.
+  controls, per-attempt **Activity** for opt-in worker harness output, its
+  **Evidence** view for durable work/validation/bundle artifacts, and its
+  **Host runner** view for runner readiness, capabilities, and bounded job
+  summaries. **Activity log**, **Runtime log**, and **Run events** are separate
+  live sources.
 
 The [launcher guide](forge-launcher.md) documents commands and options. The
 [Console user guide](forge-console-user-guide.md) documents the operator

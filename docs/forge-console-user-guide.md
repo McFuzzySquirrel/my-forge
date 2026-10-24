@@ -177,7 +177,11 @@ recompile the manifest explicitly; the Console will not silently switch roots.
   `forge-launcher service submit`. Select a run to see its tasks and events,
   see whether it runs in the worker or on the host runner, and to pause, resume,
   stop, cancel, approve, or replay it. Each button shows the service's
-  acknowledgement. Host-executed runs link to their runner-job history.
+  acknowledgement. Each task row offers **Activity** for opt-in worker harness
+  output when the run enabled it; host activity is in **Runtime log**. Run
+  summaries show the submitted default timeout and activity setting, and
+  changes apply to the next run. Host-executed runs link to their runner-job
+  history.
 - **Host runner**: inspect runner readiness, manage project capabilities, and
   filter active/recent runner jobs by repository.
 - **Runtime**: manage the shared local Podman runtime, register the selected
@@ -276,7 +280,7 @@ host execution uses the local CLI with full OS permissions. See
   workflow, or **manual** to run only the saved task selection from the Tasks
   view. Manual mode requires at least one selected task.
 - **Auto-commit after each task**: toggles one-commit-per-task git history (on by default).
-- **Log harness activity**: streams harness CLI stdout/stderr into `docs/forge.log`, where the **Activity log** tab shows it live. Service and host-runner runs also write to the runtime host-runner log; use the **Runtime log** tab. Off by default; the saved choice is applied to subsequently started runs and restored after a reload. Activity logs can contain sensitive repository content and increase log volume, and command invocation logging is always on regardless. Turning it off stops activity capture for later runs without disabling command logging.
+- **Log harness activity**: captures harness CLI stdout/stderr for each attempt. Worker output is available from the **Service runs** task **Activity** action; host-runner output appears in **Runtime log**. Off by default; the saved choice is applied to subsequently started runs and restored after a reload. Activity logs can contain sensitive repository content and increase log volume, and command invocation logging is always on regardless. Turning it off stops activity capture for later runs without disabling command logging.
 - **Concurrency preference**: stores the engine concurrency value in `docs/engine-config.json`. Enter a positive integer (e.g. `3`) and click **Set**; enter `0` to return to the engine default. The value is shown in later Run/Resume summaries. Above `1` the engine runs up to that many ready tasks at once, each in its own git worktree under `.forge-sandboxes/`, so each task's reported files and commit stay its own. Two things to know before setting it above `1`: **the working tree must be clean** (the run stops and lists any uncommitted path otherwise, so commit or stash first). Each task selects its own project through the spawn working directory, with the child's `PWD` set to match, since OpenCode v2 resolves the project from `process.env.PWD ?? process.cwd()` and no longer accepts `--dir` (see [ADR-058](adr/058-opencode-v2-project-resolution.md) and [ADR-059](adr/059-pwd-aligned-spawn-environment.md)). See [ADR-056](adr/056-parallel-execution-task-sandboxes.md).
 - **Reset changed tasks for review**: after feature reconciliation, resets completed or skipped tasks whose contracts changed back to pending. Review the changed task IDs before using this action.
 - **Launch \<harness\> CLI**: opens the project's harness CLI (opencode/copilot/claude) in a new terminal from the project folder, so you can watch the live run and take over manually. Also available on the Tasks header.

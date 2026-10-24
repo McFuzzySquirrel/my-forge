@@ -1207,6 +1207,7 @@ function renderTimeoutControls(container: HTMLElement, tasks: TaskRow[]): HTMLEl
 
   return el("div", { className: "timeout-controls" }, [
     el("h4", null, "Timeouts"),
+    el("p", { className: "dim small" }, "Saved timeouts apply to new runs; an active run keeps its submitted snapshot."),
     el("div", { className: "row gap", style: "margin:6px 0" }, [
       el("span", { className: "dim small" }, "Task"),
       taskSelect,

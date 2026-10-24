@@ -547,6 +547,11 @@ export interface ServiceRunTask {
   logicalAttempt?: number;
 }
 
+export interface ServiceActivityResponse {
+  lines: string[];
+  truncated: boolean;
+}
+
 export interface ServiceRunRecord {
   runId: string;
   status: string;
@@ -555,6 +560,8 @@ export interface ServiceRunRecord {
   createdAt?: string;
   harness?: { id: string };
   hostExecution?: boolean;
+  taskTimeoutMs?: number;
+  logHarnessActivity?: boolean;
   tasks?: ServiceRunTask[];
 }
 

@@ -28,6 +28,8 @@ export interface HarnessRunnerRequestV1 {
   readonly requiredCapabilities: readonly TaskCapability[];
   readonly timeoutMs: number;
   readonly instructions: string;
+  /** Opt-in harness output capture; host activity goes to the host-runner log. */
+  readonly logHarnessActivity?: boolean;
 }
 
 export interface HarnessRunnerWorkspaceDeltaV1 {
@@ -101,7 +103,8 @@ export function parseHarnessRunnerRequest(value: unknown): HarnessRunnerRequestV
     || !stringArray(value.requiredCapabilities)
     || value.requiredCapabilities.some((capability) => capability !== "text" && capability !== "repository-tools")
     || !Number.isSafeInteger(value.timeoutMs) || Number(value.timeoutMs) <= 0
-    || typeof value.instructions !== "string") {
+    || typeof value.instructions !== "string"
+    || (value.logHarnessActivity !== undefined && typeof value.logHarnessActivity !== "boolean")) {
     throw new TypeError("Host-runner request has an invalid schema.");
   }
   const identity = parseIdentity(value.identity);
@@ -160,6 +163,7 @@ export function parseHarnessRunnerRequest(value: unknown): HarnessRunnerRequestV
     requiredCapabilities,
     timeoutMs: Number(value.timeoutMs),
     instructions,
+    ...(value.logHarnessActivity === true ? { logHarnessActivity: true } : {}),
   };
 }
 

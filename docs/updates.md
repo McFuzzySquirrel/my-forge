@@ -4,6 +4,26 @@ Detailed release and change notes for MyForge.
 
 ---
 
+## October 2026 - v3.154
+
+### Replay completed tasks and show runtime logs in the Console
+
+- Integrated tasks are recorded in a durable completion ledger. A later run
+  whose base contains the completion replays the task, hydrates its work
+  artifact for dependants, and does not invoke the harness or create another
+  commit. A stub host verification run can seed a completion without a model
+  call.
+- Host validation installs Node dependencies with `npm ci` when the clone has a
+  lockfile but no `node_modules`, so a verification run can validate a base
+  revision without a harness install step.
+- The Console Logs view has a **Runtime log** tab for the native host-runner log
+  and empty states that distinguish an absent engine log from an absent runtime
+  log. Service runs no longer look like an empty legacy engine log.
+- Added regression coverage for completion replay and the runtime log source,
+  plus [ADR-086](adr/086-replay-integrated-task-completions.md).
+
+---
+
 ## October 2026 - v3.153
 
 ### Honor configured models, native agents, and task timeouts in host execution
@@ -35,21 +55,9 @@ Detailed release and change notes for MyForge.
 - A harness that commits its work in the disposable clone is no longer rejected:
   the delta captures a HEAD that descends from the accepted base, including
   committed and uncommitted changes.
-- Host validation installs Node dependencies with `npm ci` when the clone has a
-  lockfile but no `node_modules`, so a verification run can validate a base
-  revision without a harness install step.
-- Integrated tasks are recorded in a durable completion ledger. A later run
-  whose base contains the completion replays the task, hydrates its work
-  artifact for dependants, and does not invoke the harness or create another
-  commit. A stub host verification run can seed a completion without a model
-  call.
-- The Console Logs view has a **Runtime log** tab for the native host-runner log
-  and empty states that distinguish an absent engine log from an absent runtime
-  log. Service runs no longer look like an empty legacy engine log.
 - Added regression coverage for host-runner agent-path remapping, configured
   default-model fallback, per-task supervision deadlines, committed workspace
-  deltas, host validation evidence, completion replay, and the runtime log
-  source.
+  deltas, and host validation evidence.
 
 ---
 
